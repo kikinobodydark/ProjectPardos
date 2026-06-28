@@ -10,3 +10,8 @@ app/.env.*.local
 .DS_Store
 Thumbs.db
 *.log
+
+# Archivos de reportes contables (confidenciales)
+/LE*.txt
+/LOG*.TXT
+/LOG*.xlsx
