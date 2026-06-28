@@ -1,0 +1,366 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+:root {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Color Palette - Premium Light Mode (Slate Theme) */
+  --bg-primary: #F8FAFC;         /* Soft slate background */
+  --bg-surface: #FFFFFF;         /* White cards and panels */
+  --bg-surface-hover: #F1F5F9;   /* Hover highlight slate */
+  --border-color: #E2E8F0;       /* Fine border color */
+  
+  --accent-color: #2563EB;       /* Premium Blue accent */
+  --accent-hover: #1D4ED8;
+  --accent-glow: rgba(37, 99, 235, 0.08);
+
+  --color-text: #0F172A;         /* Slate 900 text */
+  --color-text-muted: #64748B;   /* Slate 500 text */
+
+  --color-success: #059669;      /* Emerald 600 */
+  --color-success-bg: rgba(5, 150, 105, 0.08);
+  --color-error: #DC2626;        /* Red 600 */
+  --color-error-bg: rgba(220, 38, 38, 0.08);
+  --color-warning: #D97706;      /* Amber 600 */
+  --color-warning-bg: rgba(217, 119, 6, 0.08);
+}
+
+/* Base Scaling to approx. 75% for density */
+html {
+  font-size: 12px; /* 75% of default 16px base font size */
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-primary);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 1rem; /* Inherits the 12px base */
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scale down Headings globally */
+h3, .h3 { font-size: 1.45rem !important; }
+h4, .h4 { font-size: 1.25rem !important; }
+h5, .h5 { font-size: 1.05rem !important; }
+h6, .h6 { font-size: 0.9rem !important; }
+
+/* Layout Compact */
+.app-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 210px; /* Reduced from 260px */
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
+  padding: 1.2rem 0.8rem;
+  transition: all 0.3s ease;
+}
+
+.main-content {
+  flex: 1;
+  margin-left: 210px; /* Adjusted to match sidebar */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-primary);
+  padding: 1.2rem; /* Reduced padding from 2rem */
+}
+
+/* Fonts and Data Styling */
+.font-mono {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+/* Cards Premium Compact */
+.card-premium {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px; /* Slightly tighter border radius */
+  padding: 1rem; /* Reduced from 1.5rem */
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+}
+
+.card-premium:hover {
+  transform: translateY(-1px);
+  border-color: #CBD5E1;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.08);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #CBD5E1;
+}
+
+/* Dense, readable Tables */
+.table-dense {
+  font-size: 0.82rem; /* Compact text inside grid */
+}
+
+.table-dense th {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid var(--border-color);
+  background-color: var(--bg-surface) !important;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.table-dense td, .table-dense th {
+  padding: 0.4rem 0.6rem !important; /* Denser cells padding */
+  vertical-align: middle;
+  border-color: var(--border-color) !important;
+}
+
+.table-dense tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+.table-dense tbody tr:hover {
+  background-color: var(--bg-surface-hover) !important;
+}
+
+/* Status Badges with forced dark-on-light color readability */
+.badge-status {
+  padding: 0.35em 0.65em;
+  font-weight: 700; /* Bolder for readability */
+  font-size: 0.7rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+.badge-status-ok {
+  background-color: var(--color-success-bg) !important;
+  color: var(--color-success) !important;
+  border: 1px solid rgba(5, 150, 105, 0.2) !important;
+}
+
+.badge-status-observado {
+  background-color: var(--color-warning-bg) !important;
+  color: var(--color-warning) !important;
+  border: 1px solid rgba(217, 119, 6, 0.2) !important;
+}
+
+.badge-status-error {
+  background-color: var(--color-error-bg) !important;
+  color: var(--color-error) !important;
+  border: 1px solid rgba(220, 38, 38, 0.2) !important;
+}
+
+/* Inputs & Forms */
+.form-control-premium {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.88rem;
+  transition: all 0.2s ease;
+}
+
+.form-control-premium:focus {
+  background-color: var(--bg-surface);
+  border-color: var(--accent-color);
+  color: var(--color-text);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  outline: none;
+}
+
+/* Dropzones for files */
+.dropzone-premium {
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  background-color: rgba(241, 245, 249, 0.6);
+  padding: 1.8rem 1.2rem; /* More compact dropzones */
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dropzone-premium:hover {
+  border-color: var(--accent-color);
+  background-color: rgba(241, 245, 249, 0.9);
+}
+
+.dropzone-premium.active {
+  border-color: var(--color-success);
+  background-color: var(--color-success-bg);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Discrepancy highlights */
+.cell-mismatch {
+  background-color: rgba(220, 38, 38, 0.06) !important;
+  color: var(--color-error) !important;
+  font-weight: 600;
+}
+
+.cell-match {
+  color: var(--color-success) !important;
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   Bootstrap Global Overrides for Light Mode Integration
+   ========================================================================== */
+
+/* Adapt `.text-white` classes to respect our text color in cards and sidebars */
+.card-premium .text-white, 
+.sidebar .text-white, 
+.main-content .text-white,
+.modal-content .text-white {
+  color: var(--color-text) !important;
+}
+
+/* Keep active sidebar text white on blue background */
+.sidebar .nav-link.bg-primary.text-white,
+.sidebar .nav-link.bg-primary .text-white {
+  color: #FFFFFF !important;
+}
+
+/* Style default and inactive text muted */
+.card-premium .text-muted, 
+.sidebar .text-muted,
+.main-content .text-muted {
+  color: var(--color-text-muted) !important;
+}
+
+/* Adapt Bootstrap's table-dark elements */
+.table-dark {
+  --bs-table-bg: var(--bg-surface) !important;
+  --bs-table-color: var(--color-text) !important;
+  --bs-table-hover-bg: var(--bg-surface-hover) !important;
+  --bs-table-hover-color: var(--color-text) !important;
+  background-color: var(--bg-surface) !important;
+  color: var(--color-text) !important;
+}
+
+.table-dark th, .table-dark td {
+  border-color: var(--border-color) !important;
+  color: var(--color-text) !important;
+}
+
+/* Adjust .bg-dark utility classes */
+.bg-dark {
+  background-color: var(--bg-primary) !important;
+  color: var(--color-text) !important;
+}
+
+.bg-dark.bg-opacity-25 {
+  background-color: rgba(226, 232, 240, 0.4) !important;
+}
+
+/* Form input group addons */
+.input-group-text.bg-dark {
+  background-color: var(--bg-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--color-text-muted) !important;
+}
+
+/* Modal and dialog customizations */
+.modal-content {
+  background-color: var(--bg-surface) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+.btn-close-white {
+  filter: invert(1) grayscale(100%) brightness(30%) !important; /* Make it dark for light backgrounds */
+}
+
+/* Custom High-Contrast Text Overrides for legibility in Light Mode */
+.text-warning {
+  color: #B45309 !important; /* High contrast Amber 700 */
+}
+
+.text-success {
+  color: #047857 !important; /* High contrast Emerald 700 */
+}
+
+.text-danger {
+  color: #B91C1C !important; /* High contrast Red 700 */
+}
+
+/* Premium Pagination Styling */
+.pagination-premium {
+  display: flex;
+  gap: 4px;
+}
+
+.pagination-premium .page-link {
+  border: 1px solid var(--border-color) !important;
+  background-color: var(--bg-surface) !important;
+  color: var(--color-text) !important;
+  border-radius: 6px !important;
+  padding: 0.45rem 0.8rem !important;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+}
+
+.pagination-premium .page-link:hover {
+  background-color: var(--bg-surface-hover) !important;
+  border-color: #CBD5E1 !important;
+}
+
+.pagination-premium .page-item.active .page-link {
+  background-color: var(--accent-color) !important;
+  color: #FFFFFF !important;
+  border-color: var(--accent-color) !important;
+}
+
+.pagination-premium .page-item.disabled .page-link {
+  color: var(--color-text-muted) !important;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.pagination-premium .page-item-ellipsis {
+  padding: 0.4rem 0.6rem;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  user-select: none;
+}

@@ -1,0 +1,12 @@
+# Dependencias y construcciones
+app/node_modules/
+app/dist/
+
+# Archivos de entorno local con credenciales
+app/.env.local
+app/.env.*.local
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+*.log
