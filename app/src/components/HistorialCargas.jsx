@@ -35,7 +35,7 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
   return (
     <div className="card-premium animate-fade-in">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <h4 className="text-white mb-0 fw-bold">Historial de Procesos Contables</h4>
+        <h4 className="mb-0 fw-bold">Historial de Procesos Contables</h4>
         <button
           onClick={() => refetch()}
           disabled={loading}

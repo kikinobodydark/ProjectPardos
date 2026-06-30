@@ -111,7 +111,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     <div className="row g-4 animate-fade-in">
       <div className="col-lg-5">
         <div className="card-premium">
-          <h5 className="text-white mb-3 fw-bold">
+          <h5 className="mb-3 fw-bold">
             {editingId ? 'Editar Colaborador' : 'Registrar Nuevo Operador'}
           </h5>
 
@@ -184,7 +184,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                   checked={activo}
                   onChange={(e) => setActivo(e.target.checked)}
                 />
-                <label htmlFor="user-activo" className="form-check-label text-white" style={{ fontSize: '0.85rem' }}>Colaborador Activo</label>
+                <label htmlFor="user-activo" className="form-check-label" style={{ fontSize: '0.85rem' }}>Colaborador Activo</label>
               </div>
             )}
 
@@ -213,7 +213,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
 
       <div className="col-lg-7">
         <div className="card-premium">
-          <h5 className="text-white mb-3 fw-bold">Equipo de Conciliación</h5>
+          <h5 className="mb-3 fw-bold">Equipo de Conciliación</h5>
 
           {successMsg && (
             <div className="alert alert-success py-2 px-3 mb-3 border-0 rounded-3" style={{ fontSize: '0.85rem' }}>
@@ -241,7 +241,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                 <tbody>
                   {usuarios.map(user => (
                     <tr key={user.id}>
-                      <td className="text-white fw-semibold">{user.nombre}</td>
+                      <td className="fw-semibold">{user.nombre}</td>
                       <td>
                         <span className="badge bg-secondary font-mono" style={{ fontSize: '0.75rem' }}>
                           {user.rol.toUpperCase()}

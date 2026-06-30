@@ -63,7 +63,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
 
   return (
     <div className="animate-fade-in">
-      <h3 className="text-white mb-4 fw-bold">Panel Resumen Ejecutivo</h3>
+      <h3 className="mb-4 fw-bold">Panel Resumen Ejecutivo</h3>
 
       {/* KPI Cards Grid */}
       <div className="row g-3 mb-4">
@@ -72,12 +72,12 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
             className="card-premium card-clickable d-flex align-items-center"
             onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}
           >
-            <div className="bg-secondary bg-opacity-25 rounded-3 p-3 me-3 text-white fs-3">
+            <div className="bg-secondary bg-opacity-25 rounded-3 p-3 me-3 text-secondary fs-3">
               <FiLayers />
             </div>
             <div>
               <div className="text-muted" style={{ fontSize: '0.78rem' }}>TOTAL COMPROBANTES</div>
-              <h3 className="fw-bold mb-0 text-white font-mono">{stats.total}</h3>
+              <h3 className="fw-bold mb-0 font-mono">{stats.total}</h3>
               <small className="text-muted">100% de la carga</small>
             </div>
           </div>
@@ -136,7 +136,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
         {/* Comparative Table */}
         <div className="col-lg-8">
           <div className="card-premium h-100">
-            <h5 className="text-white mb-3 fw-bold">Comparativa Monetaria Lote (SAP vs. SUNAT)</h5>
+            <h5 className="mb-3 fw-bold">Comparativa Monetaria Lote (SAP vs. SUNAT)</h5>
             <div className="table-responsive">
               <table className="table table-hover table-borderless table-dense align-middle mb-0 text-white-on-dark-only">
                 <thead>
@@ -150,7 +150,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
                 </thead>
                 <tbody>
                   <tr>
-                    <td className="text-white fw-semibold">Base Imponible</td>
+                    <td className="fw-semibold">Base Imponible</td>
                     <td className="text-end font-mono">{stats.baseSap.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
                     <td className="text-end font-mono">{stats.baseSunat.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
                     <td className={`text-end font-mono ${(stats.baseSap - stats.baseSunat) !== 0 ? 'text-danger fw-bold' : 'text-success'}`}>
@@ -165,7 +165,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
                     </td>
                   </tr>
                   <tr>
-                    <td className="text-white fw-semibold">IGV / IPM</td>
+                    <td className="fw-semibold">IGV / IPM</td>
                     <td className="text-end font-mono">{stats.igvSap.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
                     <td className="text-end font-mono">{stats.igvSunat.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
                     <td className={`text-end font-mono ${(stats.igvSap - stats.igvSunat) !== 0 ? 'text-danger fw-bold' : 'text-success'}`}>
@@ -180,7 +180,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
                     </td>
                   </tr>
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <td className="text-white fw-semibold">Total General</td>
+                    <td className="fw-semibold">Total General</td>
                     <td className="text-end font-mono fw-bold">{stats.totalSap.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
                     <td className="text-end font-mono fw-bold">{stats.totalSunat.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
                     <td className={`text-end font-mono fw-bold ${(stats.totalSap - stats.totalSunat) !== 0 ? 'text-danger' : 'text-success'}`}>
@@ -204,7 +204,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
         <div className="col-lg-4">
           <div className="card-premium h-100 d-flex flex-column justify-content-between">
             <div>
-              <h5 className="text-white mb-3 fw-bold">Estado de Lote</h5>
+              <h5 className="mb-3 fw-bold">Estado de Lote</h5>
               <div className="text-center py-4">
                 {stats.total === 0 ? (
                   <p className="text-muted mb-0">No hay datos procesados en este período.</p>

@@ -121,46 +121,65 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
   const handleExport = async () => {
     setExportLoading(true);
     try {
-      let query = supabase
-        .from('detalle_validacion')
-        .select('*')
-        .eq('periodo_id', periodId);
+      let allRows = [];
+      let page = 0;
+      const pageSize = 2000;
+      let hasMore = true;
 
-      if (searchTerm.trim() !== '') {
-        const term = `%${searchTerm.trim()}%`;
-        query = query.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
-      }
+      while (hasMore) {
+        let currentQuery = supabase
+          .from('detalle_validacion')
+          .select('*')
+          .eq('periodo_id', periodId);
 
-      if (stateFilter !== 'ALL') {
-        query = query.eq('estado_validacion', stateFilter);
-        if (stateFilter === 'ERROR' && subFilter !== 'ALL') {
-          query = query.contains('errores_json', JSON.stringify([subFilter]));
-        } else if (stateFilter === 'OBSERVADO' && subFilter !== 'ALL') {
-          query = query.contains('errores_json', JSON.stringify([subFilter]));
+        if (searchTerm.trim() !== '') {
+          const term = `%${searchTerm.trim()}%`;
+          currentQuery = currentQuery.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
+        }
+
+        if (stateFilter !== 'ALL') {
+          currentQuery = currentQuery.eq('estado_validacion', stateFilter);
+          if (stateFilter === 'ERROR' && subFilter !== 'ALL') {
+            currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
+          } else if (stateFilter === 'OBSERVADO' && subFilter !== 'ALL') {
+            currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
+          }
+        }
+
+        if (docFilter !== 'ALL') {
+          currentQuery = currentQuery.eq('tipo_doc_pago', docFilter);
+        }
+
+        if (sireFilter !== 'ALL') {
+          if (sireFilter === 'OK') {
+            currentQuery = currentQuery.ilike('mensaje_sire', '%registro ok%');
+          } else if (sireFilter === 'DIF') {
+            currentQuery = currentQuery.ilike('mensaje_sire', '%diferencia%');
+          } else if (sireFilter === 'EMPTY') {
+            currentQuery = currentQuery.is('mensaje_sire', null);
+          }
+        }
+
+        currentQuery = currentQuery
+          .order('fecha_emision', { ascending: true })
+          .order('serie', { ascending: true })
+          .order('correlativo', { ascending: true })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        const { data, error } = await currentQuery;
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          hasMore = false;
+        } else {
+          allRows = allRows.concat(data);
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
         }
       }
-
-      if (docFilter !== 'ALL') {
-        query = query.eq('tipo_doc_pago', docFilter);
-      }
-
-      if (sireFilter !== 'ALL') {
-        if (sireFilter === 'OK') {
-          query = query.ilike('mensaje_sire', '%registro ok%');
-        } else if (sireFilter === 'DIF') {
-          query = query.ilike('mensaje_sire', '%diferencia%');
-        } else if (sireFilter === 'EMPTY') {
-          query = query.is('mensaje_sire', null);
-        }
-      }
-
-      query = query
-        .order('fecha_emision', { ascending: true })
-        .order('serie', { ascending: true })
-        .order('correlativo', { ascending: true });
-
-      const { data: allRows, error } = await query;
-      if (error) throw error;
 
       if (!allRows || allRows.length === 0) return;
 
@@ -225,7 +244,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
     <div className="card-premium animate-fade-in mb-4">
       <div className="d-flex justify-content-between align-items-center mb-3">
         <div className="d-flex align-items-center gap-3">
-          <h4 className="text-white mb-0 fw-bold">Resultados Unificados de Conciliación</h4>
+          <h4 className="mb-0 fw-bold">Resultados Unificados de Conciliación</h4>
           <select
             className="form-select form-control-premium py-1 px-2"
             style={{ width: 'auto', fontSize: '0.85rem' }}
@@ -392,7 +411,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
                 return (
                   <tr key={r.id}>
-                    <td className="fw-semibold text-white font-mono">{r.serie}-{r.correlativo}</td>
+                    <td className="fw-semibold font-mono">{r.serie}-{r.correlativo}</td>
                     <td className="font-mono">{r.fecha_emision || 'N/A'}</td>
                     <td>{getDocDescription(r.tipo_doc_pago)}</td>
                     <td className="font-mono">{r.nro_identidad_sunat || 'No Registrado'}</td>
@@ -494,10 +513,10 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           tabIndex="-1" 
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.65)' }}
         >
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-lg">
             <div 
-              className="modal-content text-white rounded-3 p-2" 
-              style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)' }}
+              className="modal-content rounded-3 p-4" 
+              style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', minHeight: '400px' }}
             >
               <div className="modal-header border-0 pb-0 d-flex justify-content-between align-items-center">
                 <h5 className="modal-title fw-bold">

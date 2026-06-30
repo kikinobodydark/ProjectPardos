@@ -130,7 +130,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
     <div className="row g-4 animate-fade-in">
       <div className="col-lg-5">
         <div className="card-premium">
-          <h5 className="text-white mb-3 fw-bold">
+          <h5 className="mb-3 fw-bold">
             {editingId ? 'Editar Empresa' : 'Registrar Nueva Empresa'}
           </h5>
           
@@ -175,7 +175,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
                   checked={activo}
                   onChange={(e) => setActivo(e.target.checked)}
                 />
-                <label htmlFor="activo" className="form-check-label text-white" style={{ fontSize: '0.85rem' }}>Empresa Activa</label>
+                <label htmlFor="activo" className="form-check-label" style={{ fontSize: '0.85rem' }}>Empresa Activa</label>
               </div>
             )}
 
@@ -204,7 +204,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
 
       <div className="col-lg-7">
         <div className="card-premium">
-          <h5 className="text-white mb-3 fw-bold">Empresas bajo tu Administración</h5>
+          <h5 className="mb-3 fw-bold">Empresas bajo tu Administración</h5>
           
           {successMsg && (
             <div className="alert alert-success py-2 px-3 mb-3 border-0 rounded-3" style={{ fontSize: '0.85rem' }}>
@@ -232,7 +232,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
                 <tbody>
                   {empresas.map(emp => (
                     <tr key={emp.id}>
-                      <td className="text-white fw-semibold">{emp.razon_social}</td>
+                      <td className="fw-semibold">{emp.razon_social}</td>
                       <td className="font-mono">{emp.ruc}</td>
                       <td className="text-center">
                         {emp.activo ? (

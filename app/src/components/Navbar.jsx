@@ -47,7 +47,7 @@ export default function Navbar({
           <FiMenu className="fs-3 text-muted" />
         </button>
         <div>
-          <h4 className="fw-bold mb-0 text-white" style={{ letterSpacing: '-0.02em' }}>
+          <h4 className="fw-bold mb-0" style={{ letterSpacing: '-0.02em' }}>
             Consolidación y Conciliación
           </h4>
           <p className="text-muted mb-0" style={{ fontSize: '0.85rem' }}>
@@ -68,7 +68,7 @@ export default function Navbar({
                 <div className="dropdown-premium" ref={companyRef}>
                   <button
                     type="button"
-                    className="dropdown-premium-toggle border-0 p-0 fw-semibold text-white bg-transparent text-truncate text-start"
+                    className="dropdown-premium-toggle border-0 p-0 fw-semibold bg-transparent text-truncate text-start"
                     style={{ minWidth: '180px', maxWidth: '260px' }}
                     onClick={() => setShowCompanyDropdown(!showCompanyDropdown)}
                   >
@@ -97,7 +97,7 @@ export default function Navbar({
                 </div>
               ) : (
                 <>
-                  <div className="fw-semibold text-white text-truncate" style={{ maxWidth: '240px' }}>
+                  <div className="fw-semibold text-truncate" style={{ maxWidth: '240px' }}>
                     {activeCompany.razon_social}
                   </div>
                   <div className="text-muted font-mono" style={{ fontSize: '0.75rem' }}>

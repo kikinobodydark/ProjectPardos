@@ -230,7 +230,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
 
   return (
     <div className="card-premium animate-fade-in">
-      <h4 className="text-white mb-3 fw-bold">Nueva Carga de Reportes Mensuales</h4>
+      <h4 className="mb-3 fw-bold">Nueva Carga de Reportes Mensuales</h4>
       <p className="text-muted" style={{ fontSize: '0.88rem' }}>
         Sube los tres reportes TXT de SAP, SUNAT y el log del SIRE correspondientes al mismo período contable.
       </p>
@@ -315,13 +315,13 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               {sapFile ? (
                 <div>
                   <FiCheck className="text-success fs-2 mb-2" />
-                  <div className="text-white fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sapFile.name}</div>
+                  <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sapFile.name}</div>
                   <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(sapFile.size / 1024).toFixed(1)} KB (SAP)</small>
                 </div>
               ) : (
                 <div>
                   <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="text-white fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SAP (1111)</div>
+                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SAP (1111)</div>
                   <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
                 </div>
               )}
@@ -345,13 +345,13 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               {sunatFile ? (
                 <div>
                   <FiCheck className="text-success fs-2 mb-2" />
-                  <div className="text-white fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sunatFile.name}</div>
+                  <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sunatFile.name}</div>
                   <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(sunatFile.size / 1024).toFixed(1)} KB (SUNAT)</small>
                 </div>
               ) : (
                 <div>
                   <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="text-white fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SUNAT (EXP2)</div>
+                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SUNAT (EXP2)</div>
                   <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
                 </div>
               )}
@@ -375,13 +375,13 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               {sireFile ? (
                 <div>
                   <FiCheck className="text-success fs-2 mb-2" />
-                  <div className="text-white fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sireFile.name}</div>
+                  <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sireFile.name}</div>
                   <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(sireFile.size / 1024).toFixed(1)} KB (SIRE)</small>
                 </div>
               ) : (
                 <div>
                   <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="text-white fw-semibold" style={{ fontSize: '0.85rem' }}>LOG SIRE Ventas</div>
+                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>LOG SIRE Ventas</div>
                   <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
                 </div>
               )}
@@ -405,13 +405,13 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               {cortesiasFile ? (
                 <div>
                   <FiCheck className="text-success fs-2 mb-2" />
-                  <div className="text-white fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{cortesiasFile.name}</div>
+                  <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{cortesiasFile.name}</div>
                   <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(cortesiasFile.size / 1024).toFixed(1)} KB (Cortesías)</small>
                 </div>
               ) : (
                 <div>
                   <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="text-white fw-semibold" style={{ fontSize: '0.85rem' }}>Cortesías (Excel - Opcional)</div>
+                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Cortesías (Excel - Opcional)</div>
                   <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo Excel</small>
                 </div>
               )}
