@@ -62,7 +62,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
       if (searchTerm.trim() !== '') {
         const term = `%${searchTerm.trim()}%`;
-        query = query.or(`serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
+        query = query.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
       }
 
       if (stateFilter !== 'ALL') {
@@ -128,7 +128,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
       if (searchTerm.trim() !== '') {
         const term = `%${searchTerm.trim()}%`;
-        query = query.or(`serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
+        query = query.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
       }
 
       if (stateFilter !== 'ALL') {
