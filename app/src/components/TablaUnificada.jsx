@@ -1,19 +1,39 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiDownload, FiSearch, FiSliders, FiEye, FiCheck, FiX, FiAlertCircle } from 'react-icons/fi';
+import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
 
-export default function TablaUnificada({ periodId, activePeriod }) {
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState([]);
-  const [totalRecords, setTotalRecords] = useState(0);
+export default function TablaUnificada({ periodId, activePeriod, initialFilter, onFilterReset }) {
+  const [exportLoading, setExportLoading] = useState(false);
 
   // Filtros
   const [searchInputValue, setSearchInputValue] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [stateFilter, setStateFilter] = useState('ALL');
+  const [subFilter, setSubFilter] = useState('ALL');
   const [docFilter, setDocFilter] = useState('ALL');
   const [sireFilter, setSireFilter] = useState('ALL');
+
+  // Control sincrónico de cambio de filtros para evitar race conditions
+  const handleStateFilterChange = (newVal) => {
+    setSubFilter('ALL');
+    setStateFilter(newVal);
+    setCurrentPage(1);
+  };
+
+  // Si hay un filtro inicial del dashboard, aplicarlo
+  useEffect(() => {
+    if (initialFilter) {
+      setSubFilter('ALL');
+      setStateFilter(initialFilter);
+      setCurrentPage(1);
+      if (onFilterReset) {
+        onFilterReset();
+      }
+    }
+  }, [initialFilter, onFilterReset]);
 
   // Modal para ver errores
   const [selectedRow, setSelectedRow] = useState(null);
@@ -31,21 +51,15 @@ export default function TablaUnificada({ periodId, activePeriod }) {
     return () => clearTimeout(handler);
   }, [searchInputValue]);
 
-  useEffect(() => {
-    if (periodId) {
-      fetchData();
-    }
-  }, [periodId, currentPage, searchTerm, stateFilter, docFilter, sireFilter, recordsPerPage]);
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
+  // TanStack Query para obtener registros filtrados y paginados
+  const { data: reconciliationData, isLoading } = useQuery({
+    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage],
+    queryFn: async () => {
       let query = supabase
         .from('detalle_validacion')
         .select('*', { count: 'exact' })
         .eq('periodo_id', periodId);
 
-      // Filtros del lado de la base de datos (Lazy Loading)
       if (searchTerm.trim() !== '') {
         const term = `%${searchTerm.trim()}%`;
         query = query.or(`serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
@@ -53,6 +67,11 @@ export default function TablaUnificada({ periodId, activePeriod }) {
 
       if (stateFilter !== 'ALL') {
         query = query.eq('estado_validacion', stateFilter);
+        if (stateFilter === 'ERROR' && subFilter !== 'ALL') {
+          query = query.contains('errores_json', JSON.stringify([subFilter]));
+        } else if (stateFilter === 'OBSERVADO' && subFilter !== 'ALL') {
+          query = query.contains('errores_json', JSON.stringify([subFilter]));
+        }
       }
 
       if (docFilter !== 'ALL') {
@@ -69,27 +88,26 @@ export default function TablaUnificada({ periodId, activePeriod }) {
         }
       }
 
-      // Ordenamiento
       query = query
         .order('fecha_emision', { ascending: true })
         .order('serie', { ascending: true })
         .order('correlativo', { ascending: true });
 
-      // Límites de la página activa
       const from = (currentPage - 1) * recordsPerPage;
       const to = from + recordsPerPage - 1;
 
       const { data: rows, count, error } = await query.range(from, to);
 
       if (error) throw error;
-      setData(rows || []);
-      setTotalRecords(count || 0);
-    } catch (e) {
-      console.error("Error al obtener detalle de conciliación:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return { rows: rows || [], count: count || 0 };
+    },
+    enabled: !!periodId,
+    placeholderData: keepPreviousData,
+  });
+
+  const data = reconciliationData?.rows || [];
+  const totalRecords = reconciliationData?.count || 0;
+  const loading = isLoading || exportLoading;
 
   const getDocDescription = (code) => {
     if (code === '01') return 'Factura';
@@ -101,7 +119,7 @@ export default function TablaUnificada({ periodId, activePeriod }) {
 
   // Exportar a Excel (consulta completa de registros filtrados para descarga)
   const handleExport = async () => {
-    setLoading(true);
+    setExportLoading(true);
     try {
       let query = supabase
         .from('detalle_validacion')
@@ -115,6 +133,11 @@ export default function TablaUnificada({ periodId, activePeriod }) {
 
       if (stateFilter !== 'ALL') {
         query = query.eq('estado_validacion', stateFilter);
+        if (stateFilter === 'ERROR' && subFilter !== 'ALL') {
+          query = query.contains('errores_json', JSON.stringify([subFilter]));
+        } else if (stateFilter === 'OBSERVADO' && subFilter !== 'ALL') {
+          query = query.contains('errores_json', JSON.stringify([subFilter]));
+        }
       }
 
       if (docFilter !== 'ALL') {
@@ -169,7 +192,7 @@ export default function TablaUnificada({ periodId, activePeriod }) {
     } catch (e) {
       console.error("Error al exportar a Excel:", e);
     } finally {
-      setLoading(false);
+      setExportLoading(false);
     }
   };
 
@@ -201,7 +224,19 @@ export default function TablaUnificada({ periodId, activePeriod }) {
   return (
     <div className="card-premium animate-fade-in mb-4">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <h4 className="text-white mb-0 fw-bold">Resultados Unificados de Conciliación</h4>
+        <div className="d-flex align-items-center gap-3">
+          <h4 className="text-white mb-0 fw-bold">Resultados Unificados de Conciliación</h4>
+          <select
+            className="form-select form-control-premium py-1 px-2"
+            style={{ width: 'auto', fontSize: '0.85rem' }}
+            value={recordsPerPage}
+            onChange={(e) => { setRecordsPerPage(parseInt(e.target.value, 10)); setCurrentPage(1); }}
+          >
+            <option value={20}>Mostrar 20 filas</option>
+            <option value={50}>Mostrar 50 filas</option>
+            <option value={100}>Mostrar 100 filas</option>
+          </select>
+        </div>
         <button
           onClick={handleExport}
           disabled={totalRecords === 0}
@@ -231,7 +266,7 @@ export default function TablaUnificada({ periodId, activePeriod }) {
           <select 
             className="form-select form-control-premium"
             value={stateFilter}
-            onChange={(e) => { setStateFilter(e.target.value); setCurrentPage(1); }}
+            onChange={(e) => handleStateFilterChange(e.target.value)}
           >
             <option value="ALL">Todos los Estados (OK / Error / Obs.)</option>
             <option value="OK">Correcto (OK)</option>
@@ -267,17 +302,55 @@ export default function TablaUnificada({ periodId, activePeriod }) {
           </select>
         </div>
 
-        <div className="col-lg-2">
-          <select
-            className="form-select form-control-premium"
-            value={recordsPerPage}
-            onChange={(e) => { setRecordsPerPage(parseInt(e.target.value, 10)); setCurrentPage(1); }}
-          >
-            <option value={20}>Mostrar 20 filas</option>
-            <option value={50}>Mostrar 50 filas</option>
-            <option value={100}>Mostrar 100 filas</option>
-          </select>
-        </div>
+        {/* Filtro Dinámico por Grupo de Errores y Observaciones */}
+        {stateFilter === 'ERROR' && (
+          <div className="col-lg-2 animate-fade-in">
+            <select
+              className="form-select form-control-premium"
+              value={subFilter}
+              onChange={(e) => { setSubFilter(e.target.value); setCurrentPage(1); }}
+            >
+              <option value="ALL">Todos los Errores</option>
+              <option value="ERROR 1: DIFERENCIA EN LA BI Gravada">ERROR 1: DIFERENCIA EN BI Gravada</option>
+              <option value="ERROR 2: DIFERENCIA EN EL IGV / IPM">ERROR 2: DIFERENCIA EN IGV / IPM</option>
+              <option value="ERROR 3: DIFERENCIA EN Mto Exonerado">ERROR 3: DIFERENCIA EN Mto Exonerado</option>
+              <option value="ERROR 4: DIFERENCIA EN Mto Inafecto">ERROR 4: DIFERENCIA EN Mto Inafecto</option>
+              <option value="ERROR 5: DIFERENCIA EN TOTALES">ERROR 5: DIFERENCIA EN TOTALES</option>
+              <option value="ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI">ERROR 6: BOLETAS &gt; 700 SIN DNI</option>
+              <option value="ERROR 7: DNI CON FORMATO INVÁLIDO">ERROR 7: DNI FORMATO INVÁLIDO</option>
+              <option value="ERROR 8: NO EXISTE EN SAP">ERROR 8: NO EXISTE EN SAP</option>
+              <option value="ERROR 9: NO EXISTE EN SUNAT">ERROR 9: NO EXISTE EN SUNAT</option>
+            </select>
+          </div>
+        )}
+
+        {stateFilter === 'OBSERVADO' && (
+          <div className="col-lg-2 animate-fade-in">
+            <select
+              className="form-select form-control-premium"
+              value={subFilter}
+              onChange={(e) => { setSubFilter(e.target.value); setCurrentPage(1); }}
+            >
+              <option value="ALL">Todas las Obs.</option>
+              <option value="OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD">OBS 1: DIFERENCIA TIPO IDENTIDAD</option>
+              <option value="OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD">OBS 2: DIFERENCIA NUMERO IDENTIDAD</option>
+              <option value="OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS">OBS 3: DIFERENCIA SECUENCIA</option>
+            </select>
+          </div>
+        )}
+
+        {stateFilter !== 'ERROR' && stateFilter !== 'OBSERVADO' && (
+          <div className="col-lg-2">
+            <select
+              className="form-select form-control-premium text-muted"
+              disabled
+              value="ALL"
+              readOnly
+            >
+              <option value="ALL">Filtro Grupo: N/A</option>
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Tabla Unificada */}
@@ -416,7 +489,7 @@ export default function TablaUnificada({ periodId, activePeriod }) {
       )}
 
       {/* Modal Detalle Errores */}
-      {selectedRow && (
+      {selectedRow && createPortal(
         <div 
           className="modal fade show d-block" 
           tabIndex="-1" 
@@ -481,7 +554,8 @@ export default function TablaUnificada({ periodId, activePeriod }) {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

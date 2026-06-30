@@ -12,7 +12,21 @@ export function buildCarFromSAP(rucEmpresa, tipo, serie, correlativo) {
   return `${rucEmpresa}${tipoPad}${serie.trim().toUpperCase()}${corrPad}`;
 }
 
-export function validateRow(row) {
+export function buildCortesiasSet(rows) {
+  const set = new Set();
+  for (const row of rows) {
+    const doc = (row['Documento'] || '').trim();
+    if (!doc || doc.length < 10) continue;
+    const tipoLetra = doc[0].toUpperCase();
+    const tipoCP = tipoLetra === 'B' ? '03' : '01';
+    const serie = tipoLetra + parseInt(doc.slice(1, 4), 10) + doc.slice(4, 6);
+    const corr = parseInt(doc.slice(6), 10).toString();
+    set.add(`${tipoCP}-${serie}-${corr}`);
+  }
+  return set;
+}
+
+export function validateRow(row, cortesiasSet = new Set()) {
   const errors = [];
   let status = 'OK';
 
@@ -25,142 +39,128 @@ export function validateRow(row) {
     return { status: 'OK', errors: ['Documento Anulado (validaciones omitidas)'] };
   }
 
-  // Validaciones de Existencia
-  if (row.total_sunat > 0 && !row.nro_identidad_sap && row.total_sap === 0) {
-    return { status: 'ERROR', errors: ['No existe registro en SAP'] };
+  // Validaciones de Existencia (Nuevas Reglas de Null)
+  const isNoExisteSAP = row.nro_identidad_sap === null && row.nombre_sap === null;
+  const isNoExisteSUNAT = row.nro_identidad_sunat === null && row.nombre_sunat === null;
+
+  if (isNoExisteSAP) {
+    errors.push("ERROR 8: NO EXISTE EN SAP");
   }
-  if (row.total_sap > 0 && !row.nro_identidad_sunat && row.total_sunat === 0) {
-    return { status: 'ERROR', errors: ['No existe registro en SUNAT'] };
+  if (isNoExisteSUNAT) {
+    errors.push("ERROR 9: NO EXISTE EN SUNAT");
   }
 
-  // 1. Validaciones de Longitud de Identidad
-  const valIdent = (tipo, nro, label) => {
-    if (!nro) return;
-    const cleanNro = nro.trim();
-    if (tipo === '1') { // DNI
-      if (cleanNro.length !== 8 || !/^\d+$/.test(cleanNro)) {
-        errors.push(`${label} DNI debe tener exactamente 8 caracteres numéricos`);
-        status = 'ERROR';
-      }
-    } else if (tipo === '6') { // RUC
-      if (cleanNro.length !== 11 || !/^\d+$/.test(cleanNro)) {
-        errors.push(`${label} RUC debe tener exactamente 11 caracteres numéricos`);
-        status = 'ERROR';
-      }
-    } else if (tipo === '0') { // Otros
-      if (cleanNro.length > 15) {
-        errors.push(`${label} Identidad Otro excede la longitud de 15 caracteres`);
-        status = 'ERROR';
-      }
-    } else if (tipo === '4') { // CE
-      if (cleanNro.length > 12) {
-        errors.push(`${label} Identidad CE excede la longitud de 12 caracteres`);
-        status = 'ERROR';
-      }
-    } else if (tipo === '7') { // Pasaporte
-      if (cleanNro.length > 12) {
-        errors.push(`${label} Pasaporte excede la longitud de 12 caracteres`);
-        status = 'ERROR';
-      }
+  // Si no existe de un lado, no realizamos comparaciones cruzadas de montos ni identidad
+  if (!isNoExisteSAP && !isNoExisteSUNAT) {
+    // 1. Diferencia en la BI Gravada
+    const diffBase = Math.abs(row.base_sap - row.base_sunat);
+    if (diffBase > 0.05) {
+      errors.push("ERROR 1: DIFERENCIA EN LA BI Gravada");
     }
-  };
 
-  valIdent(row.tipo_identidad_sunat, row.nro_identidad_sunat, 'SUNAT');
+    // 2. Diferencia en el IGV / IPM
+    const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
+    if (diffIgv > 0.05) {
+      errors.push("ERROR 2: DIFERENCIA EN EL IGV / IPM");
+    }
 
-  // 2. Boleta + monto > 700 soles -> tipo identidad debe ser 1 (DNI)
+    // 3. Diferencia en Mto Exonerado
+    const diffExonerado = Math.abs((row.exonerado_sap || 0) - (row.exonerado_sunat || 0));
+    if (diffExonerado > 0.05) {
+      errors.push("ERROR 3: DIFERENCIA EN Mto Exonerado");
+    }
+
+    // 4. Diferencia en Mto Inafecto
+    const diffInafecto = Math.abs((row.inafecto_sap || 0) - (row.inafecto_sunat || 0));
+    if (diffInafecto > 0.05) {
+      errors.push("ERROR 4: DIFERENCIA EN Mto Inafecto");
+    }
+
+    // 5. Diferencia en Totales
+    const diffTotal = Math.abs(row.total_sap - row.total_sunat);
+    if (diffTotal > 0.05) {
+      errors.push("ERROR 5: DIFERENCIA EN TOTALES");
+    }
+
+    // OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD
+    if (row.tipo_identidad_sap !== null && row.tipo_identidad_sunat !== null && row.tipo_identidad_sap !== row.tipo_identidad_sunat) {
+      errors.push("OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD");
+      errors.push(`Discrepancia tipo identidad: SAP (${row.tipo_identidad_sap}) vs SUNAT (${row.tipo_identidad_sunat})`);
+    }
+
+    // OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD
+    if (row.nro_identidad_sap !== null && row.nro_identidad_sunat !== null && row.nro_identidad_sap !== row.nro_identidad_sunat) {
+      errors.push("OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD");
+      errors.push(`Discrepancia en identidad: SAP (${row.nro_identidad_sap}) vs SUNAT (${row.nro_identidad_sunat})`);
+    }
+  }
+
+  // ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI (Solo SUNAT como fuente)
   if (row.tipo_doc_pago === '03' && row.total_sunat > 700) {
     if (row.tipo_identidad_sunat !== '1') {
-      errors.push('Boleta mayor a S/. 700 requiere DNI (Código 1)');
-      status = 'ERROR';
+      errors.push("ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI");
     }
   }
 
-  // 3. Tipo identidad 1 (DNI) -> no números iguales y nombre distinto a 'cliente'
-  if (row.tipo_identidad_sunat === '1' && row.nro_identidad_sunat) {
-    if (allCharactersEqual(row.nro_identidad_sunat)) {
-      errors.push('DNI no puede contener todos los dígitos iguales');
-      status = 'ERROR';
+  // ERROR 7: DNI CON FORMATO INVÁLIDO (Evalúa tanto en SAP como SUNAT si están presentes)
+  const isInvalidDNI = (tipo, nro) => {
+    if (tipo === '1' && nro) {
+      const clean = nro.trim();
+      return clean.length !== 8 || !/^\d+$/.test(clean);
     }
-    
-    // Regla de Nombre "Cliente" refinada para evitar falsos positivos
-    const nombreLower = row.nombre_sunat?.toLowerCase().trim() ?? '';
-    if (nombreLower === 'cliente' || nombreLower.startsWith('cliente ')) {
-      errors.push('Nombre genérico "cliente" no permitido para DNI');
-      status = 'ERROR';
-    }
-  }
+    return false;
+  };
 
-  // 4. Boleta + tipo identidad 6 (RUC) -> primeros caracteres deben ser 10
-  if (row.tipo_doc_pago === '03' && row.tipo_identidad_sunat === '6') {
-    if (!row.nro_identidad_sunat?.startsWith('10')) {
-      errors.push('Boletas con RUC deben iniciar con "10" (RUC Persona Natural)');
-      status = 'ERROR';
-    }
-  }
-
-  // 5. Tipo documento 4 (CE) -> no caracteres iguales y nombre distinto a 'cliente'
-  if (row.tipo_identidad_sunat === '4' && row.nro_identidad_sunat) {
-    if (allCharactersEqual(row.nro_identidad_sunat)) {
-      errors.push('CE no puede contener caracteres todos iguales');
-      status = 'ERROR';
-    }
-    const nombreLower = row.nombre_sunat?.toLowerCase().trim() ?? '';
-    if (nombreLower === 'cliente' || nombreLower.startsWith('cliente ')) {
-      errors.push('Nombre genérico "cliente" no permitido para CE');
-      status = 'ERROR';
-    }
-  }
-
-  // 6. Comparación SAP vs SUNAT de Identidad
-  if (row.nro_identidad_sap && row.nro_identidad_sunat) {
-    if (row.nro_identidad_sap !== row.nro_identidad_sunat) {
-      errors.push(`Discrepancia en identidad: SAP (${row.nro_identidad_sap}) vs SUNAT (${row.nro_identidad_sunat})`);
-      status = 'ERROR';
-    }
-    if (row.tipo_identidad_sap !== row.tipo_identidad_sunat) {
-      errors.push(`Discrepancia tipo identidad: SAP (${row.tipo_identidad_sap}) vs SUNAT (${row.tipo_identidad_sunat})`);
-      status = 'OBSERVADO';
-    }
-  }
-
-  // 7. Diferencia en importes monetarios SAP vs SUNAT (Tolerancia +/- 0.05)
-  const diffBase = Math.abs(row.base_sap - row.base_sunat);
-  const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
-  const diffOtros = Math.abs(row.otros_sap - row.otros_sunat);
-  const diffTotal = Math.abs(row.total_sap - row.total_sunat);
-
-  if (diffBase > 0.05 || diffIgv > 0.05 || diffOtros > 0.05 || diffTotal > 0.05) {
-    errors.push(`Diferencia de importes SAP vs SUNAT: Base(${diffBase.toFixed(2)}), IGV(${diffIgv.toFixed(2)}), Otros(${diffOtros.toFixed(2)}), Total(${diffTotal.toFixed(2)})`);
-    status = 'ERROR';
+  if (isInvalidDNI(row.tipo_identidad_sunat, row.nro_identidad_sunat) || isInvalidDNI(row.tipo_identidad_sap, row.nro_identidad_sap)) {
+    errors.push("ERROR 7: DNI CON FORMATO INVÁLIDO");
   }
 
   // 8. Reglas de SIRE
   if (row.mensaje_sire) {
     const msgUpper = row.mensaje_sire.toUpperCase();
     
-    // Regla Cortesía: Si el total es 0 y op_gratuitas > 0 (o base_sap > 0)
-    const isCortesia = row.total_sunat === 0 && (row.op_gratuitas > 0 || row.base_sap > 0);
+    // Regla de Cortesía: Opción A
+    const key = `${row.tipo_doc_pago}-${row.serie}-${parseInt(row.correlativo, 10)}`;
+    const hasCortesiasExcel = cortesiasSet.size > 0;
+    const isCortesia = hasCortesiasExcel
+      ? cortesiasSet.has(key)
+      : row.total_sunat === 0 && (row.op_gratuitas > 0 || row.base_sap > 0);
     
+    const diffBase = Math.abs(row.base_sap - row.base_sunat);
+    const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
+    const diffTotal = Math.abs(row.total_sap - row.total_sunat);
+
     if (msgUpper.includes('DIFERENCIA')) {
-      if (isCortesia && diffBase <= 0.05 && diffIgv <= 0.05 && diffOtros <= 0.05 && diffTotal <= 0.05) {
+      if (isCortesia && diffBase <= 0.05 && diffIgv <= 0.05 && diffTotal <= 0.05) {
         // Correcto: Ignorar la diferencia en cortesías
       } else {
         errors.push(`SIRE Alerta: ${row.mensaje_sire}`);
-        if (status === 'OK') status = 'OBSERVADO';
       }
     } else if (msgUpper.includes('REGISTRO OK')) {
       // Registro validado
     } else {
       errors.push(`SIRE: ${row.mensaje_sire}`);
-      if (status === 'OK') status = 'OBSERVADO';
     }
+  }
+
+  // Determinar estado de validación en base a errores
+  const hasError = errors.some(e => e.startsWith('ERROR '));
+  const hasObs = errors.some(e => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
+
+  if (hasError) {
+    status = 'ERROR';
+  } else if (hasObs) {
+    status = 'OBSERVADO';
+  } else {
+    status = 'OK';
   }
 
   return { status, errors };
 }
 
 // Conciliación principal
-export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
+export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesiasList = []) {
+  const cortesiasSet = buildCortesiasSet(cortesiasList);
   const unified = {};
 
   // 1. Cargar SUNAT
@@ -178,6 +178,8 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
       nombre_sunat: item.nombre,
       base_sunat: item.base,
       igv_sunat: item.igv,
+      exonerado_sunat: item.exonerado || 0,
+      inafecto_sunat: item.inafecto || 0,
       otros_sunat: item.otros,
       total_sunat: item.total,
       estado_sunat: item.estado,
@@ -188,6 +190,8 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
       nombre_sap: null,
       base_sap: 0,
       igv_sap: 0,
+      exonerado_sap: 0,
+      inafecto_sap: 0,
       otros_sap: 0,
       total_sap: 0,
       estado_sap: null,
@@ -217,6 +221,8 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
         nombre_sunat: null,
         base_sunat: 0,
         igv_sunat: 0,
+        exonerado_sunat: 0,
+        inafecto_sunat: 0,
         otros_sunat: 0,
         total_sunat: 0,
         estado_sunat: null,
@@ -227,14 +233,16 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
         nombre_sap: item.nombre,
         base_sap: item.base,
         igv_sap: item.igv,
+        exonerado_sap: item.exonerado || 0,
+        inafecto_sap: item.inafecto || 0,
         otros_sap: item.otros,
         total_sap: item.total,
         estado_sap: item.estado,
         
         mensaje_sire: null,
         tipo_pago_sire: 'NORMAL',
-        estado_validacion: 'ERROR',
-        errores_json: ['Existe en SAP pero no registrado en SUNAT']
+        estado_validacion: 'OK',
+        errores_json: []
       };
     } else {
       const record = unified[key];
@@ -243,6 +251,8 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
       record.nombre_sap = item.nombre;
       record.base_sap = item.base;
       record.igv_sap = item.igv;
+      record.exonerado_sap = item.exonerado || 0;
+      record.inafecto_sap = item.inafecto || 0;
       record.otros_sap = item.otros;
       record.total_sap = item.total;
       record.estado_sap = item.estado;
@@ -259,14 +269,19 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
 
   // 4. Validaciones de fila individual
   Object.values(unified).forEach(record => {
-    const isCortesia = record.total_sunat === 0 && (record.op_gratuitas > 0 || record.base_sap > 0);
+    const getCortesiaKey = (r) =>
+      `${r.tipo_doc_pago}-${r.serie}-${parseInt(r.correlativo, 10)}`;
+
+    const hasCortesiasExcel = cortesiasSet.size > 0;
+    const isCortesia = hasCortesiasExcel
+      ? cortesiasSet.has(getCortesiaKey(record))
+      : record.total_sunat === 0 && (record.op_gratuitas > 0 || record.base_sap > 0);
+
     if (isCortesia) {
       record.tipo_pago_sire = 'CORTESIA';
     }
     
-    if (record.errores_json.length > 0) return;
-
-    const val = validateRow(record);
+    const val = validateRow(record, cortesiasSet);
     record.estado_validacion = val.status;
     record.errores_json = val.errors;
   });
@@ -291,6 +306,7 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa) {
       // Salto de secuencia catalogado como OBSERVADO para admitir posibles anulados/excluidos
       if (currNum - prevNum > 1) {
         const gap = currNum - prevNum - 1;
+        curr.errores_json.push('OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS');
         curr.errores_json.push(`Posible salto de secuencia: ${gap} correlativo(s) no encontrado(s) entre ${prev.correlativo} y ${curr.correlativo} (pueden ser anulados)`);
         if (curr.estado_validacion !== 'ERROR') {
           curr.estado_validacion = 'OBSERVADO';

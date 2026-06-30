@@ -1,11 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiPlus, FiEdit2, FiCheck, FiAlertTriangle, FiUserCheck, FiKey } from 'react-icons/fi';
 
 export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
-  const [usuarios, setUsuarios] = useState([]);
-  const [loading, setLoading] = useState(false);
-
   // Formulario
   const [editingId, setEditingId] = useState(null);
   const [nombre, setNombre] = useState('');
@@ -17,14 +15,10 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  useEffect(() => {
-    fetchUsuarios();
-  }, [activeCompany]);
-
-  const fetchUsuarios = async () => {
-    setLoading(true);
-    try {
-      // Obtenemos perfiles de usuario vinculados a la empresa
+  // TanStack Query para obtener la lista de usuarios
+  const { data: usuarios = [], isLoading, refetch } = useQuery({
+    queryKey: ['usuarios', activeCompany?.id],
+    queryFn: async () => {
       const { data, error } = await supabase
         .from('usuarios')
         .select('*')
@@ -32,19 +26,10 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
         .order('nombre', { ascending: true });
 
       if (error) throw error;
-      
-      // Intentamos complementar con el email del usuario.
-      // Ya que auth.users es privado, crearemos una columna o podemos mapearlo.
-      // Para este proyecto, dado que auth.users es privado en Supabase por defecto,
-      // el email lo guardaremos o leeremos si es posible, o simplemente mostraremos los perfiles.
-      // Para mayor robustez en nuestro prototipo, listaremos los datos locales.
-      setUsuarios(data || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data || [];
+    },
+    enabled: !!activeCompany?.id,
+  });
 
   const resetForm = () => {
     setEditingId(null);
@@ -56,50 +41,62 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     setErrorMsg('');
   };
 
+  // TanStack Mutation para guardar/crear usuario
+  const saveUserMutation = useMutation({
+    mutationFn: async (payload) => {
+      if (payload.id) {
+        // Actualizar usuario
+        const { error } = await supabase.rpc('actualizar_usuario', {
+          p_id: payload.id,
+          p_nombre: payload.nombre,
+          p_rol: payload.rol,
+          p_activo: payload.activo,
+          p_password: payload.password || null
+        });
+        if (error) throw error;
+      } else {
+        // Crear usuario
+        const { error } = await supabase.rpc('crear_usuario', {
+          p_email: payload.email,
+          p_password: payload.password,
+          p_nombre: payload.nombre,
+          p_rol: payload.rol,
+          p_empresa_id: activeCompany.id
+        });
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      setSuccessMsg(editingId ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente en el sistema.');
+      resetForm();
+      refetch();
+    },
+    onError: (err) => {
+      setErrorMsg(err.message || 'Error al guardar el usuario.');
+    }
+  });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
 
-    try {
-      if (editingId) {
-        // Actualizar usuario
-        const { error } = await supabase.rpc('actualizar_usuario', {
-          p_id: editingId,
-          p_nombre: nombre,
-          p_rol: rol,
-          p_activo: activo,
-          p_password: password || null // Si está en blanco no se altera
-        });
-
-        if (error) throw error;
-        setSuccessMsg('Usuario actualizado correctamente.');
-      } else {
-        // Crear usuario
-        if (!password) {
-          setErrorMsg('La contraseña es obligatoria para nuevos usuarios.');
-          return;
-        }
-
-        const { data: newUserId, error } = await supabase.rpc('crear_usuario', {
-          p_email: email,
-          p_password: password,
-          p_nombre: nombre,
-          p_rol: rol,
-          p_empresa_id: activeCompany.id
-        });
-
-        if (error) throw error;
-        setSuccessMsg('Usuario creado correctamente en el sistema.');
-      }
-
-      resetForm();
-      fetchUsuarios();
-    } catch (err) {
-      console.error(err);
-      setErrorMsg(err.message || 'Error al guardar el usuario.');
+    if (!editingId && !password) {
+      setErrorMsg('La contraseña es obligatoria para nuevos usuarios.');
+      return;
     }
+
+    saveUserMutation.mutate({
+      id: editingId,
+      nombre,
+      email,
+      password,
+      rol,
+      activo
+    });
   };
+
+  const loading = isLoading || saveUserMutation.isPending;
 
   const handleEdit = (user) => {
     setEditingId(user.id);

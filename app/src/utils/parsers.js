@@ -55,6 +55,8 @@ export function parseSAP(text) {
       nombre: cols[11].trim(),
       base: parseAmount(cols[13]),
       igv: parseAmount(cols[15]),
+      exonerado: parseAmount(cols[17]),
+      inafecto: parseAmount(cols[18]),
       otros: parseAmount(cols[23]), // Mapea conceptualmente a "Otros Tributos"
       total: parseAmount(cols[24]),
       estado: cols[34]?.trim() || '1' // 1 = activo, 2 = anulado
@@ -90,6 +92,8 @@ export function parseSUNAT(text) {
       nombre: cols[12].trim(),
       base: parseAmount(cols[14]),
       igv: parseAmount(cols[16]),
+      exonerado: parseAmount(cols[18]),
+      inafecto: parseAmount(cols[19]),
       otros: parseAmount(cols[24]), // Otros Tributos (incl. ICBPER)
       total: parseAmount(cols[25]), // Total CP
       estado: cols[34]?.trim() || '1', // 1 = activo, 2 = anulado

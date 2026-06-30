@@ -174,10 +174,10 @@ ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
 
 -- Evitar errores si las políticas ya existen
 DROP POLICY IF EXISTS select_empresas ON public.empresas;
-CREATE POLICY select_empresas ON public.empresas FOR SELECT USING (id = public.get_user_empresa());
+CREATE POLICY select_empresas ON public.empresas FOR SELECT USING (id = public.get_user_empresa() OR public.get_user_rol() = 'admin');
 
 DROP POLICY IF EXISTS all_empresas_admin ON public.empresas;
-CREATE POLICY all_empresas_admin ON public.empresas FOR ALL USING (id = public.get_user_empresa() AND public.get_user_rol() = 'admin');
+CREATE POLICY all_empresas_admin ON public.empresas FOR ALL USING (public.get_user_rol() = 'admin');
 
 DROP POLICY IF EXISTS select_usuarios ON public.usuarios;
 CREATE POLICY select_usuarios ON public.usuarios FOR SELECT USING (empresa_id = public.get_user_empresa());

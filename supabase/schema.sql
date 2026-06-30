@@ -26,9 +26,12 @@ CREATE TABLE IF NOT EXISTS public.periodos_carga (
     empresa_id UUID REFERENCES public.empresas(id) ON DELETE CASCADE,
     usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
     periodo VARCHAR(6) NOT NULL, -- 'YYYYMM'
+    dia VARCHAR(2),
+    version INTEGER DEFAULT 1,
     fecha_carga TIMESTAMPTZ DEFAULT now(),
     estado TEXT NOT NULL CHECK (estado IN ('procesando', 'completado', 'error')),
-    created_at TIMESTAMPTZ DEFAULT now()
+    created_at TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT uq_periodo_empresa_version UNIQUE (empresa_id, periodo, dia, version)
 );
 
 -- 5. Tabla del Detalle de Validación (Conciliación)

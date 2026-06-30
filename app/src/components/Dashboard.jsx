@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiCheckCircle, FiAlertTriangle, FiXCircle, FiTrendingUp, FiLayers } from 'react-icons/fi';
+import { FiCheckCircle, FiAlertTriangle, FiXCircle, FiLayers } from 'react-icons/fi';
 
-export default function Dashboard({ activeCompany, periodId }) {
-  const [stats, setStats] = useState({
+export default function Dashboard({ periodId, onNavigateToReconciliation }) {
+  const { data: stats = {
     total: 0,
     ok: 0,
     errors: 0,
@@ -14,18 +15,9 @@ export default function Dashboard({ activeCompany, periodId }) {
     igvSunat: 0,
     totalSap: 0,
     totalSunat: 0,
-  });
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (periodId) {
-      fetchStats();
-    }
-  }, [periodId]);
-
-  const fetchStats = async () => {
-    setLoading(true);
-    try {
+  } } = useQuery({
+    queryKey: ['dashboardStats', periodId],
+    queryFn: async () => {
       const { data, error } = await supabase
         .from('v_resumen_validacion')
         .select('*')
@@ -34,16 +26,16 @@ export default function Dashboard({ activeCompany, periodId }) {
 
       if (error) {
         if (error.code === 'PGRST116') {
-          // No records found yet for this period
-          setStats({
+          return {
             total: 0, ok: 0, errors: 0, observed: 0,
             baseSap: 0, baseSunat: 0, igvSap: 0, igvSunat: 0, totalSap: 0, totalSunat: 0
-          });
-        } else {
-          throw error;
+          };
         }
-      } else if (data) {
-        setStats({
+        throw error;
+      }
+
+      if (data) {
+        return {
           total: parseInt(data.total_registros) || 0,
           ok: parseInt(data.ok_registros) || 0,
           errors: parseInt(data.error_registros) || 0,
@@ -54,14 +46,15 @@ export default function Dashboard({ activeCompany, periodId }) {
           igvSunat: parseFloat(data.sum_igv_sunat) || 0,
           totalSap: parseFloat(data.sum_total_sap) || 0,
           totalSunat: parseFloat(data.sum_total_sunat) || 0,
-        });
+        };
       }
-    } catch (e) {
-      console.error("Error cargando estadísticas de dashboard:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return {
+        total: 0, ok: 0, errors: 0, observed: 0,
+        baseSap: 0, baseSunat: 0, igvSap: 0, igvSunat: 0, totalSap: 0, totalSunat: 0
+      };
+    },
+    enabled: !!periodId,
+  });
 
   const getPercentage = (value) => {
     if (stats.total === 0) return '0%';
@@ -75,7 +68,10 @@ export default function Dashboard({ activeCompany, periodId }) {
       {/* KPI Cards Grid */}
       <div className="row g-3 mb-4">
         <div className="col-xl-3 col-sm-6">
-          <div className="card-premium d-flex align-items-center">
+          <div 
+            className="card-premium card-clickable d-flex align-items-center"
+            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}
+          >
             <div className="bg-secondary bg-opacity-25 rounded-3 p-3 me-3 text-white fs-3">
               <FiLayers />
             </div>
@@ -88,7 +84,10 @@ export default function Dashboard({ activeCompany, periodId }) {
         </div>
 
         <div className="col-xl-3 col-sm-6">
-          <div className="card-premium d-flex align-items-center">
+          <div 
+            className="card-premium card-clickable d-flex align-items-center"
+            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OK')}
+          >
             <div className="bg-success bg-opacity-25 rounded-3 p-3 me-3 text-success fs-3">
               <FiCheckCircle />
             </div>
@@ -101,7 +100,10 @@ export default function Dashboard({ activeCompany, periodId }) {
         </div>
 
         <div className="col-xl-3 col-sm-6">
-          <div className="card-premium d-flex align-items-center">
+          <div 
+            className="card-premium card-clickable d-flex align-items-center"
+            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OBSERVADO')}
+          >
             <div className="bg-warning bg-opacity-25 rounded-3 p-3 me-3 text-warning fs-3">
               <FiAlertTriangle />
             </div>
@@ -114,7 +116,10 @@ export default function Dashboard({ activeCompany, periodId }) {
         </div>
 
         <div className="col-xl-3 col-sm-6">
-          <div className="card-premium d-flex align-items-center">
+          <div 
+            className="card-premium card-clickable d-flex align-items-center"
+            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ERROR')}
+          >
             <div className="bg-danger bg-opacity-25 rounded-3 p-3 me-3 text-danger fs-3">
               <FiXCircle />
             </div>

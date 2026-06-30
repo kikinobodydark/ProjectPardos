@@ -3,12 +3,16 @@ import { supabase } from '../utils/supabaseClient';
 import { parseSAP, parseSUNAT, parseSIRE, stripBOM } from '../utils/parsers';
 import { reconcileData } from '../utils/validations';
 import { FiUpload, FiFileText, FiCheck, FiPlay, FiAlertTriangle } from 'react-icons/fi';
+import * as XLSX from 'xlsx';
 
 export default function CargaArchivos({ activeCompany, userProfile, onProcessComplete }) {
   const [periodo, setPeriodo] = useState(''); // Formato YYYYMM, ej. 202606
+  const [dia, setDia] = useState('');
+  const [version, setVersion] = useState('1');
   const [sapFile, setSapFile] = useState(null);
   const [sunatFile, setSunatFile] = useState(null);
   const [sireFile, setSireFile] = useState(null);
+  const [cortesiasFile, setCortesiasFile] = useState(null);
   
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -21,6 +25,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       if (type === 'sap') setSapFile(file);
       if (type === 'sunat') setSunatFile(file);
       if (type === 'sire') setSireFile(file);
+      if (type === 'cortesias') setCortesiasFile(file);
     }
   };
 
@@ -33,6 +38,27 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
         const decoder = new TextDecoder(encoding);
         const text = decoder.decode(buffer);
         resolve(text);
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  // Leer archivo Excel (.xlsx) y devolver objetos JSON
+  const readExcelFile = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          const json = XLSX.utils.sheet_to_json(sheet);
+          resolve(json);
+        } catch (err) {
+          reject(err);
+        }
       };
       reader.onerror = (err) => reject(err);
       reader.readAsArrayBuffer(file);
@@ -54,6 +80,23 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       return;
     }
 
+    // Validación contextual del día del mes
+    const year = parseInt(periodo.slice(0, 4), 10);
+    const month = parseInt(periodo.slice(4, 6), 10);
+    const maxDia = new Date(year, month, 0).getDate();
+    const diaNum = parseInt(dia, 10);
+    if (isNaN(diaNum) || diaNum < 1 || diaNum > maxDia) {
+      setErrorMsg(`El día debe estar entre 1 y ${maxDia} para el período ${periodo.slice(0, 4)}-${periodo.slice(4)}.`);
+      return;
+    }
+
+    // Validación de versión
+    const versionNum = parseInt(version, 10);
+    if (isNaN(versionNum) || versionNum < 1) {
+      setErrorMsg('La versión debe ser un número entero positivo.');
+      return;
+    }
+
     setLoading(true);
     setStatusText('Leyendo y decodificando archivos...');
 
@@ -67,6 +110,12 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       const sapText = await readFileAsText(sapFile, 'windows-1252');
       const sireText = await readFileAsText(sireFile, 'windows-1252');
 
+      let cortesiasData = [];
+      if (cortesiasFile) {
+        setStatusText('Parseando archivo de cortesías (Excel)...');
+        cortesiasData = await readExcelFile(cortesiasFile);
+      }
+
       setStatusText('Parseando registros...');
       const sunatData = parseSUNAT(sunatText);
       const sapData = parseSAP(sapText);
@@ -77,7 +126,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       if (sireData.length === 0) throw new Error('El archivo de SIRE está vacío o no coincide con el formato.');
 
       setStatusText('Conciliando y aplicando reglas tributarias...');
-      const reconciledList = reconcileData(sapData, sunatData, sireData, activeCompany.ruc);
+      const reconciledList = reconcileData(sapData, sunatData, sireData, activeCompany.ruc, cortesiasData);
 
       setStatusText(`Preparando ${reconciledList.length} registros para base de datos...`);
 
@@ -88,6 +137,8 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           empresa_id: activeCompany.id,
           usuario_id: userProfile.id,
           periodo: periodo,
+          dia: dia,
+          version: versionNum,
           estado: 'procesando'
         })
         .select()
@@ -113,6 +164,8 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           nombre_sap: r.nombre_sap,
           base_sap: r.base_sap,
           igv_sap: r.igv_sap,
+          exonerado_sap: r.exonerado_sap || 0,
+          inafecto_sap: r.inafecto_sap || 0,
           otros_sap: r.otros_sap,
           total_sap: r.total_sap,
           
@@ -121,6 +174,8 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           nombre_sunat: r.nombre_sunat,
           base_sunat: r.base_sunat,
           igv_sunat: r.igv_sunat,
+          exonerado_sunat: r.exonerado_sunat || 0,
+          inafecto_sunat: r.inafecto_sunat || 0,
           otros_sunat: r.otros_sunat,
           total_sunat: r.total_sunat,
           
@@ -156,10 +211,13 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       setSapFile(null);
       setSunatFile(null);
       setSireFile(null);
+      setCortesiasFile(null);
+      setDia('');
+      setVersion('1');
       document.getElementById('form-carga').reset();
 
-      // Notificar al componente principal
-      onProcessComplete(periodId, periodo);
+      // Notificar al componente principal con formato extendido
+      onProcessComplete(periodId, `${periodo} (Día: ${dia}, v${versionNum})`);
 
     } catch (e) {
       console.error(e);
@@ -192,9 +250,9 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       )}
 
       <form id="form-carga" onSubmit={handleProcess}>
-        <div className="row">
-          <div className="col-md-4 mb-4">
-            <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Período Contable</label>
+        <div className="row g-2 mb-4">
+          <div className="col-md-4">
+            <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Período Contable (Año/Mes)</label>
             <input
               type="text"
               required
@@ -207,11 +265,41 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
             />
             <small className="text-muted d-block mt-1" style={{ fontSize: '0.72rem' }}>Formato: AAAAMM (Año y Mes)</small>
           </div>
+
+          <div className="col-md-4">
+            <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Día de Carga</label>
+            <input
+              type="text"
+              required
+              disabled={loading}
+              maxLength={2}
+              className="form-control form-control-premium font-mono"
+              placeholder="Ej: 25"
+              value={dia}
+              onChange={(e) => setDia(e.target.value)}
+            />
+            <small className="text-muted d-block mt-1" style={{ fontSize: '0.72rem' }}>Día del mes (1-31)</small>
+          </div>
+
+          <div className="col-md-4">
+            <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Versión</label>
+            <input
+              type="number"
+              required
+              disabled={loading}
+              min={1}
+              className="form-control form-control-premium font-mono"
+              placeholder="Ej: 1"
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+            />
+            <small className="text-muted d-block mt-1" style={{ fontSize: '0.72rem' }}>Versión de carga para el día</small>
+          </div>
         </div>
 
         <div className="row g-3 mb-4">
           {/* SAP Dropzone */}
-          <div className="col-lg-4">
+          <div className="col-xl-3 col-md-6">
             <div 
               className={`dropzone-premium ${sapFile ? 'active' : ''}`}
               onClick={() => document.getElementById('input-sap').click()}
@@ -241,7 +329,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           </div>
 
           {/* SUNAT Dropzone */}
-          <div className="col-lg-4">
+          <div className="col-xl-3 col-md-6">
             <div 
               className={`dropzone-premium ${sunatFile ? 'active' : ''}`}
               onClick={() => document.getElementById('input-sunat').click()}
@@ -271,7 +359,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           </div>
 
           {/* SIRE Dropzone */}
-          <div className="col-lg-4">
+          <div className="col-xl-3 col-md-6">
             <div 
               className={`dropzone-premium ${sireFile ? 'active' : ''}`}
               onClick={() => document.getElementById('input-sire').click()}
@@ -299,6 +387,36 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               )}
             </div>
           </div>
+
+          {/* Cortesías Dropzone */}
+          <div className="col-xl-3 col-md-6">
+            <div 
+              className={`dropzone-premium ${cortesiasFile ? 'active' : ''}`}
+              onClick={() => document.getElementById('input-cortesias').click()}
+            >
+              <input
+                id="input-cortesias"
+                type="file"
+                accept=".xlsx,.xls"
+                className="d-none"
+                onChange={(e) => handleFileChange(e, 'cortesias')}
+                disabled={loading}
+              />
+              {cortesiasFile ? (
+                <div>
+                  <FiCheck className="text-success fs-2 mb-2" />
+                  <div className="text-white fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{cortesiasFile.name}</div>
+                  <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(cortesiasFile.size / 1024).toFixed(1)} KB (Cortesías)</small>
+                </div>
+              ) : (
+                <div>
+                  <FiUpload className="text-muted fs-2 mb-2" />
+                  <div className="text-white fw-semibold" style={{ fontSize: '0.85rem' }}>Cortesías (Excel - Opcional)</div>
+                  <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo Excel</small>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="d-flex justify-content-between align-items-center">
@@ -306,7 +424,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
             {loading ? (
               <span className="text-primary fw-semibold">{statusText}</span>
             ) : (
-              'Los 3 archivos son procesados en el navegador de manera segura.'
+              'Los archivos son procesados en el navegador de manera segura.'
             )}
           </span>
           <button

@@ -36,11 +36,14 @@ JOIN public.empresas e ON pc.empresa_id = e.id
 WHERE dv.estado_validacion IN ('ERROR', 'OBSERVADO');
 
 -- Vista 3: Historial detallado de cargas (Enfuerza RLS)
+DROP VIEW IF EXISTS public.v_historial_cargas;
 CREATE OR REPLACE VIEW public.v_historial_cargas 
 WITH (security_invoker = true) AS
 SELECT
     pc.id as periodo_id,
     pc.periodo,
+    pc.dia,
+    pc.version,
     pc.fecha_carga,
     pc.estado as estado_carga,
     e.razon_social as empresa_nombre,
@@ -52,4 +55,5 @@ SELECT
     (SELECT count(*) FROM public.detalle_validacion dv WHERE dv.periodo_id = pc.id AND dv.estado_validacion = 'OBSERVADO') as observado_registros
 FROM public.periodos_carga pc
 JOIN public.empresas e ON pc.empresa_id = e.id
-LEFT JOIN public.usuarios u ON pc.usuario_id = u.id;
+LEFT JOIN public.usuarios u ON pc.usuario_id = u.id
+ORDER BY pc.fecha_carga DESC, pc.version DESC;

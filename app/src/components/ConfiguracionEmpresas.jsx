@@ -1,11 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiPlus, FiEdit2, FiTrash2, FiCheck, FiX, FiAlertTriangle } from 'react-icons/fi';
 
 export default function ConfiguracionEmpresas({ activeCompany }) {
-  const [empresas, setEmpresas] = useState([]);
-  const [loading, setLoading] = useState(false);
-  
   // Formulario
   const [editingId, setEditingId] = useState(null);
   const [ruc, setRuc] = useState('');
@@ -15,27 +13,18 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  useEffect(() => {
-    fetchEmpresas();
-  }, []);
-
-  const fetchEmpresas = async () => {
-    setLoading(true);
-    try {
-      // Nota: RLS filtrará automáticamente para que solo vean las que tienen derecho
+  // TanStack Query para obtener la lista de empresas
+  const { data: empresas = [], isLoading, refetch } = useQuery({
+    queryKey: ['empresas'],
+    queryFn: async () => {
       const { data, error } = await supabase
         .from('empresas')
         .select('*')
         .order('razon_social', { ascending: true });
-
       if (error) throw error;
-      setEmpresas(data || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data || [];
+    },
+  });
 
   const resetForm = () => {
     setEditingId(null);
@@ -44,6 +33,44 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
     setActivo(true);
     setErrorMsg('');
   };
+
+  // TanStack Mutation para guardar/crear empresa
+  const saveMutation = useMutation({
+    mutationFn: async (payload) => {
+      if (payload.id) {
+        // Actualizar empresa
+        const { error } = await supabase
+          .from('empresas')
+          .update({
+            ruc: payload.ruc,
+            razon_social: payload.razonSocial,
+            activo: payload.activo
+          })
+          .eq('id', payload.id);
+
+        if (error) throw error;
+      } else {
+        // Crear empresa
+        const { error } = await supabase
+          .from('empresas')
+          .insert({
+            ruc: payload.ruc,
+            razon_social: payload.razonSocial,
+            activo: true
+          });
+
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      setSuccessMsg(editingId ? 'Empresa actualizada correctamente.' : 'Empresa creada correctamente.');
+      resetForm();
+      refetch();
+    },
+    onError: (err) => {
+      setErrorMsg(err.message || 'Error al guardar empresa.');
+    }
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -55,40 +82,12 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
       return;
     }
 
-    try {
-      if (editingId) {
-        // Actualizar empresa
-        const { error } = await supabase
-          .from('empresas')
-          .update({
-            ruc,
-            razon_social: razonSocial,
-            activo
-          })
-          .eq('id', editingId);
-
-        if (error) throw error;
-        setSuccessMsg('Empresa actualizada correctamente.');
-      } else {
-        // Crear empresa
-        const { error } = await supabase
-          .from('empresas')
-          .insert({
-            ruc,
-            razon_social: razonSocial,
-            activo: true
-          });
-
-        if (error) throw error;
-        setSuccessMsg('Empresa creada correctamente.');
-      }
-
-      resetForm();
-      fetchEmpresas();
-    } catch (err) {
-      console.error(err);
-      setErrorMsg(err.message || 'Error al guardar empresa.');
-    }
+    saveMutation.mutate({
+      id: editingId,
+      ruc,
+      razonSocial,
+      activo
+    });
   };
 
   const handleEdit = (emp) => {
@@ -98,25 +97,34 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
     setActivo(emp.activo);
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('¿Estás seguro de que deseas eliminar esta empresa? Todos los datos relacionados se perderán.')) return;
-    
-    setErrorMsg('');
-    setSuccessMsg('');
-    try {
+  // TanStack Mutation para eliminar empresa
+  const deleteMutation = useMutation({
+    mutationFn: async (id) => {
       const { error } = await supabase
         .from('empresas')
         .delete()
         .eq('id', id);
 
       if (error) throw error;
+    },
+    onSuccess: () => {
       setSuccessMsg('Empresa eliminada correctamente.');
-      fetchEmpresas();
-    } catch (err) {
-      console.error(err);
+      refetch();
+    },
+    onError: (err) => {
       setErrorMsg(err.message || 'Error al eliminar empresa.');
     }
+  });
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('¿Estás seguro de que deseas eliminar esta empresa? Todos los datos relacionados se perderán.')) return;
+    
+    setErrorMsg('');
+    setSuccessMsg('');
+    deleteMutation.mutate(id);
   };
+
+  const loading = isLoading || saveMutation.isPending || deleteMutation.isPending;
 
   return (
     <div className="row g-4 animate-fade-in">

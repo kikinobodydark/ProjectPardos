@@ -6,10 +6,11 @@ import {
   FiClock, 
   FiBriefcase, 
   FiUsers, 
-  FiLogOut 
+  FiLogOut,
+  FiX
 } from 'react-icons/fi';
 
-export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout }) {
+export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout, sidebarOpen, setSidebarOpen }) {
   const isAdmin = userProfile?.rol === 'admin';
 
   const menuItems = [
@@ -25,20 +26,31 @@ export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout
   ];
 
   return (
-    <div className="sidebar animate-fade-in">
-      <div className="d-flex align-items-center mb-4 px-2">
-        <div 
-          className="bg-primary rounded-circle d-flex align-items-center justify-content-center me-2" 
-          style={{ width: '40px', height: '40px', minWidth: '40px' }}
+    <div className={`sidebar animate-fade-in ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      <div className="d-flex align-items-center justify-content-between mb-4 px-2">
+        <div className="d-flex align-items-center">
+          <div 
+            className="bg-primary rounded-circle d-flex align-items-center justify-content-center me-2" 
+            style={{ width: '40px', height: '40px', minWidth: '40px' }}
+          >
+            <span className="text-white fw-bold">CT</span>
+          </div>
+          <div>
+            <h5 className="mb-0 fw-bold text-white" style={{ fontSize: '1rem', letterSpacing: '-0.02em' }}>
+              ConciliaTributo
+            </h5>
+            <small className="text-muted" style={{ fontSize: '0.75rem' }}>v1.0.0 (SIRE)</small>
+          </div>
+        </div>
+        
+        {/* Botón de cerrar sidebar en celular */}
+        <button
+          className="btn btn-sm btn-outline-secondary d-md-none border-0 p-1"
+          onClick={() => setSidebarOpen(false)}
+          style={{ cursor: 'pointer' }}
         >
-          <span className="text-white fw-bold">CT</span>
-        </div>
-        <div>
-          <h5 className="mb-0 fw-bold text-white" style={{ fontSize: '1rem', letterSpacing: '-0.02em' }}>
-            ConciliaTributo
-          </h5>
-          <small className="text-muted" style={{ fontSize: '0.75rem' }}>v1.0.0 (SIRE)</small>
-        </div>
+          <FiX className="fs-4 text-muted" />
+        </button>
       </div>
 
       <hr style={{ borderColor: 'var(--border-color)', margin: '1rem 0' }} />

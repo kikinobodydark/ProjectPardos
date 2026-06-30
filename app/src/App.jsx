@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from './utils/supabaseClient';
 import Login from './components/Login';
 import Sidebar from './components/Sidebar';
@@ -13,10 +14,95 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [userProfile, setUserProfile] = useState(null);
   const [activeCompany, setActiveCompany] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const changeTab = (tabId) => {
+    setActiveTab(tabId);
+    setSidebarOpen(false);
+  };
+
+  // 1. Query del perfil de usuario
+  const { data: userProfile, isLoading: profileLoading } = useQuery({
+    queryKey: ['userProfile', session?.user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('*, empresas(*)')
+        .eq('id', session.user.id)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!session?.user?.id,
+  });
+
+  // 2. Query de empresas (solo administradores)
+  const { data: companies = [] } = useQuery({
+    queryKey: ['companies'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('empresas')
+        .select('*')
+        .order('razon_social', { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!userProfile && userProfile.rol === 'admin',
+  });
+
+  // 3. Query de periodos de la empresa activa
+  const { data: periods = [], refetch: refetchPeriods } = useQuery({
+    queryKey: ['periods', activeCompany?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('periodos_carga')
+        .select('*')
+        .eq('empresa_id', activeCompany.id)
+        .eq('estado', 'completado')
+        .order('fecha_carga', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!activeCompany?.id,
+  });
+
+  // Sincronizar activeCompany inicial al cargar el perfil
+  useEffect(() => {
+    if (userProfile?.empresas && !activeCompany) {
+      setActiveCompany(userProfile.empresas);
+    }
+  }, [userProfile, activeCompany]);
+
+  const handleCompanyChange = (companyId) => {
+    const selected = companies.find(c => c.id === companyId);
+    if (selected) {
+      setActiveCompany(selected);
+      setPeriodId(null);
+      setActivePeriod('');
+    }
+  };
+
+  const handlePeriodChange = (selectedPeriodId) => {
+    const p = periods.find(per => per.id === selectedPeriodId);
+    if (p) {
+      setPeriodId(p.id);
+      let label = p.periodo;
+      if (p.dia) {
+        label += ` (Día: ${p.dia}, v${p.version || 1})`;
+      }
+      setActivePeriod(label);
+    }
+  };
+
+  // Filtro inicial para la tabla de conciliación
+  const [reconciliationFilter, setReconciliationFilter] = useState(null);
+
+  const navigateToReconciliation = (filterType) => {
+    setReconciliationFilter(filterType);
+    changeTab('reconciliation');
+  };
 
   // Período activo actualmente seleccionado
   const [periodId, setPeriodId] = useState(null);
@@ -26,81 +112,57 @@ export default function App() {
     // 1. Obtener sesión activa de auth
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) {
-        fetchUserProfile(session.user.id);
-      } else {
-        setLoading(false);
-      }
     });
 
     // 2. Escuchar cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) {
-        fetchUserProfile(session.user.id);
-      } else {
-        setUserProfile(null);
+      if (!session) {
         setActiveCompany(null);
         setPeriodId(null);
         setActivePeriod('');
-        setLoading(false);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchUserProfile = async (userId) => {
-    try {
-      const { data, error } = await supabase
-        .from('usuarios')
-        .select('*, empresas(*)')
-        .eq('id', userId)
-        .single();
+  // Cargar automáticamente el último período al cambiar activeCompany
+  useEffect(() => {
+    if (activeCompany?.id) {
+      const loadLastPeriod = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('periodos_carga')
+            .select('*')
+            .eq('empresa_id', activeCompany.id)
+            .eq('estado', 'completado')
+            .order('fecha_carga', { ascending: false })
+            .limit(1);
 
-      if (error) throw error;
-      
-      setUserProfile(data);
-      if (data?.empresas) {
-        setActiveCompany(data.empresas);
-        // Autoseleccionar último período cargado por la empresa
-        fetchLastPeriod(data.empresas.id);
-      }
-    } catch (e) {
-      console.error("Error al cargar perfil de usuario:", e);
-    } finally {
-      setLoading(false);
+          if (error) throw error;
+
+          if (data && data.length > 0) {
+            setPeriodId(data[0].id);
+            let label = data[0].periodo;
+            if (data[0].dia) {
+              label += ` (Día: ${data[0].dia}, v${data[0].version || 1})`;
+            }
+            setActivePeriod(label);
+          } else {
+            setPeriodId(null);
+            setActivePeriod('');
+          }
+        } catch (e) {
+          console.error("Error obteniendo último período:", e);
+        }
+      };
+      loadLastPeriod();
     }
-  };
+  }, [activeCompany?.id]);
 
-  const fetchLastPeriod = async (companyId) => {
-    try {
-      const { data, error } = await supabase
-        .from('periodos_carga')
-        .select('*')
-        .eq('empresa_id', companyId)
-        .eq('estado', 'completado')
-        .order('fecha_carga', { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        setPeriodId(data[0].id);
-        setActivePeriod(data[0].periodo);
-      }
-    } catch (e) {
-      console.error("Error obteniendo último período:", e);
-    }
-  };
-
-  const handleLoginSuccess = (user, profile) => {
+  const handleLoginSuccess = (user) => {
     setSession({ user });
-    setUserProfile(profile);
-    if (profile?.empresas) {
-      setActiveCompany(profile.empresas);
-      fetchLastPeriod(profile.empresas.id);
-    }
   };
 
   const handleLogout = async () => {
@@ -110,16 +172,21 @@ export default function App() {
   const handleProcessComplete = (newPeriodId, newPeriod) => {
     setPeriodId(newPeriodId);
     setActivePeriod(newPeriod);
-    setActiveTab('reconciliation'); // Redirigir a la tabla de conciliación tras cargar
+    refetchPeriods();
+    changeTab('reconciliation');
   };
 
-  const handleSelectPeriod = (histPeriodId, histPeriod) => {
+  const handleSelectPeriod = (histPeriodId, histPeriod, histDia, histVersion) => {
     setPeriodId(histPeriodId);
-    setActivePeriod(histPeriod);
-    setActiveTab('dashboard'); // Ir al dashboard para ver resumen del período seleccionado
+    let label = histPeriod;
+    if (histDia) {
+      label += ` (Día: ${histDia}, v${histVersion || 1})`;
+    }
+    setActivePeriod(label);
+    changeTab('dashboard');
   };
 
-  if (loading) {
+  if (session && profileLoading) {
     return (
       <div 
         className="d-flex align-items-center justify-content-center min-vh-100" 
@@ -139,9 +206,11 @@ export default function App() {
       {/* Sidebar fijo */}
       <Sidebar 
         activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+        setActiveTab={changeTab} 
         userProfile={userProfile}
         onLogout={handleLogout}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
       />
 
       {/* Área de contenido principal */}
@@ -149,12 +218,20 @@ export default function App() {
         <Navbar 
           activeCompany={activeCompany} 
           activePeriod={activePeriod} 
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          companies={companies}
+          onChangeCompany={handleCompanyChange}
+          userRole={userProfile?.rol}
+          periods={periods}
+          periodId={periodId}
+          onChangePeriod={handlePeriodChange}
         />
 
         {activeTab === 'dashboard' && (
           <Dashboard 
             activeCompany={activeCompany} 
             periodId={periodId} 
+            onNavigateToReconciliation={navigateToReconciliation}
           />
         )}
 
@@ -170,6 +247,8 @@ export default function App() {
           <TablaUnificada 
             periodId={periodId} 
             activePeriod={activePeriod}
+            initialFilter={reconciliationFilter}
+            onFilterReset={() => setReconciliationFilter(null)}
           />
         )}
 

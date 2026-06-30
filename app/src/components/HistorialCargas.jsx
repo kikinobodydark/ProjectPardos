@@ -1,18 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiCheckCircle, FiClock, FiUser, FiArrowRight, FiLayers } from 'react-icons/fi';
 
 export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
-  const [history, setHistory] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    fetchHistory();
-  }, [activeCompany]);
-
-  const fetchHistory = async () => {
-    setLoading(true);
-    try {
+  const { data: history = [], isLoading, refetch } = useQuery({
+    queryKey: ['cargaHistory', activeCompany?.id],
+    queryFn: async () => {
       const { data, error } = await supabase
         .from('v_historial_cargas')
         .select('*')
@@ -20,13 +14,12 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
         .order('fecha_carga', { ascending: false });
 
       if (error) throw error;
-      setHistory(data || []);
-    } catch (e) {
-      console.error("Error al obtener historial:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data || [];
+    },
+    enabled: !!activeCompany?.id,
+  });
+
+  const loading = isLoading;
 
   const formatDate = (isoString) => {
     if (!isoString) return '';
@@ -44,7 +37,7 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
       <div className="d-flex justify-content-between align-items-center mb-3">
         <h4 className="text-white mb-0 fw-bold">Historial de Procesos Contables</h4>
         <button
-          onClick={fetchHistory}
+          onClick={() => refetch()}
           disabled={loading}
           className="btn btn-sm btn-outline-secondary"
           style={{ cursor: 'pointer' }}
@@ -87,6 +80,7 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
                 <tr key={item.periodo_id}>
                   <td className="fw-bold text-success font-mono fs-6">
                     {item.periodo.slice(0, 4)}-{item.periodo.slice(4)}
+                    {item.dia && ` (Día: ${item.dia}, v${item.version || 1})`}
                   </td>
                   <td className="font-mono">{formatDate(item.fecha_carga)}</td>
                   <td>
@@ -108,7 +102,7 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
                   </td>
                   <td className="text-center">
                     <button
-                      onClick={() => onSelectPeriod(item.periodo_id, item.periodo)}
+                      onClick={() => onSelectPeriod(item.periodo_id, item.periodo, item.dia, item.version)}
                       className="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center mx-auto"
                       style={{ cursor: 'pointer', padding: '0.3rem 0.8rem', borderRadius: '6px' }}
                     >
