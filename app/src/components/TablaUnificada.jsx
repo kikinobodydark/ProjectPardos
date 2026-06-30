@@ -317,9 +317,6 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
               <option value="ERROR 4: DIFERENCIA EN Mto Inafecto">ERROR 4: DIFERENCIA EN Mto Inafecto</option>
               <option value="ERROR 5: DIFERENCIA EN TOTALES">ERROR 5: DIFERENCIA EN TOTALES</option>
               <option value="ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI">ERROR 6: BOLETAS &gt; 700 SIN DNI</option>
-              <option value="ERROR 7: DNI CON FORMATO INVÁLIDO">ERROR 7: DNI FORMATO INVÁLIDO</option>
-              <option value="ERROR 8: NO EXISTE EN SAP">ERROR 8: NO EXISTE EN SAP</option>
-              <option value="ERROR 9: NO EXISTE EN SUNAT">ERROR 9: NO EXISTE EN SUNAT</option>
             </select>
           </div>
         )}
@@ -335,6 +332,8 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
               <option value="OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD">OBS 1: DIFERENCIA TIPO IDENTIDAD</option>
               <option value="OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD">OBS 2: DIFERENCIA NUMERO IDENTIDAD</option>
               <option value="OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS">OBS 3: DIFERENCIA SECUENCIA</option>
+              <option value="OBS 4: NO EXISTE EN SAP">OBS 4: NO EXISTE EN SAP</option>
+              <option value="OBS 5: NO EXISTE EN SUNAT">OBS 5: NO EXISTE EN SUNAT</option>
             </select>
           </div>
         )}

@@ -44,10 +44,10 @@ export function validateRow(row, cortesiasSet = new Set()) {
   const isNoExisteSUNAT = row.nro_identidad_sunat === null && row.nombre_sunat === null;
 
   if (isNoExisteSAP) {
-    errors.push("ERROR 8: NO EXISTE EN SAP");
+    errors.push("OBS 4: NO EXISTE EN SAP");
   }
   if (isNoExisteSUNAT) {
-    errors.push("ERROR 9: NO EXISTE EN SUNAT");
+    errors.push("OBS 5: NO EXISTE EN SUNAT");
   }
 
   // Si no existe de un lado, no realizamos comparaciones cruzadas de montos ni identidad
@@ -102,18 +102,7 @@ export function validateRow(row, cortesiasSet = new Set()) {
     }
   }
 
-  // ERROR 7: DNI CON FORMATO INVÁLIDO (Evalúa tanto en SAP como SUNAT si están presentes)
-  const isInvalidDNI = (tipo, nro) => {
-    if (tipo === '1' && nro) {
-      const clean = nro.trim();
-      return clean.length !== 8 || !/^\d+$/.test(clean);
-    }
-    return false;
-  };
 
-  if (isInvalidDNI(row.tipo_identidad_sunat, row.nro_identidad_sunat) || isInvalidDNI(row.tipo_identidad_sap, row.nro_identidad_sap)) {
-    errors.push("ERROR 7: DNI CON FORMATO INVÁLIDO");
-  }
 
   // 8. Reglas de SIRE
   if (row.mensaje_sire) {
