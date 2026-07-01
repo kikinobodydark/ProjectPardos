@@ -3,20 +3,21 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiCheckCircle, FiClock, FiUser, FiArrowRight, FiLayers, FiTrash2 } from 'react-icons/fi';
 
-export default function HistorialCargas({ activeCompany, onSelectPeriod, onDeletePeriod }) {
+export default function HistorialCargas({ activeCompany, onSelectPeriod, onDeletePeriod, activeModule }) {
   const { data: history = [], isLoading, refetch } = useQuery({
-    queryKey: ['cargaHistory', activeCompany?.id],
+    queryKey: ['cargaHistory', activeCompany?.id, activeModule],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('v_historial_cargas')
         .select('*')
         .eq('empresa_id', activeCompany.id)
+        .eq('modulo', activeModule)
         .order('fecha_carga', { ascending: false });
 
       if (error) throw error;
       return data || [];
     },
-    enabled: !!activeCompany?.id,
+    enabled: !!activeCompany?.id && !!activeModule,
   });
 
   const handleDelete = async (periodoId, label) => {

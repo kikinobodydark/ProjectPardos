@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   FiLayout, 
   FiUploadCloud, 
@@ -7,11 +7,22 @@ import {
   FiBriefcase, 
   FiUsers, 
   FiLogOut,
-  FiX
+  FiX,
+  FiHome
 } from 'react-icons/fi';
 
-export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout, sidebarOpen, setSidebarOpen }) {
+export default function Sidebar({ 
+  activeTab, 
+  setActiveTab, 
+  userProfile, 
+  onLogout, 
+  sidebarOpen, 
+  setSidebarOpen,
+  activeModule,
+  onReturnToHub
+}) {
   const isAdmin = userProfile?.rol === 'admin';
+  const [btnHover, setBtnHover] = useState(false);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <FiLayout /> },
@@ -26,7 +37,7 @@ export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout
   ];
 
   return (
-    <div className={`sidebar animate-fade-in ${sidebarOpen ? 'sidebar-open' : ''}`}>
+    <div className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="d-flex align-items-center justify-content-between mb-4 px-2">
         <div className="d-flex align-items-center">
           <div 
@@ -39,13 +50,13 @@ export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout
             <h5 className="mb-0 fw-bold text-white" style={{ fontSize: '1rem', letterSpacing: '-0.02em' }}>
               ConciliaTributo
             </h5>
-            <small className="text-muted" style={{ fontSize: '0.75rem' }}>v1.0.0 (SIRE)</small>
+            <small className="text-muted" style={{ fontSize: '0.75rem' }}>v1.0.0</small>
           </div>
         </div>
         
         {/* Botón de cerrar sidebar en celular */}
         <button
-          className="btn btn-sm btn-outline-secondary d-md-none border-0 p-1"
+          className="btn btn-sm btn-outline-secondary d-lg-none border-0 p-1"
           onClick={() => setSidebarOpen(false)}
           style={{ cursor: 'pointer' }}
         >
@@ -56,40 +67,42 @@ export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout
       <hr style={{ borderColor: 'var(--border-color)', margin: '1rem 0' }} />
 
       <div className="nav flex-column nav-pills mb-auto">
-        <span className="text-muted fw-bold mb-2 px-2" style={{ fontSize: '0.7rem', uppercase: 'true', letterSpacing: '0.05em' }}>
-          MENÚ PRINCIPAL
-        </span>
-        {menuItems
-          .filter(item => !item.roles || item.roles.includes(userProfile?.rol))
-          .map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`nav-link text-start d-flex align-items-center mb-1 px-3 py-2 border-0 rounded-3 ${
-                activeTab === item.id 
-                  ? 'bg-primary text-white' 
-                  : 'text-muted bg-transparent'
-              }`}
-              style={{
-                transition: 'all 0.15s ease',
-                fontWeight: '500',
-                cursor: 'pointer'
-              }}
-            >
-              <span className="me-3 fs-5 d-flex align-items-center">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
+        {activeModule && (
+          <button
+            onClick={() => {
+              onReturnToHub();
+              if (setSidebarOpen) setSidebarOpen(false);
+            }}
+            onMouseEnter={() => setBtnHover(true)}
+            onMouseLeave={() => setBtnHover(false)}
+            className="nav-link d-flex align-items-center mb-3 px-3 py-2 rounded-3 w-100 text-start"
+            style={{
+              transition: 'all 0.15s ease',
+              fontWeight: '600',
+              cursor: 'pointer',
+              backgroundColor: btnHover ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.08)',
+              border: btnHover ? '1px solid rgba(99, 102, 241, 0.45)' : '1px solid rgba(99, 102, 241, 0.25)',
+              color: btnHover ? '#312E81' : '#4F46E5',
+              boxShadow: 'none'
+            }}
+          >
+            <span className="me-3 fs-5 d-flex align-items-center"><FiHome /></span>
+            Regresar al Hub
+          </button>
+        )}
 
-        {isAdmin && (
+        {activeModule === 'configuracion' ? (
           <>
-            <span className="text-muted fw-bold mt-4 mb-2 px-2" style={{ fontSize: '0.7rem', uppercase: 'true', letterSpacing: '0.05em' }}>
+            <span className="text-muted fw-bold mb-2 px-2" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               CONFIGURACIÓN
             </span>
             {adminItems.map(item => (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  if (setSidebarOpen) setSidebarOpen(false);
+                }}
                 className={`nav-link text-start d-flex align-items-center mb-1 px-3 py-2 border-0 rounded-3 ${
                   activeTab === item.id 
                     ? 'bg-primary text-white' 
@@ -105,6 +118,36 @@ export default function Sidebar({ activeTab, setActiveTab, userProfile, onLogout
                 {item.label}
               </button>
             ))}
+          </>
+        ) : (
+          <>
+            <span className="text-muted fw-bold mb-2 px-2" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              {activeModule === 'compras' ? 'MÓDULO COMPRAS' : 'MÓDULO VENTAS'}
+            </span>
+            {menuItems
+              .filter(item => !item.roles || item.roles.includes(userProfile?.rol))
+              .map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    if (setSidebarOpen) setSidebarOpen(false);
+                  }}
+                  className={`nav-link text-start d-flex align-items-center mb-1 px-3 py-2 border-0 rounded-3 ${
+                    activeTab === item.id 
+                      ? 'bg-primary text-white' 
+                      : 'text-muted bg-transparent'
+                  }`}
+                  style={{
+                    transition: 'all 0.15s ease',
+                    fontWeight: '500',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <span className="me-3 fs-5 d-flex align-items-center">{item.icon}</span>
+                  {item.label}
+                </button>
+              ))}
           </>
         )}
       </div>

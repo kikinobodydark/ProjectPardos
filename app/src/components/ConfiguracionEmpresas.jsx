@@ -23,100 +23,108 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
     setRevalSuccess('');
     setRevalError('');
     try {
-      let allRows = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      let totalAnalyzed = 0;
+      let totalUpdated = 0;
 
-      while (hasMore) {
-        const { data, error } = await supabase
-          .from('detalle_validacion')
-          .select('*')
-          .range(page * pageSize, (page + 1) * pageSize - 1);
+      for (const tableName of ['detalle_ventas', 'detalle_compras']) {
+        let allRows = [];
+        let page = 0;
+        const pageSize = 1000;
+        let hasMore = true;
 
-        if (error) throw error;
-        if (!data || data.length === 0) {
-          hasMore = false;
-        } else {
-          allRows = allRows.concat(data);
-          if (data.length < pageSize) {
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from(tableName)
+            .select('*')
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+
+          if (error) throw error;
+          if (!data || data.length === 0) {
             hasMore = false;
           } else {
-            page++;
-          }
-        }
-      }
-
-      if (allRows.length === 0) {
-        setRevalSuccess('No hay registros para revalidar.');
-        setRevalLoading(false);
-        return;
-      }
-
-      let updatedCount = 0;
-      for (const row of allRows) {
-        const errors = [...(row.errores_json || [])];
-
-        const cleanErrors = errors.filter(e => 
-          !e.startsWith('OBS 6:') && 
-          !e.startsWith('Identidad SAP no cumple') &&
-          !e.startsWith('OBS 7:') && 
-          !e.startsWith('Identidad SUNAT no cumple')
-        );
-
-        const isNoExisteSAP = row.nro_identidad_sap === null && row.nombre_sap === null;
-        if (!isNoExisteSAP && row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
-          if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
-            cleanErrors.push("OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO");
-            cleanErrors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
+            allRows = allRows.concat(data);
+            if (data.length < pageSize) {
+              hasMore = false;
+            } else {
+              page++;
+            }
           }
         }
 
-        const isNoExisteSUNAT = row.nro_identidad_sunat === null && row.nombre_sunat === null;
-        if (!isNoExisteSUNAT && row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
-          if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
-            cleanErrors.push("OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO");
-            cleanErrors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
-          }
-        }
+        totalAnalyzed += allRows.length;
 
-        const isAnulado = isRecordAnulado(row);
-        let newStatus = 'OK';
-        
-        if (isAnulado) {
-          newStatus = 'OK';
-        } else {
-          const hasError = cleanErrors.some(e => e.startsWith('ERROR '));
-          const hasObs = cleanErrors.some(e => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
-          if (hasError) {
-            newStatus = 'ERROR';
-          } else if (hasObs) {
-            newStatus = 'OBSERVADO';
-          } else {
+        for (const row of allRows) {
+          const errors = [...(row.errores_json || [])];
+
+          const cleanErrors = errors.filter(e => 
+            !e.startsWith('OBS 6:') && 
+            !e.startsWith('Identidad SAP no cumple') &&
+            !e.startsWith('OBS 7:') && 
+            !e.startsWith('Identidad SUNAT no cumple')
+          );
+
+          const isNoExisteSAP = row.nro_identidad_sap === null && row.nombre_sap === null;
+          if (!isNoExisteSAP && row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
+            if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
+              if (tableName === 'detalle_compras') {
+                cleanErrors.push("OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)");
+              } else {
+                cleanErrors.push("OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO");
+                cleanErrors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
+              }
+            }
+          }
+
+          const isNoExisteSUNAT = row.nro_identidad_sunat === null && row.nombre_sunat === null;
+          if (!isNoExisteSUNAT && row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
+            if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
+              if (tableName === 'detalle_compras') {
+                cleanErrors.push("OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)");
+              } else {
+                cleanErrors.push("OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO");
+                cleanErrors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
+              }
+            }
+          }
+
+          const isAnulado = isRecordAnulado(row);
+          let newStatus = 'OK';
+          
+          if (isAnulado) {
             newStatus = 'OK';
+          } else {
+            const hasError = cleanErrors.some(e => e.startsWith('ERROR '));
+            const hasObs = cleanErrors.some(e => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
+            if (hasError) {
+              newStatus = 'ERROR';
+            } else if (hasObs) {
+              newStatus = 'OBSERVADO';
+            } else {
+              newStatus = 'OK';
+            }
           }
-        }
 
-        const statusChanged = row.estado_validacion !== newStatus;
-        const oldJsonStr = JSON.stringify(row.errores_json || []);
-        const newJsonStr = JSON.stringify(cleanErrors);
-        const errorsChanged = oldJsonStr !== newJsonStr;
+          const statusChanged = row.estado_validacion !== newStatus;
+          const oldJsonStr = JSON.stringify(row.errores_json || []);
+          const newJsonStr = JSON.stringify(cleanErrors);
+          const errorsChanged = oldJsonStr !== newJsonStr;
 
-        if (statusChanged || errorsChanged) {
-          const { error: updateErr } = await supabase
-            .from('detalle_validacion')
-            .update({
-              estado_validacion: newStatus,
-              errores_json: cleanErrors
-            })
-            .eq('id', row.id);
+          if (statusChanged || errorsChanged) {
+            const { error: updateErr } = await supabase
+              .from(tableName)
+              .update({
+                estado_validacion: newStatus,
+                errores_json: cleanErrors
+              })
+              .eq('id', row.id);
 
-          if (updateErr) throw updateErr;
-          updatedCount++;
+            if (updateErr) throw updateErr;
+            totalUpdated++;
+          }
         }
       }
 
-      setRevalSuccess(`Revalidación completada. Se analizaron ${allRows.length} registros y se actualizaron ${updatedCount} con discrepancias de formato de identidad.`);
+      setRevalSuccess(`Revalidación completada. Se analizaron ${totalAnalyzed} registros (Ventas y Compras) y se actualizaron ${totalUpdated} con discrepancias de formato de identidad.`);
     } catch (err) {
       console.error(err);
       setRevalError(err.message || 'Ocurrió un error al revalidar los registros.');

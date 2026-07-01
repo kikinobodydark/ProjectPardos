@@ -63,7 +63,7 @@ h6, .h6 { font-size: 0.9rem !important; }
   top: 0;
   bottom: 0;
   left: 0;
-  z-index: 100;
+  z-index: 1100;
   padding: 1.2rem 0.8rem;
   transition: all 0.3s ease;
 }
@@ -378,7 +378,7 @@ h6, .h6 { font-size: 0.9rem !important; }
 /* ==========================================================================
    Responsive Styles (Mobile & Tablet)
    ========================================================================== */
-@media (max-width: 768px) {
+@media (max-width: 992px) {
   .sidebar {
     transform: translateX(-100%);
     width: 240px;

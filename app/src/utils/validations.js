@@ -76,7 +76,13 @@ export function isValidIdentityNumber(tipo, nro) {
   return clean.length > 0 && clean.length <= 15;
 }
 
-export function validateRow(row, cortesiasSet = new Set()) {
+export function buildCarFromSAPCompras(rucProveedor, tipo, serie, correlativo) {
+  const tipoPad = normalizeDocType(tipo).padStart(2, '0');
+  const corrPad = parseInt(correlativo, 10).toString().padStart(10, '0');
+  return `${rucProveedor}${tipoPad}${serie.trim().toUpperCase()}${corrPad}`;
+}
+
+export function validateRow(row, cortesiasSet = new Set(), modulo = 'ventas') {
   const errors = [];
   let status = 'OK';
 
@@ -86,116 +92,159 @@ export function validateRow(row, cortesiasSet = new Set()) {
     return { status: 'OK', errors: ['Documento Anulado (validaciones omitidas)'] };
   }
 
-  // Validaciones de Existencia (Nuevas Reglas de Null)
+  // Validaciones de Existencia
   const isNoExisteSAP = row.nro_identidad_sap === null && row.nombre_sap === null;
   const isNoExisteSUNAT = row.nro_identidad_sunat === null && row.nombre_sunat === null;
 
-  if (isNoExisteSAP) {
-    errors.push("OBS 4: NO EXISTE EN SAP");
-  }
-  if (isNoExisteSUNAT) {
-    errors.push("OBS 5: NO EXISTE EN SUNAT");
-  }
-
-  // Si no existe de un lado, no realizamos comparaciones cruzadas de montos ni identidad
-  if (!isNoExisteSAP && !isNoExisteSUNAT) {
-    // 1. Diferencia en la BI Gravada
-    const diffBase = Math.abs(row.base_sap - row.base_sunat);
-    if (diffBase > 0.05) {
-      errors.push("ERROR 1: DIFERENCIA EN LA BI Gravada");
+  if (modulo === 'compras') {
+    if (isNoExisteSAP) {
+      errors.push("OBS 1: NO EXISTE EN SAP");
+    }
+    if (isNoExisteSUNAT) {
+      if (row.tipo_doc_pago !== '14') {
+        errors.push("ERROR 5: NO EXISTE EN SUNAT");
+      }
     }
 
-    // 2. Diferencia en el IGV / IPM
-    const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
-    if (diffIgv > 0.05) {
-      errors.push("ERROR 2: DIFERENCIA EN EL IGV / IPM");
+    // Si no existe de un lado, no realizamos comparaciones cruzadas
+    if (!isNoExisteSAP && !isNoExisteSUNAT) {
+      const diffBase = Math.abs(row.base_sap - row.base_sunat);
+      if (diffBase > 0.05) {
+        errors.push("ERROR 1: DIFERENCIA EN BASE IMPONIBLE");
+      }
+
+      const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
+      if (diffIgv > 0.05) {
+        errors.push("ERROR 2: DIFERENCIA EN IGV");
+      }
+
+      const diffExonerado = Math.abs((row.exonerado_sap || 0) - (row.exonerado_sunat || 0));
+      if (diffExonerado > 0.05) {
+        errors.push("ERROR 3: DIFERENCIA EN EXONERADO");
+      }
+
+      const diffTotal = Math.abs(row.total_sap - row.total_sunat);
+      if (diffTotal > 0.05) {
+        errors.push("ERROR 4: DIFERENCIA EN MONTOS TOTALES");
+      }
     }
 
-    // 3. Diferencia en Mto Exonerado
-    const diffExonerado = Math.abs((row.exonerado_sap || 0) - (row.exonerado_sunat || 0));
-    if (diffExonerado > 0.05) {
-      errors.push("ERROR 3: DIFERENCIA EN Mto Exonerado");
-    }
-
-    // 4. Diferencia en Mto Inafecto
-    const diffInafecto = Math.abs((row.inafecto_sap || 0) - (row.inafecto_sunat || 0));
-    if (diffInafecto > 0.05) {
-      errors.push("ERROR 4: DIFERENCIA EN Mto Inafecto");
-    }
-
-    // 5. Diferencia en Totales
-    const diffTotal = Math.abs(row.total_sap - row.total_sunat);
-    if (diffTotal > 0.05) {
-      errors.push("ERROR 5: DIFERENCIA EN TOTALES");
-    }
-
-    // OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD
-    if (row.tipo_identidad_sap !== null && row.tipo_identidad_sunat !== null && row.tipo_identidad_sap !== row.tipo_identidad_sunat) {
-      errors.push("OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD");
-      errors.push(`Discrepancia tipo identidad: SAP (${row.tipo_identidad_sap}) vs SUNAT (${row.tipo_identidad_sunat})`);
-    }
-
-    // OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD
-    if (row.nro_identidad_sap !== null && row.nro_identidad_sunat !== null && row.nro_identidad_sap !== row.nro_identidad_sunat) {
-      errors.push("OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD");
-      errors.push(`Discrepancia en identidad: SAP (${row.nro_identidad_sap}) vs SUNAT (${row.nro_identidad_sunat})`);
-    }
-
-    // OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO
-    if (row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
+    // OBS 6 y OBS 7 (RUC Proveedor Inválido) en Compras
+    if (row.tipo_identidad_sap === '6' && row.nro_identidad_sap !== null) {
       if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
-        errors.push("OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO");
-        errors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
+        errors.push("OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)");
       }
     }
 
-    // OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO
-    if (row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
+    if (row.tipo_identidad_sunat === '6' && row.nro_identidad_sunat !== null) {
       if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
-        errors.push("OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO");
-        errors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
+        errors.push("OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)");
       }
     }
-  }
-
-  // ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI (Solo SUNAT como fuente)
-  if (row.tipo_doc_pago === '03' && row.total_sunat > 700) {
-    if (row.tipo_identidad_sunat !== '1') {
-      errors.push("ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI");
+  } else {
+    // Ventas
+    if (isNoExisteSAP) {
+      errors.push("OBS 4: NO EXISTE EN SAP");
     }
-  }
+    if (isNoExisteSUNAT) {
+      errors.push("OBS 5: NO EXISTE EN SUNAT");
+    }
 
+    if (!isNoExisteSAP && !isNoExisteSUNAT) {
+      // 1. Diferencia en la BI Gravada
+      const diffBase = Math.abs(row.base_sap - row.base_sunat);
+      if (diffBase > 0.05) {
+        errors.push("ERROR 1: DIFERENCIA EN LA BI Gravada");
+      }
 
+      // 2. Diferencia en el IGV / IPM
+      const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
+      if (diffIgv > 0.05) {
+        errors.push("ERROR 2: DIFERENCIA EN EL IGV / IPM");
+      }
 
-  // 8. Reglas de SIRE
-  if (row.mensaje_sire) {
-    const msgUpper = row.mensaje_sire.toUpperCase();
-    
-    // Regla de Cortesía: Opción A
-    const key = `${row.tipo_doc_pago}-${row.serie}-${parseInt(row.correlativo, 10)}`;
-    const hasCortesiasExcel = cortesiasSet.size > 0;
-    const isCortesia = hasCortesiasExcel
-      ? cortesiasSet.has(key)
-      : row.total_sunat === 0 && (row.op_gratuitas > 0 || row.base_sap > 0);
-    
-    const diffBase = Math.abs(row.base_sap - row.base_sunat);
-    const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
-    const diffTotal = Math.abs(row.total_sap - row.total_sunat);
+      // 3. Diferencia en Mto Exonerado
+      const diffExonerado = Math.abs((row.exonerado_sap || 0) - (row.exonerado_sunat || 0));
+      if (diffExonerado > 0.05) {
+        errors.push("ERROR 3: DIFERENCIA EN Mto Exonerado");
+      }
 
-    if (msgUpper.includes('DIFERENCIA')) {
-      if (isCortesia && diffBase <= 0.05 && diffIgv <= 0.05 && diffTotal <= 0.05) {
-        // Correcto: Ignorar la diferencia en cortesías
+      // 4. Diferencia en Mto Inafecto
+      const diffInafecto = Math.abs((row.inafecto_sap || 0) - (row.inafecto_sunat || 0));
+      if (diffInafecto > 0.05) {
+        errors.push("ERROR 4: DIFERENCIA EN Mto Inafecto");
+      }
+
+      // 5. Diferencia en Totales
+      const diffTotal = Math.abs(row.total_sap - row.total_sunat);
+      if (diffTotal > 0.05) {
+        errors.push("ERROR 5: DIFERENCIA EN TOTALES");
+      }
+
+      // OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD
+      if (row.tipo_identidad_sap !== null && row.tipo_identidad_sunat !== null && row.tipo_identidad_sap !== row.tipo_identidad_sunat) {
+        errors.push("OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD");
+        errors.push(`Discrepancia tipo identidad: SAP (${row.tipo_identidad_sap}) vs SUNAT (${row.tipo_identidad_sunat})`);
+      }
+
+      // OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD
+      if (row.nro_identidad_sap !== null && row.nro_identidad_sunat !== null && row.nro_identidad_sap !== row.nro_identidad_sunat) {
+        errors.push("OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD");
+        errors.push(`Discrepancia en identidad: SAP (${row.nro_identidad_sap}) vs SUNAT (${row.nro_identidad_sunat})`);
+      }
+
+      // OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO
+      if (row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
+        if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
+          errors.push("OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO");
+          errors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
+        }
+      }
+
+      // OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO
+      if (row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
+        if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
+          errors.push("OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO");
+          errors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
+        }
+      }
+    }
+
+    // ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI
+    if (row.tipo_doc_pago === '03' && row.total_sunat > 700) {
+      if (row.tipo_identidad_sunat !== '1') {
+        errors.push("ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI");
+      }
+    }
+
+    // 8. Reglas de SIRE
+    if (row.mensaje_sire) {
+      const msgUpper = row.mensaje_sire.toUpperCase();
+      const key = `${row.tipo_doc_pago}-${row.serie}-${parseInt(row.correlativo, 10)}`;
+      const hasCortesiasExcel = cortesiasSet.size > 0;
+      const isCortesia = hasCortesiasExcel
+        ? cortesiasSet.has(key)
+        : row.total_sunat === 0 && (row.op_gratuitas > 0 || row.base_sap > 0);
+      
+      const diffBase = Math.abs(row.base_sap - row.base_sunat);
+      const diffIgv = Math.abs(row.igv_sap - row.igv_sunat);
+      const diffTotal = Math.abs(row.total_sap - row.total_sunat);
+
+      if (msgUpper.includes('DIFERENCIA')) {
+        if (isCortesia && diffBase <= 0.05 && diffIgv <= 0.05 && diffTotal <= 0.05) {
+          // Correcto
+        } else {
+          errors.push(`SIRE Alerta: ${row.mensaje_sire}`);
+        }
+      } else if (msgUpper.includes('REGISTRO OK')) {
+        // OK
       } else {
-        errors.push(`SIRE Alerta: ${row.mensaje_sire}`);
+        errors.push(`SIRE: ${row.mensaje_sire}`);
       }
-    } else if (msgUpper.includes('REGISTRO OK')) {
-      // Registro validado
-    } else {
-      errors.push(`SIRE: ${row.mensaje_sire}`);
     }
   }
 
-  // Determinar estado de validación en base a errores
+  // Determinar estado de validación
   const hasError = errors.some(e => e.startsWith('ERROR '));
   const hasObs = errors.some(e => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
 
@@ -211,7 +260,7 @@ export function validateRow(row, cortesiasSet = new Set()) {
 }
 
 // Conciliación principal
-export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesiasList = []) {
+export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesiasList = [], modulo = 'ventas') {
   const cortesiasSet = buildCortesiasSet(cortesiasList);
   const unified = {};
 
@@ -220,6 +269,7 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesia
     const key = item.car_sunat; // CAR directo de SUNAT
     unified[key] = {
       car_sunat: key,
+      ruc_proveedor: modulo === 'compras' ? item.nro_identidad : null,
       serie: item.serie,
       correlativo: item.correlativo,
       fecha_emision: item.fecha_emision,
@@ -255,14 +305,18 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesia
     };
   });
 
-  // 2. Cruzar con SAP (calculando el CAR en base al RUC)
+  // 2. Cruzar con SAP
   sapList.forEach(item => {
-    const key = buildCarFromSAP(rucEmpresa, item.tipo_doc_pago, item.serie, item.correlativo);
+    const rucForCar = modulo === 'compras' ? item.nro_identidad : rucEmpresa;
+    const key = modulo === 'compras'
+      ? buildCarFromSAPCompras(rucForCar, item.tipo_doc_pago, item.serie, item.correlativo)
+      : buildCarFromSAP(rucForCar, item.tipo_doc_pago, item.serie, item.correlativo);
     
     if (!unified[key]) {
       // Existe en SAP pero no en SUNAT
       unified[key] = {
         car_sunat: key,
+        ruc_proveedor: modulo === 'compras' ? item.nro_identidad : null,
         serie: item.serie,
         correlativo: item.correlativo,
         fecha_emision: item.fecha_emision,
@@ -319,64 +373,65 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesia
     }
   });
 
-  // 4. Validaciones de fila individual
+  // 4. Validaciones de fila
   Object.values(unified).forEach(record => {
-    const getCortesiaKey = (r) =>
-      `${r.tipo_doc_pago}-${r.serie}-${parseInt(r.correlativo, 10)}`;
+    if (modulo === 'ventas') {
+      const getCortesiaKey = (r) =>
+        `${r.tipo_doc_pago}-${r.serie}-${parseInt(r.correlativo, 10)}`;
 
-    const hasCortesiasExcel = cortesiasSet.size > 0;
-    const isCortesia = hasCortesiasExcel
-      ? cortesiasSet.has(getCortesiaKey(record))
-      : record.total_sunat === 0 && (record.op_gratuitas > 0 || record.base_sap > 0);
+      const hasCortesiasExcel = cortesiasSet.size > 0;
+      const isCortesia = hasCortesiasExcel
+        ? cortesiasSet.has(getCortesiaKey(record))
+        : record.total_sunat === 0 && (record.op_gratuitas > 0 || record.base_sap > 0);
 
-    if (isCortesia) {
-      record.tipo_pago_sire = 'CORTESIA';
+      if (isCortesia) {
+        record.tipo_pago_sire = 'CORTESIA';
+      }
     }
     
-    const val = validateRow(record, cortesiasSet);
+    const val = validateRow(record, cortesiasSet, modulo);
     record.estado_validacion = val.status;
     record.errores_json = val.errors;
   });
 
-  // 5. Validaciones de Secuencia Relacional Flexibilizada
-  const groupedBySeries = {};
-  Object.values(unified).forEach(r => {
-    const groupKey = `${r.tipo_doc_pago}-${r.serie}`;
-    if (!groupedBySeries[groupKey]) groupedBySeries[groupKey] = [];
-    groupedBySeries[groupKey].push(r);
-  });
+  // 5. Validaciones de Secuencia Relacional Flexibilizada (SOLO PARA VENTAS)
+  if (modulo === 'ventas') {
+    const groupedBySeries = {};
+    Object.values(unified).forEach(r => {
+      const groupKey = `${r.tipo_doc_pago}-${r.serie}`;
+      if (!groupedBySeries[groupKey]) groupedBySeries[groupKey] = [];
+      groupedBySeries[groupKey].push(r);
+    });
 
-  Object.values(groupedBySeries).forEach(list => {
-    list.sort((a, b) => parseInt(a.correlativo, 10) - parseInt(b.correlativo, 10));
-    for (let i = 1; i < list.length; i++) {
-      const prev = list[i - 1];
-      const curr = list[i];
+    Object.values(groupedBySeries).forEach(list => {
+      list.sort((a, b) => parseInt(a.correlativo, 10) - parseInt(b.correlativo, 10));
+      for (let i = 1; i < list.length; i++) {
+        const prev = list[i - 1];
+        const curr = list[i];
 
-      // Si el documento actual está anulado, no se le aplican observaciones de secuencia ni fecha
-      if (isRecordAnulado(curr)) {
-        continue;
-      }
+        if (isRecordAnulado(curr)) {
+          continue;
+        }
 
-      const prevNum = parseInt(prev.correlativo, 10);
-      const currNum = parseInt(curr.correlativo, 10);
-      
-      // Salto de secuencia catalogado como OBSERVADO para admitir posibles anulados/excluidos
-      if (currNum - prevNum > 1) {
-        const gap = currNum - prevNum - 1;
-        curr.errores_json.push('OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS');
-        curr.errores_json.push(`Posible salto de secuencia: ${gap} correlativo(s) no encontrado(s) entre ${prev.correlativo} y ${curr.correlativo} (pueden ser anulados)`);
-        if (curr.estado_validacion !== 'ERROR') {
-          curr.estado_validacion = 'OBSERVADO';
+        const prevNum = parseInt(prev.correlativo, 10);
+        const currNum = parseInt(curr.correlativo, 10);
+        
+        if (currNum - prevNum > 1) {
+          const gap = currNum - prevNum - 1;
+          curr.errores_json.push('OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS');
+          curr.errores_json.push(`Posible salto de secuencia: ${gap} correlativo(s) no encontrado(s) entre ${prev.correlativo} y ${curr.correlativo} (pueden ser anulados)`);
+          if (curr.estado_validacion !== 'ERROR') {
+            curr.estado_validacion = 'OBSERVADO';
+          }
+        }
+        
+        if (curr.fecha_emision && prev.fecha_emision && new Date(curr.fecha_emision) < new Date(prev.fecha_emision)) {
+          curr.errores_json.push(`Fecha inconsistente: Folio ${curr.correlativo} (${curr.fecha_emision}) es previo a folio ${prev.correlativo} (${prev.fecha_emision})`);
+          curr.estado_validacion = 'ERROR';
         }
       }
-      
-      // Fecha inconsistente (cronológica) catalogada como ERROR
-      if (curr.fecha_emision && prev.fecha_emision && new Date(curr.fecha_emision) < new Date(prev.fecha_emision)) {
-        curr.errores_json.push(`Fecha inconsistente: Folio ${curr.correlativo} (${curr.fecha_emision}) es previo a folio ${prev.correlativo} (${prev.fecha_emision})`);
-        curr.estado_validacion = 'ERROR';
-      }
-    }
-  });
+    });
+  }
 
   return Object.values(unified);
 }

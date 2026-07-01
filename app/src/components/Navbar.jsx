@@ -40,7 +40,7 @@ export default function Navbar({
       <div className="d-flex align-items-center">
         {/* Botón hamburguesa sólo visible en móvil */}
         <button 
-          className="btn btn-outline-secondary d-md-none me-2 border-0 p-1 d-flex align-items-center justify-content-center"
+          className="btn btn-outline-secondary d-lg-none me-2 border-0 p-1 d-flex align-items-center justify-content-center"
           onClick={onToggleSidebar}
           style={{ cursor: 'pointer' }}
         >

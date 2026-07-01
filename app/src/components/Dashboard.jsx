@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiCheckCircle, FiAlertTriangle, FiXCircle, FiLayers } from 'react-icons/fi';
 
-export default function Dashboard({ periodId, onNavigateToReconciliation }) {
+export default function Dashboard({ periodId, onNavigateToReconciliation, activeModule }) {
   const { data: stats = {
     total: 0,
     ok: 0,
@@ -20,38 +20,49 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
     countSapOk: 0,
     countSunatOk: 0,
   } } = useQuery({
-    queryKey: ['dashboardStats', periodId],
+    queryKey: ['dashboardStats', periodId, activeModule],
     queryFn: async () => {
+      const summaryView = activeModule === 'compras' ? 'v_resumen_compras' : 'v_resumen_ventas';
+      const detailTable = activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas';
+
       const [resumenRes, obs1Res, obs2Res, sapObsIdOkRes, sunatObsIdOkRes] = await Promise.all([
         supabase
-          .from('v_resumen_validacion')
+          .from(summaryView)
           .select('*')
           .eq('periodo_id', periodId)
           .single(),
         supabase
-          .from('detalle_validacion')
+          .from(detailTable)
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
-          .contains('errores_json', JSON.stringify(['OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD'])),
+          .contains('errores_json', JSON.stringify([
+            activeModule === 'compras' 
+              ? 'OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)' 
+              : 'OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD'
+          ])),
         supabase
-          .from('detalle_validacion')
+          .from(detailTable)
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
-          .contains('errores_json', JSON.stringify(['OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD'])),
+          .contains('errores_json', JSON.stringify([
+            activeModule === 'compras' 
+              ? 'OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)' 
+              : 'OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD'
+          ])),
         supabase
-          .from('detalle_validacion')
+          .from(detailTable)
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
           .eq('estado_validacion', 'OBSERVADO')
           .or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null')
-          .not('errores_json', 'cs', '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]'),
+          .not('errores_json', 'cs', activeModule === 'compras' ? '["OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)"]' : '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]'),
         supabase
-          .from('detalle_validacion')
+          .from(detailTable)
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
           .eq('estado_validacion', 'OBSERVADO')
           .or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null')
-          .not('errores_json', 'cs', '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]')
+          .not('errores_json', 'cs', activeModule === 'compras' ? '["OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)"]' : '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]')
       ]);
 
       if (resumenRes.error && resumenRes.error.code !== 'PGRST116') {
@@ -79,7 +90,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
         countSunatOk: sunatObsIdOkRes.count || 0,
       };
     },
-    enabled: !!periodId,
+    enabled: !!periodId && !!activeModule,
   });
 
   const getPercentage = (value) => {
@@ -325,7 +336,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
                   style={{
                     width: '50px',
                     height: `${stats.observed > 0 ? (stats.countSunatOk / stats.observed * 100) : 0}%`,
-                    background: 'linear-gradient(to top, #10b981, #0d9488)',
+                    background: 'linear-gradient(to top, #3b82f6, #60a5fa)',
                     cursor: 'pointer',
                     borderRadius: '6px 6px 0 0',
                   }}
@@ -342,22 +353,32 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
         <div className="col-lg-6">
           <div className="card-premium h-100 d-flex flex-column justify-content-between">
             <div>
-              <h5 className="mb-2 fw-bold">Calidad de Datos de Identidades (RUC/DNI)</h5>
+              <h5 className="mb-2 fw-bold">
+                {activeModule === 'compras' 
+                  ? 'Calidad de Datos de Proveedores (RUC)' 
+                  : 'Calidad de Datos de Identidades (RUC/DNI)'}
+              </h5>
               <p className="text-muted mb-4" style={{ fontSize: '0.82rem' }}>
-                Resumen de comprobantes consistentes entre SAP y SUNAT para tipo y número de documento.
+                {activeModule === 'compras'
+                  ? 'Resumen de comprobantes con RUC de proveedor válido en SAP y SUNAT.'
+                  : 'Resumen de comprobantes consistentes entre SAP y SUNAT para tipo y número de documento.'}
               </p>
 
-              {/* Tipo de Identidad */}
+              {/* Tipo de Identidad or SAP RUC Validity */}
               <div className="mb-4">
                 <div className="d-flex justify-content-between align-items-center mb-1">
-                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>Tipo de Identidad Coincidente (Sin OBS 1)</span>
-                  <span className="badge bg-success bg-opacity-25 text-success font-mono">
+                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>
+                    {activeModule === 'compras' 
+                      ? 'RUC Proveedor SAP Válido (Sin OBS 6)' 
+                      : 'Tipo de Identidad Coincidente (Sin OBS 1)'}
+                  </span>
+                  <span className="badge bg-primary bg-opacity-10 text-primary font-mono">
                     {stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100).toFixed(1) : 0}%
                   </span>
                 </div>
                 <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)' }}>
                   <div 
-                    className="progress-bar bg-success" 
+                    className="progress-bar bg-primary" 
                     role="progressbar" 
                     style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100) : 0}%` }}
                   ></div>
@@ -365,22 +386,28 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
                 <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
                   <span>Correctos: {stats.total - stats.countObs1} docs</span>
                   {stats.countObs1 > 0 && (
-                    <span className="text-warning">⚠ {stats.countObs1} con diferencias (OBS 1)</span>
+                    <span className="text-muted">
+                      • {stats.countObs1} con discrepancias ({activeModule === 'compras' ? 'OBS 6' : 'OBS 1'})
+                    </span>
                   )}
                 </div>
               </div>
 
-              {/* Número de Identidad */}
+              {/* Número de Identidad or SUNAT RUC Validity */}
               <div className="mb-2">
                 <div className="d-flex justify-content-between align-items-center mb-1">
-                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>Número de Identidad Coincidente (Sin OBS 2)</span>
-                  <span className="badge bg-success bg-opacity-25 text-success font-mono">
+                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>
+                    {activeModule === 'compras' 
+                      ? 'RUC Proveedor SUNAT Válido (Sin OBS 7)' 
+                      : 'Número de Identidad Coincidente (Sin OBS 2)'}
+                  </span>
+                  <span className="badge bg-primary bg-opacity-10 text-primary font-mono">
                     {stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100).toFixed(1) : 0}%
                   </span>
                 </div>
                 <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)' }}>
                   <div 
-                    className="progress-bar bg-success" 
+                    className="progress-bar bg-primary" 
                     role="progressbar" 
                     style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100) : 0}%` }}
                   ></div>
@@ -388,7 +415,9 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
                 <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
                   <span>Correctos: {stats.total - stats.countObs2} docs</span>
                   {stats.countObs2 > 0 && (
-                    <span className="text-warning">⚠ {stats.countObs2} con diferencias (OBS 2)</span>
+                    <span className="text-muted">
+                      • {stats.countObs2} con discrepancias ({activeModule === 'compras' ? 'OBS 7' : 'OBS 2'})
+                    </span>
                   )}
                 </div>
               </div>
