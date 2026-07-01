@@ -10,6 +10,7 @@ import TablaUnificada from './components/TablaUnificada';
 import HistorialCargas from './components/HistorialCargas';
 import ConfiguracionEmpresas from './components/ConfiguracionEmpresas';
 import ConfiguracionUsuarios from './components/ConfiguracionUsuarios';
+import Hub from './components/Hub';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 export default function App() {
@@ -17,10 +18,22 @@ export default function App() {
   const [activeCompany, setActiveCompany] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeModule, setActiveModule] = useState(null); // null = Hub, 'ventas' = Ventas, 'compras' = Compras, 'configuracion' = Configuración
 
   const changeTab = (tabId) => {
     setActiveTab(tabId);
     setSidebarOpen(false);
+  };
+
+  const handleModuleChange = (newModule) => {
+    setActiveModule(newModule);
+    setPeriodId(null);
+    setActivePeriod('');
+    if (newModule === 'configuracion') {
+      setActiveTab('companies');
+    } else {
+      setActiveTab('dashboard');
+    }
   };
 
   // 1. Query del perfil de usuario
@@ -52,20 +65,21 @@ export default function App() {
     enabled: !!userProfile && userProfile.rol === 'admin',
   });
 
-  // 3. Query de periodos de la empresa activa
+  // 3. Query de periodos de la empresa activa y módulo activo
   const { data: periods = [], refetch: refetchPeriods } = useQuery({
-    queryKey: ['periods', activeCompany?.id],
+    queryKey: ['periods', activeCompany?.id, activeModule],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('periodos_carga')
         .select('*')
         .eq('empresa_id', activeCompany.id)
+        .eq('modulo', activeModule)
         .eq('estado', 'completado')
         .order('fecha_carga', { ascending: false });
       if (error) throw error;
       return data;
     },
-    enabled: !!activeCompany?.id,
+    enabled: !!activeCompany?.id && (activeModule === 'ventas' || activeModule === 'compras'),
   });
 
   // Sincronizar activeCompany inicial al cargar el perfil
@@ -127,15 +141,16 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Cargar automáticamente el último período al cambiar activeCompany
+  // Cargar automáticamente el último período al cambiar activeCompany o activeModule
   useEffect(() => {
-    if (activeCompany?.id) {
+    if (activeCompany?.id && (activeModule === 'ventas' || activeModule === 'compras')) {
       const loadLastPeriod = async () => {
         try {
           const { data, error } = await supabase
             .from('periodos_carga')
             .select('*')
             .eq('empresa_id', activeCompany.id)
+            .eq('modulo', activeModule)
             .eq('estado', 'completado')
             .order('fecha_carga', { ascending: false })
             .limit(1);
@@ -158,8 +173,11 @@ export default function App() {
         }
       };
       loadLastPeriod();
+    } else {
+      setPeriodId(null);
+      setActivePeriod('');
     }
-  }, [activeCompany?.id]);
+  }, [activeCompany?.id, activeModule]);
 
   const handleLoginSuccess = (user) => {
     setSession({ user });
@@ -209,8 +227,40 @@ export default function App() {
     return <Login onLoginSuccess={handleLoginSuccess} />;
   }
 
+  if (!activeModule) {
+    return (
+      <Hub 
+        userProfile={userProfile} 
+        activeCompany={activeCompany} 
+        companies={companies} 
+        onChangeCompany={handleCompanyChange} 
+        onLogout={handleLogout} 
+        onSelectModule={handleModuleChange} 
+      />
+    );
+  }
+
   return (
     <div className="app-container">
+      {/* Backdrop para celular cuando el sidebar está abierto */}
+      {sidebarOpen && (
+        <div 
+          className="sidebar-backdrop d-lg-none" 
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.4)',
+            zIndex: 1050,
+            backdropFilter: 'blur(4px)',
+            cursor: 'pointer'
+          }}
+        />
+      )}
+
       {/* Sidebar fijo */}
       <Sidebar 
         activeTab={activeTab} 
@@ -219,6 +269,8 @@ export default function App() {
         onLogout={handleLogout}
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
+        activeModule={activeModule}
+        onReturnToHub={() => handleModuleChange(null)}
       />
 
       {/* Área de contenido principal */}
@@ -240,6 +292,7 @@ export default function App() {
             activeCompany={activeCompany} 
             periodId={periodId} 
             onNavigateToReconciliation={navigateToReconciliation}
+            activeModule={activeModule}
           />
         )}
 
@@ -248,6 +301,7 @@ export default function App() {
             activeCompany={activeCompany} 
             userProfile={userProfile}
             onProcessComplete={handleProcessComplete}
+            activeModule={activeModule}
           />
         )}
 
@@ -257,6 +311,7 @@ export default function App() {
             activePeriod={activePeriod}
             initialFilter={reconciliationFilter}
             onFilterReset={() => setReconciliationFilter(null)}
+            activeModule={activeModule}
           />
         )}
 
@@ -265,12 +320,14 @@ export default function App() {
             activeCompany={activeCompany} 
             onSelectPeriod={handleSelectPeriod}
             onDeletePeriod={handleDeletePeriod}
+            activeModule={activeModule}
           />
         )}
 
         {activeTab === 'companies' && (
           <ConfiguracionEmpresas 
             activeCompany={activeCompany} 
+            activeModule={activeModule}
           />
         )}
 

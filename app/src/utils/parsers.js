@@ -128,3 +128,72 @@ export function parseSIRE(text) {
   }
   return results;
 }
+
+// Parser SAP Compras
+export function parseSAPCompras(text) {
+  const lines = text.split('\n');
+  const results = [];
+  for (let line of lines) {
+    if (!line.trim()) continue;
+    const cols = line.split('|');
+    if (cols.length < 24) continue;
+    
+    results.push({
+      periodo: cols[0].trim(),
+      doc_interno: cols[1].trim(),
+      sociedad: cols[2].trim(),
+      fecha_emision: normalizeDate(cols[3]),
+      tipo_doc_pago: normalizeDocType(cols[5]),
+      serie: cols[6].trim().toUpperCase(),
+      correlativo: cols[8].trim(),
+      tipo_identidad: cols[10].trim(),
+      nro_identidad: cols[11].trim(), // RUC proveedor
+      nombre: cols[12].trim(),
+      base: parseAmount(cols[13]),
+      igv: parseAmount(cols[14]),
+      exonerado: parseAmount(cols[17]),
+      inafecto: parseAmount(cols[19]),
+      total: parseAmount(cols[23]),
+      estado: '1' // siempre activo en compras
+    });
+  }
+  return results;
+}
+
+// Parser SUNAT Compras
+export function parseSUNATCompras(text) {
+  const lines = text.split('\n');
+  const results = [];
+  let isHeader = true;
+  for (let line of lines) {
+    if (!line.trim()) continue;
+    if (isHeader) {
+      isHeader = false;
+      continue;
+    }
+    const cols = line.split('|');
+    if (cols.length < 25) continue;
+    
+    results.push({
+      ruc_empresa: cols[0].trim(),
+      periodo: cols[2].trim(),
+      car_sunat: cols[3].trim(),
+      fecha_emision: normalizeDate(cols[4]),
+      tipo_doc_pago: normalizeDocType(cols[6]),
+      serie: cols[7].trim().toUpperCase(),
+      correlativo: cols[9].trim(),
+      tipo_identidad: cols[11].trim(),
+      nro_identidad: cols[12].trim(),
+      nombre: cols[13].trim(),
+      base: parseAmount(cols[14]),
+      igv: parseAmount(cols[15]),
+      exonerado: parseAmount(cols[16]), // BI Gravado DGNG
+      inafecto: parseAmount(cols[20]),  // Valor Adq. NG
+      otros: parseAmount(cols[23]),
+      total: parseAmount(cols[24]),
+      estado: cols[39]?.trim() || '1',
+      op_gratuitas: 0
+    });
+  }
+  return results;
+}

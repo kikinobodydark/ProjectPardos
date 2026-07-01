@@ -24,8 +24,47 @@ const STATIC_OBSERVATIONS = [
   { value: "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO", label: "OBS 7: LONGITUD IDENTIDAD SUNAT INCORRECTO" }
 ];
 
-export default function TablaUnificada({ periodId, activePeriod, initialFilter, onFilterReset }) {
+export default function TablaUnificada({ periodId, activePeriod, initialFilter, onFilterReset, activeModule }) {
   const [exportLoading, setExportLoading] = useState(false);
+
+  const getStaticErrors = () => {
+    if (activeModule === 'compras') {
+      return [
+        { value: "ERROR 1: DIFERENCIA EN BASE IMPONIBLE", label: "ERROR 1: DIFERENCIA BASE IMPONIBLE" },
+        { value: "ERROR 2: DIFERENCIA EN IGV", label: "ERROR 2: DIFERENCIA IGV" },
+        { value: "ERROR 3: DIFERENCIA EN EXONERADO", label: "ERROR 3: DIFERENCIA EXONERADO" },
+        { value: "ERROR 4: DIFERENCIA EN MONTOS TOTALES", label: "ERROR 4: DIFERENCIA MONTOS TOTALES" },
+        { value: "ERROR 5: NO EXISTE EN SUNAT", label: "ERROR 5: NO EXISTE EN SUNAT" }
+      ];
+    }
+    return [
+      { value: "ERROR 1: DIFERENCIA EN LA BI Gravada", label: "ERROR 1: DIFERENCIA BI Gravada" },
+      { value: "ERROR 2: DIFERENCIA EN EL IGV / IPM", label: "ERROR 2: DIFERENCIA IGV / IPM" },
+      { value: "ERROR 3: DIFERENCIA EN Mto Exonerado", label: "ERROR 3: DIFERENCIA Mto Exonerado" },
+      { value: "ERROR 4: DIFERENCIA EN Mto Inafecto", label: "ERROR 4: DIFERENCIA Mto Inafecto" },
+      { value: "ERROR 5: DIFERENCIA EN TOTALES", label: "ERROR 5: DIFERENCIA TOTALES" },
+      { value: "ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI", label: "ERROR 6: BOLETAS > 700 SIN DNI" }
+    ];
+  };
+
+  const getStaticObservations = () => {
+    if (activeModule === 'compras') {
+      return [
+        { value: "OBS 1: NO EXISTE EN SAP", label: "OBS 1: NO EXISTE EN SAP" },
+        { value: "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)", label: "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)" },
+        { value: "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)", label: "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)" }
+      ];
+    }
+    return [
+      { value: "OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD", label: "OBS 1: DIFERENCIA TIPO IDENTIDAD" },
+      { value: "OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD", label: "OBS 2: DIFERENCIA NUMERO IDENTIDAD" },
+      { value: "OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS", label: "OBS 3: DIFERENCIA SECUENCIA" },
+      { value: "OBS 4: NO EXISTE EN SAP", label: "OBS 4: NO EXISTE EN SAP" },
+      { value: "OBS 5: NO EXISTE EN SUNAT", label: "OBS 5: NO EXISTE EN SUNAT" },
+      { value: "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO", label: "OBS 6: LONGITUD IDENTIDAD SAP INCORRECTO" },
+      { value: "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO", label: "OBS 7: LONGITUD IDENTIDAD SUNAT INCORRECTO" }
+    ];
+  };
 
   // Filtros
   const [searchInputValue, setSearchInputValue] = useState('');
@@ -56,11 +95,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
   };
 
   const { data: existingFilters = { errors: [], obs: [] } } = useQuery({
-    queryKey: ['existingFilters', periodId],
+    queryKey: ['existingFilters', periodId, activeModule],
     queryFn: async () => {
       if (!periodId) return { errors: [], obs: [] };
       const { data, error } = await supabase
-        .from('detalle_validacion')
+        .from(activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas')
         .select('errores_json')
         .eq('periodo_id', periodId)
         .neq('estado_validacion', 'OK');
@@ -92,11 +131,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
     enabled: !!periodId
   });
 
-  const visibleErrors = STATIC_ERRORS.filter(err => 
+  const visibleErrors = getStaticErrors().filter(err => 
     existingFilters.errors.some(dbErr => dbErr.startsWith(err.value.slice(0, 8)))
   );
 
-  const visibleObservations = STATIC_OBSERVATIONS.filter(obs => 
+  const visibleObservations = getStaticObservations().filter(obs => 
     existingFilters.obs.some(dbObs => dbObs.startsWith(obs.value.slice(0, 6)))
   );
 
@@ -162,10 +201,10 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
   // TanStack Query para obtener registros filtrados y paginados
   const { data: reconciliationData, isLoading } = useQuery({
-    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage, startDate, endDate, filterSerie, startCorr, endCorr, originFilter, filterObsIdOk],
+    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage, startDate, endDate, filterSerie, startCorr, endCorr, originFilter, filterObsIdOk, activeModule],
     queryFn: async () => {
       let query = supabase
-        .from('detalle_validacion')
+        .from(activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas')
         .select('*', { count: 'exact' })
         .eq('periodo_id', periodId);
 
@@ -211,9 +250,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
             query = query.contains('errores_json', JSON.stringify([subFilter]));
           }
           if (filterObsIdOk === 'SAP_OK') {
-            query = query.not('errores_json', 'cs', '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]');
+            const errorString = activeModule === 'compras' ? "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)" : "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO";
+            query = query.not('errores_json', 'cs', JSON.stringify([errorString]));
           } else if (filterObsIdOk === 'SUNAT_OK') {
-            query = query.not('errores_json', 'cs', '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]');
+            const errorString = activeModule === 'compras' ? "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)" : "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO";
+            query = query.not('errores_json', 'cs', JSON.stringify([errorString]));
           }
         }
       }
@@ -258,6 +299,9 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
     if (code === '03') return 'Boleta';
     if (code === '07') return 'Nota de Crédito';
     if (code === '08') return 'Nota de Débito';
+    if (code === '14') return 'Servicios Públicos';
+    if (code === '30') return 'Adquisición de No Domiciliados';
+    if (code === '42') return 'Honorario';
     return `Otro (${code})`;
   };
 
@@ -272,7 +316,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
       while (hasMore) {
         let currentQuery = supabase
-          .from('detalle_validacion')
+          .from(activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas')
           .select('*')
           .eq('periodo_id', periodId);
 
@@ -318,9 +362,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
               currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
             }
             if (filterObsIdOk === 'SAP_OK') {
-              currentQuery = currentQuery.not('errores_json', 'cs', '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]');
+              const errorString = activeModule === 'compras' ? "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)" : "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO";
+              currentQuery = currentQuery.not('errores_json', 'cs', JSON.stringify([errorString]));
             } else if (filterObsIdOk === 'SUNAT_OK') {
-              currentQuery = currentQuery.not('errores_json', 'cs', '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]');
+              const errorString = activeModule === 'compras' ? "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)" : "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO";
+              currentQuery = currentQuery.not('errores_json', 'cs', JSON.stringify([errorString]));
             }
           }
         }
@@ -362,26 +408,47 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
       if (!allRows || allRows.length === 0) return;
 
-      const wsData = allRows.map(r => ({
-        'Mensaje SIRE': r.mensaje_sire || 'Registro OK.',
-        'Tipo Doc': getDocDescription(r.tipo_doc_pago),
-        'Serie': r.serie,
-        'Correlativo': r.correlativo,
-        'Base SAP': r.base_sap,
-        'Base SUNAT': r.base_sunat,
-        'Diferencia Base': r.base_sap - r.base_sunat,
-        'IGV SAP': r.igv_sap,
-        'IGV SUNAT': r.igv_sunat,
-        'Diferencia IGV': r.igv_sap - r.igv_sunat,
-        'Servicios/Otros SAP': r.otros_sap,
-        'Servicios/Otros SUNAT': r.otros_sunat,
-        'Diferencia Servicios': r.otros_sap - r.otros_sunat,
-        'Total SAP': r.total_sap,
-        'Total SUNAT': r.total_sunat,
-        'Diferencia Total': r.total_sap - r.total_sunat,
-        'Estado Validación': r.estado_validacion,
-        'Errores Encontrados': r.errores_json ? r.errores_json.join('; ') : ''
-      }));
+      const wsData = allRows.map(r => {
+        const rowObj = {
+          'Mensaje SIRE': r.mensaje_sire || 'Registro OK.',
+          'Tipo Doc': getDocDescription(r.tipo_doc_pago),
+          'Serie': r.serie,
+          'Correlativo': r.correlativo,
+          'Base SAP': r.base_sap,
+          'Base SUNAT': r.base_sunat,
+          'Diferencia Base': r.base_sap - r.base_sunat,
+          'IGV SAP': r.igv_sap,
+          'IGV SUNAT': r.igv_sunat,
+          'Diferencia IGV': r.igv_sap - r.igv_sunat,
+          'Exonerado SAP': r.exonerado_sap || 0,
+          'Exonerado SUNAT': r.exonerado_sunat || 0,
+          'Diferencia Exonerado': (r.exonerado_sap || 0) - (r.exonerado_sunat || 0),
+          'Inafecto SAP': r.inafecto_sap || 0,
+          'Inafecto SUNAT': r.inafecto_sunat || 0,
+          'Diferencia Inafecto': (r.inafecto_sap || 0) - (r.inafecto_sunat || 0),
+          'Servicios/Otros SAP': r.otros_sap,
+          'Servicios/Otros SUNAT': r.otros_sunat,
+          'Diferencia Servicios': r.otros_sap - r.otros_sunat,
+          'Total SAP': r.total_sap,
+          'Total SUNAT': r.total_sunat,
+          'Diferencia Total': r.total_sap - r.total_sunat,
+          'Estado Validación': r.estado_validacion,
+          'Errores Encontrados': r.errores_json ? r.errores_json.join('; ') : ''
+        };
+
+        if (activeModule === 'compras') {
+          rowObj['RUC Proveedor'] = r.ruc_proveedor || r.nro_identidad_sunat || r.nro_identidad_sap;
+          rowObj['Proveedor SAP'] = r.nombre_sap;
+          rowObj['Proveedor SUNAT'] = r.nombre_sunat;
+        } else {
+          rowObj['RUC/DNI Cliente SAP'] = r.nro_identidad_sap;
+          rowObj['RUC/DNI Cliente SUNAT'] = r.nro_identidad_sunat;
+          rowObj['Cliente SAP'] = r.nombre_sap;
+          rowObj['Cliente SUNAT'] = r.nombre_sunat;
+        }
+
+        return rowObj;
+      });
 
       const ws = XLSX.utils.json_to_sheet(wsData);
       const wb = XLSX.utils.book_new();
@@ -658,8 +725,8 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                 <th>FOLIO (SERIE-NRO)</th>
                 <th>FECHA EMIS.</th>
                 <th>TIPO DOC</th>
-                <th>IDENTIDAD SUNAT</th>
-                <th>CLIENTE SUNAT</th>
+                <th>IDENTIDAD {activeModule === 'compras' ? 'PROV' : 'SUNAT'}</th>
+                <th>{activeModule === 'compras' ? 'PROVEEDOR' : 'CLIENTE SUNAT'}</th>
                 <th className="text-end">BASE SAP</th>
                 <th className="text-end">BASE SUNAT</th>
                 <th className="text-end">IGV SAP</th>
@@ -682,8 +749,18 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                     <td className="fw-semibold font-mono">{r.serie}-{r.correlativo}</td>
                     <td className="font-mono">{r.fecha_emision || 'N/A'}</td>
                     <td>{getDocDescription(r.tipo_doc_pago)}</td>
-                    <td className="font-mono">{r.nro_identidad_sunat || 'No Registrado'}</td>
-                    <td className="text-truncate" style={{ maxWidth: '150px' }} title={r.nombre_sunat}>{r.nombre_sunat || '(Falta en SUNAT)'}</td>
+                    <td className="font-mono">
+                      {activeModule === 'compras'
+                        ? (r.ruc_proveedor || r.nro_identidad_sunat || r.nro_identidad_sap || 'No Registrado')
+                        : (r.nro_identidad_sunat || 'No Registrado')
+                      }
+                    </td>
+                    <td className="text-truncate" style={{ maxWidth: '150px' }} title={r.nombre_sunat || r.nombre_sap}>
+                      {activeModule === 'compras'
+                        ? (r.nombre_sunat || r.nombre_sap || '(Falta en SUNAT)')
+                        : (r.nombre_sunat || '(Falta en SUNAT)')
+                      }
+                    </td>
                     
                     {/* Montos */}
                     <td className="text-end font-mono">{r.base_sap.toFixed(2)}</td>
@@ -781,60 +858,71 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           tabIndex="-1" 
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.65)' }}
         >
-          <div className="modal-dialog modal-dialog-centered modal-lg">
+          <div className="modal-dialog modal-dialog-centered modal-xl">
             <div 
-              className="modal-content rounded-3 p-4" 
-              style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', minHeight: '400px' }}
+              className="modal-content rounded-3 p-5" 
+              style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', minHeight: '450px' }}
             >
               <div className="modal-header border-0 pb-0 d-flex justify-content-between align-items-center">
-                <h5 className="modal-title fw-bold">
+                <h3 className="modal-title fw-bold text-dark" style={{ fontSize: '2rem' }}>
                   Auditoría Folio: {selectedRow.serie}-{selectedRow.correlativo}
-                </h5>
+                </h3>
                 <button 
                   type="button" 
-                  className="border-0 bg-transparent fs-4 text-muted p-0 d-flex align-items-center justify-content-center" 
+                  className="border-0 bg-transparent fs-2 text-muted p-0 d-flex align-items-center justify-content-center" 
                   onClick={() => setSelectedRow(null)}
                   style={{ cursor: 'pointer' }}
                 >
                   <FiX />
                 </button>
               </div>
-              <div className="modal-body py-3">
-                <div className="mb-3">
-                  <div className="text-muted" style={{ fontSize: '0.8rem' }}>TIPO COMPROBANTE</div>
-                  <div className="fw-semibold">{getDocDescription(selectedRow.tipo_doc_pago)}</div>
+              <div className="modal-body py-4">
+                <div className="mb-4">
+                  <div className="text-muted fw-bold mb-1" style={{ fontSize: '1rem', letterSpacing: '0.05em' }}>TIPO COMPROBANTE</div>
+                  <div className="fw-bold text-dark" style={{ fontSize: '1.3rem' }}>{getDocDescription(selectedRow.tipo_doc_pago)}</div>
                 </div>
 
-                <div className="row g-2 mb-3">
+                <div className="row g-4 mb-4">
                   <div className="col-6">
-                    <div className="text-muted" style={{ fontSize: '0.8rem' }}>IDENTIDAD SAP</div>
-                    <div className="font-mono">{selectedRow.nro_identidad_sap || 'N/A'} (Tipo: {selectedRow.tipo_identidad_sap || 'N/A'})</div>
+                    <div className="text-muted fw-bold mb-1" style={{ fontSize: '1rem', letterSpacing: '0.05em' }}>IDENTIDAD SAP</div>
+                    <div className="font-mono fw-bold text-dark" style={{ fontSize: '1.25rem' }}>{selectedRow.nro_identidad_sap || 'N/A'} <span className="text-muted fw-normal" style={{ fontSize: '1.05rem' }}>(Tipo: {selectedRow.tipo_identidad_sap || 'N/A'})</span></div>
                   </div>
                   <div className="col-6">
-                    <div className="text-muted" style={{ fontSize: '0.8rem' }}>IDENTIDAD SUNAT</div>
-                    <div className="font-mono">{selectedRow.nro_identidad_sunat || 'N/A'} (Tipo: {selectedRow.tipo_identidad_sunat || 'N/A'})</div>
+                    <div className="text-muted fw-bold mb-1" style={{ fontSize: '1rem', letterSpacing: '0.05em' }}>IDENTIDAD SUNAT</div>
+                    <div className="font-mono fw-bold text-dark" style={{ fontSize: '1.25rem' }}>{selectedRow.nro_identidad_sunat || 'N/A'} <span className="text-muted fw-normal" style={{ fontSize: '1.05rem' }}>(Tipo: {selectedRow.tipo_identidad_sunat || 'N/A'})</span></div>
                   </div>
                 </div>
 
-                <div className="mb-3">
-                  <div className="text-muted" style={{ fontSize: '0.8rem' }}>LOG SIRE MENSAJE</div>
-                  <div className="fst-italic">{selectedRow.mensaje_sire || 'No registrado'}</div>
+                <div className="row g-4 mb-4">
+                  <div className="col-6">
+                    <div className="text-muted fw-bold mb-1" style={{ fontSize: '1rem', letterSpacing: '0.05em' }}>NOMBRE SAP</div>
+                    <div className="fw-bold text-dark" style={{ fontSize: '1.3rem' }}>{selectedRow.nombre_sap || 'N/A'}</div>
+                  </div>
+                  <div className="col-6">
+                    <div className="text-muted fw-bold mb-1" style={{ fontSize: '1rem', letterSpacing: '0.05em' }}>NOMBRE SUNAT</div>
+                    <div className="fw-bold text-dark" style={{ fontSize: '1.3rem' }}>{selectedRow.nombre_sunat || 'N/A'}</div>
+                  </div>
                 </div>
 
-                <div className="border-top pt-3" style={{ borderColor: 'var(--border-color)' }}>
-                  <div className="d-flex align-items-center mb-2">
-                    <FiAlertCircle className={`me-2 ${selectedRow.estado_validacion === 'OK' ? 'text-success' : selectedRow.estado_validacion === 'ERROR' ? 'text-danger' : 'text-warning'}`} />
-                    <span className="fw-bold">Reglas Infraccionadas ({selectedRow.errores_json?.length || 0})</span>
+                <div className="mb-4">
+                  <div className="text-muted fw-bold mb-1" style={{ fontSize: '1rem', letterSpacing: '0.05em' }}>LOG SIRE MENSAJE</div>
+                  <div className="fst-italic text-dark fw-semibold" style={{ fontSize: '1.2rem' }}>{selectedRow.mensaje_sire || 'No registrado'}</div>
+                </div>
+
+                <div className="border-top pt-4" style={{ borderColor: 'var(--border-color)' }}>
+                  <div className="d-flex align-items-center mb-3">
+                    <FiAlertCircle className={`me-2 fs-3 ${selectedRow.estado_validacion === 'OK' ? 'text-success' : selectedRow.estado_validacion === 'ERROR' ? 'text-danger' : 'text-warning'}`} />
+                    <span className="fw-bold text-dark" style={{ fontSize: '1.3rem' }}>Reglas Infraccionadas ({selectedRow.errores_json?.length || 0})</span>
                   </div>
                   
                   {selectedRow.errores_json && selectedRow.errores_json.length > 0 ? (
-                    <ul className="ps-3 mb-0" style={{ fontSize: '0.85rem' }}>
+                    <ul className="ps-4 mb-0" style={{ fontSize: '1.2rem', lineHeight: '1.6' }}>
                       {selectedRow.errores_json.map((err, idx) => (
-                        <li key={idx} className="text-warning mb-1">{err}</li>
+                        <li key={idx} className="text-warning mb-2 fw-semibold">{err}</li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-success mb-0" style={{ fontSize: '0.85rem' }}>✓ Todos los cruces de identidad, importes, secuencias y SIRE coinciden perfectamente.</p>
+                    <p className="text-success mb-0 fw-semibold" style={{ fontSize: '1.2rem' }}>✓ Todos los cruces de identidad, importes, secuencias y SIRE coinciden perfectamente.</p>
                   )}
                 </div>
               </div>

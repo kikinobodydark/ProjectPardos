@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
-import { parseSAP, parseSUNAT, parseSIRE, stripBOM } from '../utils/parsers';
+import { parseSAP, parseSUNAT, parseSIRE, stripBOM, parseSAPCompras, parseSUNATCompras } from '../utils/parsers';
 import { reconcileData } from '../utils/validations';
 import { FiUpload, FiFileText, FiCheck, FiPlay, FiAlertTriangle } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
 
-export default function CargaArchivos({ activeCompany, userProfile, onProcessComplete }) {
+export default function CargaArchivos({ activeCompany, userProfile, onProcessComplete, activeModule }) {
   const [periodo, setPeriodo] = useState(''); // Formato YYYYMM, ej. 202606
   const [dia, setDia] = useState('');
   const [version, setVersion] = useState('1');
@@ -117,8 +117,8 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       }
 
       setStatusText('Parseando registros...');
-      const sunatData = parseSUNAT(sunatText);
-      const sapData = parseSAP(sapText);
+      const sunatData = activeModule === 'compras' ? parseSUNATCompras(sunatText) : parseSUNAT(sunatText);
+      const sapData = activeModule === 'compras' ? parseSAPCompras(sapText) : parseSAP(sapText);
       const sireData = parseSIRE(sireText);
 
       if (sunatData.length === 0) throw new Error('El archivo de SUNAT está vacío o no coincide con el formato.');
@@ -126,7 +126,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       if (sireData.length === 0) throw new Error('El archivo de SIRE está vacío o no coincide con el formato.');
 
       setStatusText('Conciliando y aplicando reglas tributarias...');
-      const reconciledList = reconcileData(sapData, sunatData, sireData, activeCompany.ruc, cortesiasData);
+      const reconciledList = reconcileData(sapData, sunatData, sireData, activeCompany.ruc, cortesiasData, activeModule);
 
       setStatusText(`Preparando ${reconciledList.length} registros para base de datos...`);
 
@@ -139,7 +139,8 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           periodo: periodo,
           dia: dia,
           version: versionNum,
-          estado: 'procesando'
+          estado: 'procesando',
+          modulo: activeModule
         })
         .select()
         .single();
@@ -151,42 +152,53 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       setStatusText('Cargando registros unificados a Supabase...');
       const chunkSize = 1000;
       for (let i = 0; i < reconciledList.length; i += chunkSize) {
-        const chunk = reconciledList.slice(i, i + chunkSize).map(r => ({
-          periodo_id: periodId,
-          car_sunat: r.car_sunat,
-          serie: r.serie,
-          correlativo: r.correlativo,
-          fecha_emision: r.fecha_emision,
-          tipo_doc_pago: r.tipo_doc_pago,
-          
-          tipo_identidad_sap: r.tipo_identidad_sap,
-          nro_identidad_sap: r.nro_identidad_sap,
-          nombre_sap: r.nombre_sap,
-          base_sap: r.base_sap,
-          igv_sap: r.igv_sap,
-          exonerado_sap: r.exonerado_sap || 0,
-          inafecto_sap: r.inafecto_sap || 0,
-          otros_sap: r.otros_sap,
-          total_sap: r.total_sap,
-          
-          tipo_identidad_sunat: r.tipo_identidad_sunat,
-          nro_identidad_sunat: r.nro_identidad_sunat,
-          nombre_sunat: r.nombre_sunat,
-          base_sunat: r.base_sunat,
-          igv_sunat: r.igv_sunat,
-          exonerado_sunat: r.exonerado_sunat || 0,
-          inafecto_sunat: r.inafecto_sunat || 0,
-          otros_sunat: r.otros_sunat,
-          total_sunat: r.total_sunat,
-          
-          mensaje_sire: r.mensaje_sire,
-          tipo_pago_sire: r.tipo_pago_sire,
-          estado_validacion: r.estado_validacion,
-          errores_json: r.errores_json
-        }));
+        const chunk = reconciledList.slice(i, i + chunkSize).map(r => {
+          const itemObj = {
+            periodo_id: periodId,
+            empresa_id: activeCompany.id,
+            car_sunat: r.car_sunat,
+            serie: r.serie,
+            correlativo: r.correlativo,
+            fecha_emision: r.fecha_emision,
+            tipo_doc_pago: r.tipo_doc_pago,
+            
+            tipo_identidad_sap: r.tipo_identidad_sap,
+            nro_identidad_sap: r.nro_identidad_sap,
+            nombre_sap: r.nombre_sap,
+            base_sap: r.base_sap,
+            igv_sap: r.igv_sap,
+            exonerado_sap: r.exonerado_sap || 0,
+            inafecto_sap: r.inafecto_sap || 0,
+            otros_sap: r.otros_sap,
+            total_sap: r.total_sap,
+            
+            tipo_identidad_sunat: r.tipo_identidad_sunat,
+            nro_identidad_sunat: r.nro_identidad_sunat,
+            nombre_sunat: r.nombre_sunat,
+            base_sunat: r.base_sunat,
+            igv_sunat: r.igv_sunat,
+            exonerado_sunat: r.exonerado_sunat || 0,
+            inafecto_sunat: r.inafecto_sunat || 0,
+            otros_sunat: r.otros_sunat,
+            total_sunat: r.total_sunat,
+            
+            mensaje_sire: r.mensaje_sire,
+            estado_validacion: r.estado_validacion,
+            errores_json: r.errores_json
+          };
+
+          if (activeModule === 'compras') {
+            itemObj.ruc_proveedor = r.ruc_proveedor;
+          } else {
+            itemObj.tipo_pago_sire = r.tipo_pago_sire;
+            itemObj.op_gratuitas = r.op_gratuitas;
+          }
+
+          return itemObj;
+        });
 
         const { error: insertErr } = await supabase
-          .from('detalle_validacion')
+          .from(activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas')
           .insert(chunk);
 
         if (insertErr) {
@@ -299,7 +311,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
 
         <div className="row g-3 mb-4">
           {/* SAP Dropzone */}
-          <div className="col-xl-3 col-md-6">
+          <div className={`col-xl-${activeModule === 'compras' ? '4' : '3'} col-md-6`}>
             <div 
               className={`dropzone-premium ${sapFile ? 'active' : ''}`}
               onClick={() => document.getElementById('input-sap').click()}
@@ -321,7 +333,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               ) : (
                 <div>
                   <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SAP (1111)</div>
+                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>{activeModule === 'compras' ? 'Reporte SAP (Compras)' : 'Reporte SAP (1111)'}</div>
                   <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
                 </div>
               )}
@@ -329,7 +341,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           </div>
 
           {/* SUNAT Dropzone */}
-          <div className="col-xl-3 col-md-6">
+          <div className={`col-xl-${activeModule === 'compras' ? '4' : '3'} col-md-6`}>
             <div 
               className={`dropzone-premium ${sunatFile ? 'active' : ''}`}
               onClick={() => document.getElementById('input-sunat').click()}
@@ -351,7 +363,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               ) : (
                 <div>
                   <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SUNAT (EXP2)</div>
+                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>{activeModule === 'compras' ? 'Reporte SUNAT (Compras)' : 'Reporte SUNAT (EXP2)'}</div>
                   <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
                 </div>
               )}
@@ -359,7 +371,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           </div>
 
           {/* SIRE Dropzone */}
-          <div className="col-xl-3 col-md-6">
+          <div className={`col-xl-${activeModule === 'compras' ? '4' : '3'} col-md-6`}>
             <div 
               className={`dropzone-premium ${sireFile ? 'active' : ''}`}
               onClick={() => document.getElementById('input-sire').click()}
@@ -381,7 +393,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               ) : (
                 <div>
                   <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>LOG SIRE Ventas</div>
+                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>{activeModule === 'compras' ? 'LOG SIRE Compras' : 'LOG SIRE Ventas'}</div>
                   <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
                 </div>
               )}
@@ -389,34 +401,36 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           </div>
 
           {/* Cortesías Dropzone */}
-          <div className="col-xl-3 col-md-6">
-            <div 
-              className={`dropzone-premium ${cortesiasFile ? 'active' : ''}`}
-              onClick={() => document.getElementById('input-cortesias').click()}
-            >
-              <input
-                id="input-cortesias"
-                type="file"
-                accept=".xlsx,.xls"
-                className="d-none"
-                onChange={(e) => handleFileChange(e, 'cortesias')}
-                disabled={loading}
-              />
-              {cortesiasFile ? (
-                <div>
-                  <FiCheck className="text-success fs-2 mb-2" />
-                  <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{cortesiasFile.name}</div>
-                  <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(cortesiasFile.size / 1024).toFixed(1)} KB (Cortesías)</small>
-                </div>
-              ) : (
-                <div>
-                  <FiUpload className="text-muted fs-2 mb-2" />
-                  <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Cortesías (Excel - Opcional)</div>
-                  <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo Excel</small>
-                </div>
-              )}
+          {activeModule !== 'compras' && (
+            <div className="col-xl-3 col-md-6">
+              <div 
+                className={`dropzone-premium ${cortesiasFile ? 'active' : ''}`}
+                onClick={() => document.getElementById('input-cortesias').click()}
+              >
+                <input
+                  id="input-cortesias"
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="d-none"
+                  onChange={(e) => handleFileChange(e, 'cortesias')}
+                  disabled={loading}
+                />
+                {cortesiasFile ? (
+                  <div>
+                    <FiCheck className="text-success fs-2 mb-2" />
+                    <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{cortesiasFile.name}</div>
+                    <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(cortesiasFile.size / 1024).toFixed(1)} KB (Cortesías)</small>
+                  </div>
+                ) : (
+                  <div>
+                    <FiUpload className="text-muted fs-2 mb-2" />
+                    <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Cortesías (Excel - Opcional)</div>
+                    <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo Excel</small>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="d-flex justify-content-between align-items-center">
