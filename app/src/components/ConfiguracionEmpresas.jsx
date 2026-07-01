@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiPlus, FiEdit2, FiTrash2, FiCheck, FiX, FiAlertTriangle } from 'react-icons/fi';
+import { isValidIdentityNumber, isRecordAnulado } from '../utils/validations';
 
 export default function ConfiguracionEmpresas({ activeCompany }) {
   // Formulario
@@ -12,6 +13,117 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
   
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  const [revalLoading, setRevalLoading] = useState(false);
+  const [revalSuccess, setRevalSuccess] = useState('');
+  const [revalError, setRevalError] = useState('');
+
+  const handleRevalidateAll = async () => {
+    setRevalLoading(true);
+    setRevalSuccess('');
+    setRevalError('');
+    try {
+      let allRows = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('detalle_validacion')
+          .select('*')
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) throw error;
+        if (!data || data.length === 0) {
+          hasMore = false;
+        } else {
+          allRows = allRows.concat(data);
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        }
+      }
+
+      if (allRows.length === 0) {
+        setRevalSuccess('No hay registros para revalidar.');
+        setRevalLoading(false);
+        return;
+      }
+
+      let updatedCount = 0;
+      for (const row of allRows) {
+        const errors = [...(row.errores_json || [])];
+
+        const cleanErrors = errors.filter(e => 
+          !e.startsWith('OBS 6:') && 
+          !e.startsWith('Identidad SAP no cumple') &&
+          !e.startsWith('OBS 7:') && 
+          !e.startsWith('Identidad SUNAT no cumple')
+        );
+
+        const isNoExisteSAP = row.nro_identidad_sap === null && row.nombre_sap === null;
+        if (!isNoExisteSAP && row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
+          if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
+            cleanErrors.push("OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO");
+            cleanErrors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
+          }
+        }
+
+        const isNoExisteSUNAT = row.nro_identidad_sunat === null && row.nombre_sunat === null;
+        if (!isNoExisteSUNAT && row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
+          if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
+            cleanErrors.push("OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO");
+            cleanErrors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
+          }
+        }
+
+        const isAnulado = isRecordAnulado(row);
+        let newStatus = 'OK';
+        
+        if (isAnulado) {
+          newStatus = 'OK';
+        } else {
+          const hasError = cleanErrors.some(e => e.startsWith('ERROR '));
+          const hasObs = cleanErrors.some(e => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
+          if (hasError) {
+            newStatus = 'ERROR';
+          } else if (hasObs) {
+            newStatus = 'OBSERVADO';
+          } else {
+            newStatus = 'OK';
+          }
+        }
+
+        const statusChanged = row.estado_validacion !== newStatus;
+        const oldJsonStr = JSON.stringify(row.errores_json || []);
+        const newJsonStr = JSON.stringify(cleanErrors);
+        const errorsChanged = oldJsonStr !== newJsonStr;
+
+        if (statusChanged || errorsChanged) {
+          const { error: updateErr } = await supabase
+            .from('detalle_validacion')
+            .update({
+              estado_validacion: newStatus,
+              errores_json: cleanErrors
+            })
+            .eq('id', row.id);
+
+          if (updateErr) throw updateErr;
+          updatedCount++;
+        }
+      }
+
+      setRevalSuccess(`Revalidación completada. Se analizaron ${allRows.length} registros y se actualizaron ${updatedCount} con discrepancias de formato de identidad.`);
+    } catch (err) {
+      console.error(err);
+      setRevalError(err.message || 'Ocurrió un error al revalidar los registros.');
+    } finally {
+      setRevalLoading(false);
+    }
+  };
 
   // TanStack Query para obtener la lista de empresas
   const { data: empresas = [], isLoading, refetch } = useQuery({
@@ -266,6 +378,52 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
               </table>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Herramientas de Mantenimiento (Solo Admins) */}
+      <div className="col-12 mt-4">
+        <div className="card-premium">
+          <h5 className="mb-2 fw-bold">Mantenimiento y Calidad de Datos</h5>
+          <p className="text-muted mb-3" style={{ fontSize: '0.88rem' }}>
+            Ejecuta diagnósticos y actualizaciones masivas en los registros de conciliación.
+          </p>
+
+          {revalSuccess && (
+            <div className="alert alert-success py-2 px-3 mb-3 border-0 rounded-3 animate-fade-in" style={{ fontSize: '0.85rem' }}>
+              <FiCheck className="me-2" /> {revalSuccess}
+            </div>
+          )}
+
+          {revalError && (
+            <div className="alert alert-danger py-2 px-3 mb-3 border-0 rounded-3 animate-fade-in" style={{ fontSize: '0.85rem' }}>
+              <FiAlertTriangle className="me-2" /> {revalError}
+            </div>
+          )}
+
+          <div className="d-flex align-items-center justify-content-between p-3 rounded-3 bg-dark bg-opacity-25 border border-secondary border-opacity-10">
+            <div className="me-3">
+              <h6 className="fw-bold mb-1 text-white">Revalidación Masiva de Números de Identidad</h6>
+              <small className="text-muted">
+                Vuelve a evaluar todos los registros históricos de SAP y SUNAT contra la longitud de dígitos correcta de DNI (8), RUC (11) y CE (9).
+              </small>
+            </div>
+            <button
+              onClick={handleRevalidateAll}
+              disabled={revalLoading}
+              className="btn btn-warning px-4 py-2 rounded-3 fw-semibold d-flex align-items-center"
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              {revalLoading ? (
+                <>
+                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Procesando...
+                </>
+              ) : (
+                'Revalidar Historial'
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

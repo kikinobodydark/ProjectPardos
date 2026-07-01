@@ -2,8 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle } from 'react-icons/fi';
+import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle, FiCheckCircle } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
+
+const STATIC_ERRORS = [
+  { value: "ERROR 1: DIFERENCIA EN LA BI Gravada", label: "ERROR 1: DIFERENCIA EN BI Gravada" },
+  { value: "ERROR 2: DIFERENCIA EN EL IGV / IPM", label: "ERROR 2: DIFERENCIA EN IGV / IPM" },
+  { value: "ERROR 3: DIFERENCIA EN Mto Exonerado", label: "ERROR 3: DIFERENCIA EN Mto Exonerado" },
+  { value: "ERROR 4: DIFERENCIA EN Mto Inafecto", label: "ERROR 4: DIFERENCIA EN Mto Inafecto" },
+  { value: "ERROR 5: DIFERENCIA EN TOTALES", label: "ERROR 5: DIFERENCIA EN TOTALES" },
+  { value: "ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI", label: "ERROR 6: BOLETAS > 700 SIN DNI" }
+];
+
+const STATIC_OBSERVATIONS = [
+  { value: "OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD", label: "OBS 1: DIFERENCIA TIPO IDENTIDAD" },
+  { value: "OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD", label: "OBS 2: DIFERENCIA NUMERO IDENTIDAD" },
+  { value: "OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS", label: "OBS 3: DIFERENCIA SECUENCIA" },
+  { value: "OBS 4: NO EXISTE EN SAP", label: "OBS 4: NO EXISTE EN SAP" },
+  { value: "OBS 5: NO EXISTE EN SUNAT", label: "OBS 5: NO EXISTE EN SUNAT" },
+  { value: "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO", label: "OBS 6: LONGITUD IDENTIDAD SAP INCORRECTO" },
+  { value: "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO", label: "OBS 7: LONGITUD IDENTIDAD SUNAT INCORRECTO" }
+];
 
 export default function TablaUnificada({ periodId, activePeriod, initialFilter, onFilterReset }) {
   const [exportLoading, setExportLoading] = useState(false);
@@ -15,6 +34,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
   const [subFilter, setSubFilter] = useState('ALL');
   const [docFilter, setDocFilter] = useState('ALL');
   const [sireFilter, setSireFilter] = useState('ALL');
+  const [filterObsIdOk, setFilterObsIdOk] = useState('ALL'); // 'ALL', 'SAP_OK', 'SUNAT_OK'
 
   // Filtros Avanzados (Fechas, Serie y Correlativos)
   const [startDate, setStartDate] = useState('');
@@ -31,31 +51,91 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
     setStartCorr('');
     setEndCorr('');
     setOriginFilter('ALL');
+    setFilterObsIdOk('ALL');
     setCurrentPage(1);
   };
+
+  const { data: existingFilters = { errors: [], obs: [] } } = useQuery({
+    queryKey: ['existingFilters', periodId],
+    queryFn: async () => {
+      if (!periodId) return { errors: [], obs: [] };
+      const { data, error } = await supabase
+        .from('detalle_validacion')
+        .select('errores_json')
+        .eq('periodo_id', periodId)
+        .neq('estado_validacion', 'OK');
+
+      if (error) throw error;
+
+      const errorsSet = new Set();
+      const obsSet = new Set();
+
+      if (data) {
+        data.forEach(row => {
+          if (row.errores_json) {
+            row.errores_json.forEach(err => {
+              if (err.startsWith('ERROR ')) {
+                errorsSet.add(err);
+              } else if (err.startsWith('OBS ')) {
+                obsSet.add(err);
+              }
+            });
+          }
+        });
+      }
+
+      return {
+        errors: Array.from(errorsSet),
+        obs: Array.from(obsSet)
+      };
+    },
+    enabled: !!periodId
+  });
+
+  const visibleErrors = STATIC_ERRORS.filter(err => 
+    existingFilters.errors.some(dbErr => dbErr.startsWith(err.value.slice(0, 8)))
+  );
+
+  const visibleObservations = STATIC_OBSERVATIONS.filter(obs => 
+    existingFilters.obs.some(dbObs => dbObs.startsWith(obs.value.slice(0, 6)))
+  );
 
   // Control sincrónico de cambio de filtros para evitar race conditions
   const handleStateFilterChange = (newVal) => {
     setSubFilter('ALL');
     setStateFilter(newVal);
+    setFilterObsIdOk('ALL');
     setCurrentPage(1);
   };
 
   // Si hay un filtro inicial del dashboard, aplicarlo
   useEffect(() => {
     if (initialFilter) {
-      if (initialFilter === 'SAP_OK') {
+      if (initialFilter === 'SAP_OBS_ID_OK') {
+        setStateFilter('OBSERVADO');
+        setOriginFilter('SAP');
+        setSubFilter('ALL');
+        setFilterObsIdOk('SAP_OK');
+      } else if (initialFilter === 'SUNAT_OBS_ID_OK') {
+        setStateFilter('OBSERVADO');
+        setOriginFilter('SUNAT');
+        setSubFilter('ALL');
+        setFilterObsIdOk('SUNAT_OK');
+      } else if (initialFilter === 'SAP_OK') {
         setStateFilter('OK');
         setOriginFilter('SAP');
         setSubFilter('ALL');
+        setFilterObsIdOk('ALL');
       } else if (initialFilter === 'SUNAT_OK') {
         setStateFilter('OK');
         setOriginFilter('SUNAT');
         setSubFilter('ALL');
+        setFilterObsIdOk('ALL');
       } else {
         setOriginFilter('ALL');
         setStateFilter(initialFilter);
         setSubFilter('ALL');
+        setFilterObsIdOk('ALL');
       }
       setCurrentPage(1);
       if (onFilterReset) {
@@ -82,7 +162,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
   // TanStack Query para obtener registros filtrados y paginados
   const { data: reconciliationData, isLoading } = useQuery({
-    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage, startDate, endDate, filterSerie, startCorr, endCorr, originFilter],
+    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage, startDate, endDate, filterSerie, startCorr, endCorr, originFilter, filterObsIdOk],
     queryFn: async () => {
       let query = supabase
         .from('detalle_validacion')
@@ -126,8 +206,15 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         query = query.eq('estado_validacion', stateFilter);
         if (stateFilter === 'ERROR' && subFilter !== 'ALL') {
           query = query.contains('errores_json', JSON.stringify([subFilter]));
-        } else if (stateFilter === 'OBSERVADO' && subFilter !== 'ALL') {
-          query = query.contains('errores_json', JSON.stringify([subFilter]));
+        } else if (stateFilter === 'OBSERVADO') {
+          if (subFilter !== 'ALL') {
+            query = query.contains('errores_json', JSON.stringify([subFilter]));
+          }
+          if (filterObsIdOk === 'SAP_OK') {
+            query = query.not('errores_json', 'cs', '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]');
+          } else if (filterObsIdOk === 'SUNAT_OK') {
+            query = query.not('errores_json', 'cs', '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]');
+          }
         }
       }
 
@@ -226,8 +313,15 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           currentQuery = currentQuery.eq('estado_validacion', stateFilter);
           if (stateFilter === 'ERROR' && subFilter !== 'ALL') {
             currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
-          } else if (stateFilter === 'OBSERVADO' && subFilter !== 'ALL') {
-            currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
+          } else if (stateFilter === 'OBSERVADO') {
+            if (subFilter !== 'ALL') {
+              currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
+            }
+            if (filterObsIdOk === 'SAP_OK') {
+              currentQuery = currentQuery.not('errores_json', 'cs', '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]');
+            } else if (filterObsIdOk === 'SUNAT_OK') {
+              currentQuery = currentQuery.not('errores_json', 'cs', '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]');
+            }
           }
         }
 
@@ -415,12 +509,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
               onChange={(e) => { setSubFilter(e.target.value); setCurrentPage(1); }}
             >
               <option value="ALL">Todos los Errores</option>
-              <option value="ERROR 1: DIFERENCIA EN LA BI Gravada">ERROR 1: DIFERENCIA EN BI Gravada</option>
-              <option value="ERROR 2: DIFERENCIA EN EL IGV / IPM">ERROR 2: DIFERENCIA EN IGV / IPM</option>
-              <option value="ERROR 3: DIFERENCIA EN Mto Exonerado">ERROR 3: DIFERENCIA EN Mto Exonerado</option>
-              <option value="ERROR 4: DIFERENCIA EN Mto Inafecto">ERROR 4: DIFERENCIA EN Mto Inafecto</option>
-              <option value="ERROR 5: DIFERENCIA EN TOTALES">ERROR 5: DIFERENCIA EN TOTALES</option>
-              <option value="ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI">ERROR 6: BOLETAS &gt; 700 SIN DNI</option>
+              {visibleErrors.map(err => (
+                <option key={err.value} value={err.value}>
+                  {err.label}
+                </option>
+              ))}
             </select>
           </div>
         )}
@@ -433,11 +526,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
               onChange={(e) => { setSubFilter(e.target.value); setCurrentPage(1); }}
             >
               <option value="ALL">Todas las Obs.</option>
-              <option value="OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD">OBS 1: DIFERENCIA TIPO IDENTIDAD</option>
-              <option value="OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD">OBS 2: DIFERENCIA NUMERO IDENTIDAD</option>
-              <option value="OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS">OBS 3: DIFERENCIA SECUENCIA</option>
-              <option value="OBS 4: NO EXISTE EN SAP">OBS 4: NO EXISTE EN SAP</option>
-              <option value="OBS 5: NO EXISTE EN SUNAT">OBS 5: NO EXISTE EN SUNAT</option>
+              {visibleObservations.map(obs => (
+                <option key={obs.value} value={obs.value}>
+                  {obs.label}
+                </option>
+              ))}
             </select>
           </div>
         )}
@@ -447,7 +540,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
             <select
               className="form-select form-control-premium"
               value={originFilter}
-              onChange={(e) => { setOriginFilter(e.target.value); setCurrentPage(1); }}
+              onChange={(e) => { setOriginFilter(e.target.value); setFilterObsIdOk('ALL'); setCurrentPage(1); }}
             >
               <option value="ALL">Origen: Todos</option>
               <option value="SAP">Solo SAP</option>
@@ -528,6 +621,23 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           </button>
         </div>
       </div>
+
+      {/* Alerta del filtro de consistencia de identidad */}
+      {filterObsIdOk !== 'ALL' && (
+        <div className="alert alert-info py-2 px-3 mb-3 border-0 rounded-3 d-flex align-items-center justify-content-between text-white bg-info bg-opacity-10 animate-fade-in" style={{ fontSize: '0.85rem' }}>
+          <div>
+            <FiCheckCircle className="me-2 text-info fs-5" />
+            Mostrando comprobantes <strong>Observados</strong> con <strong>Número de Identidad {filterObsIdOk === 'SAP_OK' ? 'SAP' : 'SUNAT'} Correcto</strong>.
+          </div>
+          <button 
+            className="btn btn-sm btn-link text-info p-0" 
+            onClick={() => setFilterObsIdOk('ALL')}
+            style={{ textDecoration: 'none', cursor: 'pointer' }}
+          >
+            Quitar Filtro
+          </button>
+        </div>
+      )}
 
       {/* Tabla Unificada */}
       {loading ? (

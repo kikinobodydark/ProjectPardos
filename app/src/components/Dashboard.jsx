@@ -22,7 +22,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
   } } = useQuery({
     queryKey: ['dashboardStats', periodId],
     queryFn: async () => {
-      const [resumenRes, obs1Res, obs2Res, sapOkRes, sunatOkRes] = await Promise.all([
+      const [resumenRes, obs1Res, obs2Res, sapObsIdOkRes, sunatObsIdOkRes] = await Promise.all([
         supabase
           .from('v_resumen_validacion')
           .select('*')
@@ -32,29 +32,33 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
           .from('detalle_validacion')
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
-          .contains('errores_json', ['OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD']),
+          .contains('errores_json', JSON.stringify(['OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD'])),
         supabase
           .from('detalle_validacion')
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
-          .contains('errores_json', ['OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD']),
+          .contains('errores_json', JSON.stringify(['OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD'])),
         supabase
           .from('detalle_validacion')
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
-          .eq('estado_validacion', 'OK')
-          .or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null'),
+          .eq('estado_validacion', 'OBSERVADO')
+          .or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null')
+          .not('errores_json', 'cs', '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]'),
         supabase
           .from('detalle_validacion')
           .select('*', { count: 'exact', head: true })
           .eq('periodo_id', periodId)
-          .eq('estado_validacion', 'OK')
+          .eq('estado_validacion', 'OBSERVADO')
           .or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null')
+          .not('errores_json', 'cs', '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]')
       ]);
 
       if (resumenRes.error && resumenRes.error.code !== 'PGRST116') {
         throw resumenRes.error;
       }
+      if (sapObsIdOkRes.error) throw sapObsIdOkRes.error;
+      if (sunatObsIdOkRes.error) throw sunatObsIdOkRes.error;
 
       const summary = resumenRes.data || {};
 
@@ -71,8 +75,8 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
         totalSunat: parseFloat(summary.sum_total_sunat) || 0,
         countObs1: obs1Res.count || 0,
         countObs2: obs2Res.count || 0,
-        countSapOk: sapOkRes.count || 0,
-        countSunatOk: sunatOkRes.count || 0,
+        countSapOk: sapObsIdOkRes.count || 0,
+        countSunatOk: sunatObsIdOkRes.count || 0,
       };
     },
     enabled: !!periodId,
@@ -283,9 +287,9 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
         {/* Gráfico de Barras de Comprobantes Correctos */}
         <div className="col-lg-6">
           <div className="card-premium h-100">
-            <h5 className="mb-2 fw-bold">Documentos Correctos por Origen</h5>
+            <h5 className="mb-2 fw-bold">Consistencia de Identidades en Observados</h5>
             <p className="text-muted mb-4" style={{ fontSize: '0.82rem' }}>
-              Comprobantes validados con estado <strong>OK</strong> en cada origen. Haz clic en las barras para ver el detalle filtrado.
+              Cantidad de comprobantes <strong>Observados</strong> que tienen un número de identidad con longitud/formato correcto por origen. Haz clic en las barras para ver el detalle filtrado.
             </p>
 
             <div className="d-flex align-items-end justify-content-around mt-4 mb-4" style={{ height: '180px', paddingBottom: '10px', borderBottom: '1px solid var(--border-color)' }}>
@@ -296,17 +300,17 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
               >
                 <div 
                   className="bar-sap-glow animate-fade-in"
-                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SAP_OK')}
+                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SAP_OBS_ID_OK')}
                   style={{
                     width: '50px',
-                    height: `${stats.total > 0 ? (stats.countSapOk / Math.max(stats.countSapOk, stats.countSunatOk, 1) * 100) : 0}%`,
+                    height: `${stats.observed > 0 ? (stats.countSapOk / stats.observed * 100) : 0}%`,
                     background: 'linear-gradient(to top, #4f46e5, #8b5cf6)',
                     cursor: 'pointer',
                     borderRadius: '6px 6px 0 0',
                   }}
-                  title="Ver detalle de documentos SAP correctos (OK)"
+                  title="Ver detalle de documentos observados con ID SAP válido"
                 ></div>
-                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SAP (OK)</span>
+                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SAP (ID Válido)</span>
                 <span className="font-mono text-muted" style={{ fontSize: '0.8rem' }}>{stats.countSapOk} docs</span>
               </div>
 
@@ -317,17 +321,17 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
               >
                 <div 
                   className="bar-sunat-glow animate-fade-in"
-                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SUNAT_OK')}
+                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SUNAT_OBS_ID_OK')}
                   style={{
                     width: '50px',
-                    height: `${stats.total > 0 ? (stats.countSunatOk / Math.max(stats.countSapOk, stats.countSunatOk, 1) * 100) : 0}%`,
+                    height: `${stats.observed > 0 ? (stats.countSunatOk / stats.observed * 100) : 0}%`,
                     background: 'linear-gradient(to top, #10b981, #0d9488)',
                     cursor: 'pointer',
                     borderRadius: '6px 6px 0 0',
                   }}
-                  title="Ver detalle de documentos SUNAT correctos (OK)"
+                  title="Ver detalle de documentos observados con ID SUNAT válido"
                 ></div>
-                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SUNAT (OK)</span>
+                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SUNAT (ID Válido)</span>
                 <span className="font-mono text-muted" style={{ fontSize: '0.8rem' }}>{stats.countSunatOk} docs</span>
               </div>
             </div>

@@ -49,6 +49,33 @@ export function buildCortesiasSet(rows) {
   return set;
 }
 
+export function isValidIdentityNumber(tipo, nro) {
+  if (!nro) return false;
+  const clean = nro.trim();
+
+  // Si contiene solo ceros, su longitud debe ser exactamente 1 o 8 (ej: "0" o "00000000")
+  if (/^0+$/.test(clean)) {
+    return clean.length === 1 || clean.length === 8;
+  }
+
+  if (tipo === '1') { // DNI
+    return clean.length === 8 && /^\d+$/.test(clean);
+  }
+  if (tipo === '6') { // RUC
+    return clean.length === 11 && /^\d+$/.test(clean);
+  }
+  if (tipo === '4') { // CE
+    return clean.length === 9;
+  }
+  if (tipo === '7') { // Pasaporte
+    return clean.length >= 3 && clean.length <= 12;
+  }
+  if (tipo === '0') { // Sin documento / Otros
+    return clean.length >= 1 && clean.length <= 15;
+  }
+  return clean.length > 0 && clean.length <= 15;
+}
+
 export function validateRow(row, cortesiasSet = new Set()) {
   const errors = [];
   let status = 'OK';
@@ -112,6 +139,22 @@ export function validateRow(row, cortesiasSet = new Set()) {
     if (row.nro_identidad_sap !== null && row.nro_identidad_sunat !== null && row.nro_identidad_sap !== row.nro_identidad_sunat) {
       errors.push("OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD");
       errors.push(`Discrepancia en identidad: SAP (${row.nro_identidad_sap}) vs SUNAT (${row.nro_identidad_sunat})`);
+    }
+
+    // OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO
+    if (row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
+      if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
+        errors.push("OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO");
+        errors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
+      }
+    }
+
+    // OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO
+    if (row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
+      if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
+        errors.push("OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO");
+        errors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
+      }
     }
   }
 
