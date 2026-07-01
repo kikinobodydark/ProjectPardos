@@ -186,6 +186,14 @@ export default function App() {
     changeTab('dashboard');
   };
 
+  const handleDeletePeriod = (deletedPeriodId) => {
+    refetchPeriods();
+    if (periodId === deletedPeriodId) {
+      setPeriodId(null);
+      setActivePeriod('');
+    }
+  };
+
   if (session && profileLoading) {
     return (
       <div 
@@ -256,6 +264,7 @@ export default function App() {
           <HistorialCargas 
             activeCompany={activeCompany} 
             onSelectPeriod={handleSelectPeriod}
+            onDeletePeriod={handleDeletePeriod}
           />
         )}
 

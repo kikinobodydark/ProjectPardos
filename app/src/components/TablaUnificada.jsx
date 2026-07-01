@@ -16,6 +16,24 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
   const [docFilter, setDocFilter] = useState('ALL');
   const [sireFilter, setSireFilter] = useState('ALL');
 
+  // Filtros Avanzados (Fechas, Serie y Correlativos)
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [filterSerie, setFilterSerie] = useState('');
+  const [startCorr, setStartCorr] = useState('');
+  const [endCorr, setEndCorr] = useState('');
+  const [originFilter, setOriginFilter] = useState('ALL');
+
+  const handleClearAdvancedFilters = () => {
+    setStartDate('');
+    setEndDate('');
+    setFilterSerie('');
+    setStartCorr('');
+    setEndCorr('');
+    setOriginFilter('ALL');
+    setCurrentPage(1);
+  };
+
   // Control sincrónico de cambio de filtros para evitar race conditions
   const handleStateFilterChange = (newVal) => {
     setSubFilter('ALL');
@@ -26,8 +44,19 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
   // Si hay un filtro inicial del dashboard, aplicarlo
   useEffect(() => {
     if (initialFilter) {
-      setSubFilter('ALL');
-      setStateFilter(initialFilter);
+      if (initialFilter === 'SAP_OK') {
+        setStateFilter('OK');
+        setOriginFilter('SAP');
+        setSubFilter('ALL');
+      } else if (initialFilter === 'SUNAT_OK') {
+        setStateFilter('OK');
+        setOriginFilter('SUNAT');
+        setSubFilter('ALL');
+      } else {
+        setOriginFilter('ALL');
+        setStateFilter(initialFilter);
+        setSubFilter('ALL');
+      }
       setCurrentPage(1);
       if (onFilterReset) {
         onFilterReset();
@@ -53,12 +82,40 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
   // TanStack Query para obtener registros filtrados y paginados
   const { data: reconciliationData, isLoading } = useQuery({
-    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage],
+    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage, startDate, endDate, filterSerie, startCorr, endCorr, originFilter],
     queryFn: async () => {
       let query = supabase
         .from('detalle_validacion')
         .select('*', { count: 'exact' })
         .eq('periodo_id', periodId);
+
+      if (originFilter === 'SAP') {
+        query = query.or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null');
+      } else if (originFilter === 'SUNAT') {
+        query = query.or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null');
+      }
+
+      if (filterSerie) {
+        query = query.ilike('serie', `%${filterSerie.trim()}%`);
+      }
+      if (startDate) {
+        query = query.gte('fecha_emision', startDate);
+      }
+      if (endDate) {
+        query = query.lte('fecha_emision', endDate);
+      }
+      if (startCorr) {
+        const startInt = parseInt(startCorr, 10);
+        if (!isNaN(startInt)) {
+          query = query.gte('correlativo_int', startInt);
+        }
+      }
+      if (endCorr) {
+        const endInt = parseInt(endCorr, 10);
+        if (!isNaN(endInt)) {
+          query = query.lte('correlativo_int', endInt);
+        }
+      }
 
       if (searchTerm.trim() !== '') {
         const term = `%${searchTerm.trim()}%`;
@@ -131,6 +188,34 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           .from('detalle_validacion')
           .select('*')
           .eq('periodo_id', periodId);
+
+        if (originFilter === 'SAP') {
+          currentQuery = currentQuery.or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null');
+        } else if (originFilter === 'SUNAT') {
+          currentQuery = currentQuery.or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null');
+        }
+
+        if (filterSerie) {
+          currentQuery = currentQuery.ilike('serie', `%${filterSerie.trim()}%`);
+        }
+        if (startDate) {
+          currentQuery = currentQuery.gte('fecha_emision', startDate);
+        }
+        if (endDate) {
+          currentQuery = currentQuery.lte('fecha_emision', endDate);
+        }
+        if (startCorr) {
+          const startInt = parseInt(startCorr, 10);
+          if (!isNaN(startInt)) {
+            currentQuery = currentQuery.gte('correlativo_int', startInt);
+          }
+        }
+        if (endCorr) {
+          const endInt = parseInt(endCorr, 10);
+          if (!isNaN(endInt)) {
+            currentQuery = currentQuery.lte('correlativo_int', endInt);
+          }
+        }
 
         if (searchTerm.trim() !== '') {
           const term = `%${searchTerm.trim()}%`;
@@ -358,17 +443,90 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         )}
 
         {stateFilter !== 'ERROR' && stateFilter !== 'OBSERVADO' && (
-          <div className="col-lg-2">
+          <div className="col-lg-2 animate-fade-in">
             <select
-              className="form-select form-control-premium text-muted"
-              disabled
-              value="ALL"
-              readOnly
+              className="form-select form-control-premium"
+              value={originFilter}
+              onChange={(e) => { setOriginFilter(e.target.value); setCurrentPage(1); }}
             >
-              <option value="ALL">Filtro Grupo: N/A</option>
+              <option value="ALL">Origen: Todos</option>
+              <option value="SAP">Solo SAP</option>
+              <option value="SUNAT">Solo SUNAT</option>
             </select>
           </div>
         )}
+      </div>
+
+      {/* Segunda Fila de Filtros (Rango de Fechas, Serie y Correlativos) */}
+      <div className="row g-2 mb-4 animate-fade-in">
+        <div className="col-lg-2">
+          <div className="input-group">
+            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Serie</span>
+            <input
+              type="text"
+              className="form-control form-control-premium"
+              placeholder="Ej. B807"
+              value={filterSerie}
+              onChange={(e) => { setFilterSerie(e.target.value); setCurrentPage(1); }}
+            />
+          </div>
+        </div>
+        <div className="col-lg-2">
+          <div className="input-group">
+            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Corr. Desde</span>
+            <input
+              type="text"
+              className="form-control form-control-premium"
+              placeholder="Ej. 1"
+              value={startCorr}
+              onChange={(e) => { setStartCorr(e.target.value); setCurrentPage(1); }}
+            />
+          </div>
+        </div>
+        <div className="col-lg-2">
+          <div className="input-group">
+            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Corr. Hasta</span>
+            <input
+              type="text"
+              className="form-control form-control-premium"
+              placeholder="Ej. 9999"
+              value={endCorr}
+              onChange={(e) => { setEndCorr(e.target.value); setCurrentPage(1); }}
+            />
+          </div>
+        </div>
+        <div className="col-lg-2">
+          <div className="input-group">
+            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Fecha Desde</span>
+            <input
+              type="date"
+              className="form-control form-control-premium"
+              value={startDate}
+              onChange={(e) => { setStartDate(e.target.value); setCurrentPage(1); }}
+            />
+          </div>
+        </div>
+        <div className="col-lg-2">
+          <div className="input-group">
+            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Fecha Hasta</span>
+            <input
+              type="date"
+              className="form-control form-control-premium"
+              value={endDate}
+              onChange={(e) => { setEndDate(e.target.value); setCurrentPage(1); }}
+            />
+          </div>
+        </div>
+        <div className="col-lg-2">
+          <button
+            className="btn btn-outline-secondary w-100 h-100 d-flex align-items-center justify-content-center py-2 rounded-3"
+            onClick={handleClearAdvancedFilters}
+            style={{ fontSize: '0.85rem', cursor: 'pointer' }}
+            disabled={!startDate && !endDate && !filterSerie && !startCorr && !endCorr && originFilter === 'ALL'}
+          >
+            Limpiar Filtros
+          </button>
+        </div>
       </div>
 
       {/* Tabla Unificada */}

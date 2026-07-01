@@ -15,42 +15,64 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
     igvSunat: 0,
     totalSap: 0,
     totalSunat: 0,
+    countObs1: 0,
+    countObs2: 0,
+    countSapOk: 0,
+    countSunatOk: 0,
   } } = useQuery({
     queryKey: ['dashboardStats', periodId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('v_resumen_validacion')
-        .select('*')
-        .eq('periodo_id', periodId)
-        .single();
+      const [resumenRes, obs1Res, obs2Res, sapOkRes, sunatOkRes] = await Promise.all([
+        supabase
+          .from('v_resumen_validacion')
+          .select('*')
+          .eq('periodo_id', periodId)
+          .single(),
+        supabase
+          .from('detalle_validacion')
+          .select('*', { count: 'exact', head: true })
+          .eq('periodo_id', periodId)
+          .contains('errores_json', ['OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD']),
+        supabase
+          .from('detalle_validacion')
+          .select('*', { count: 'exact', head: true })
+          .eq('periodo_id', periodId)
+          .contains('errores_json', ['OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD']),
+        supabase
+          .from('detalle_validacion')
+          .select('*', { count: 'exact', head: true })
+          .eq('periodo_id', periodId)
+          .eq('estado_validacion', 'OK')
+          .or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null'),
+        supabase
+          .from('detalle_validacion')
+          .select('*', { count: 'exact', head: true })
+          .eq('periodo_id', periodId)
+          .eq('estado_validacion', 'OK')
+          .or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null')
+      ]);
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          return {
-            total: 0, ok: 0, errors: 0, observed: 0,
-            baseSap: 0, baseSunat: 0, igvSap: 0, igvSunat: 0, totalSap: 0, totalSunat: 0
-          };
-        }
-        throw error;
+      if (resumenRes.error && resumenRes.error.code !== 'PGRST116') {
+        throw resumenRes.error;
       }
 
-      if (data) {
-        return {
-          total: parseInt(data.total_registros) || 0,
-          ok: parseInt(data.ok_registros) || 0,
-          errors: parseInt(data.error_registros) || 0,
-          observed: parseInt(data.observado_registros) || 0,
-          baseSap: parseFloat(data.sum_base_sap) || 0,
-          baseSunat: parseFloat(data.sum_base_sunat) || 0,
-          igvSap: parseFloat(data.sum_igv_sap) || 0,
-          igvSunat: parseFloat(data.sum_igv_sunat) || 0,
-          totalSap: parseFloat(data.sum_total_sap) || 0,
-          totalSunat: parseFloat(data.sum_total_sunat) || 0,
-        };
-      }
+      const summary = resumenRes.data || {};
+
       return {
-        total: 0, ok: 0, errors: 0, observed: 0,
-        baseSap: 0, baseSunat: 0, igvSap: 0, igvSunat: 0, totalSap: 0, totalSunat: 0
+        total: parseInt(summary.total_registros) || 0,
+        ok: parseInt(summary.ok_registros) || 0,
+        errors: parseInt(summary.error_registros) || 0,
+        observed: parseInt(summary.observado_registros) || 0,
+        baseSap: parseFloat(summary.sum_base_sap) || 0,
+        baseSunat: parseFloat(summary.sum_base_sunat) || 0,
+        igvSap: parseFloat(summary.sum_igv_sap) || 0,
+        igvSunat: parseFloat(summary.sum_igv_sunat) || 0,
+        totalSap: parseFloat(summary.sum_total_sap) || 0,
+        totalSunat: parseFloat(summary.sum_total_sunat) || 0,
+        countObs1: obs1Res.count || 0,
+        countObs2: obs2Res.count || 0,
+        countSapOk: sapOkRes.count || 0,
+        countSunatOk: sunatOkRes.count || 0,
       };
     },
     enabled: !!periodId,
@@ -250,6 +272,121 @@ export default function Dashboard({ periodId, onNavigateToReconciliation }) {
                   aria-valuemin="0" 
                   aria-valuemax={stats.total}
                 ></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Fila 2: Gráfico de Comprobantes Correctos y Consistencia de Identidades */}
+      <div className="row g-4 mt-1">
+        {/* Gráfico de Barras de Comprobantes Correctos */}
+        <div className="col-lg-6">
+          <div className="card-premium h-100">
+            <h5 className="mb-2 fw-bold">Documentos Correctos por Origen</h5>
+            <p className="text-muted mb-4" style={{ fontSize: '0.82rem' }}>
+              Comprobantes validados con estado <strong>OK</strong> en cada origen. Haz clic en las barras para ver el detalle filtrado.
+            </p>
+
+            <div className="d-flex align-items-end justify-content-around mt-4 mb-4" style={{ height: '180px', paddingBottom: '10px', borderBottom: '1px solid var(--border-color)' }}>
+              {/* Barra SAP */}
+              <div 
+                className="d-flex flex-column align-items-center justify-content-end h-100" 
+                style={{ width: '120px' }}
+              >
+                <div 
+                  className="bar-sap-glow animate-fade-in"
+                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SAP_OK')}
+                  style={{
+                    width: '50px',
+                    height: `${stats.total > 0 ? (stats.countSapOk / Math.max(stats.countSapOk, stats.countSunatOk, 1) * 100) : 0}%`,
+                    background: 'linear-gradient(to top, #4f46e5, #8b5cf6)',
+                    cursor: 'pointer',
+                    borderRadius: '6px 6px 0 0',
+                  }}
+                  title="Ver detalle de documentos SAP correctos (OK)"
+                ></div>
+                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SAP (OK)</span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.8rem' }}>{stats.countSapOk} docs</span>
+              </div>
+
+              {/* Barra SUNAT */}
+              <div 
+                className="d-flex flex-column align-items-center justify-content-end h-100" 
+                style={{ width: '120px' }}
+              >
+                <div 
+                  className="bar-sunat-glow animate-fade-in"
+                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SUNAT_OK')}
+                  style={{
+                    width: '50px',
+                    height: `${stats.total > 0 ? (stats.countSunatOk / Math.max(stats.countSapOk, stats.countSunatOk, 1) * 100) : 0}%`,
+                    background: 'linear-gradient(to top, #10b981, #0d9488)',
+                    cursor: 'pointer',
+                    borderRadius: '6px 6px 0 0',
+                  }}
+                  title="Ver detalle de documentos SUNAT correctos (OK)"
+                ></div>
+                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SUNAT (OK)</span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.8rem' }}>{stats.countSunatOk} docs</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Consistencia de Calidad de Datos de Identidades */}
+        <div className="col-lg-6">
+          <div className="card-premium h-100 d-flex flex-column justify-content-between">
+            <div>
+              <h5 className="mb-2 fw-bold">Calidad de Datos de Identidades (RUC/DNI)</h5>
+              <p className="text-muted mb-4" style={{ fontSize: '0.82rem' }}>
+                Resumen de comprobantes consistentes entre SAP y SUNAT para tipo y número de documento.
+              </p>
+
+              {/* Tipo de Identidad */}
+              <div className="mb-4">
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>Tipo de Identidad Coincidente (Sin OBS 1)</span>
+                  <span className="badge bg-success bg-opacity-25 text-success font-mono">
+                    {stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100).toFixed(1) : 0}%
+                  </span>
+                </div>
+                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)' }}>
+                  <div 
+                    className="progress-bar bg-success" 
+                    role="progressbar" 
+                    style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100) : 0}%` }}
+                  ></div>
+                </div>
+                <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
+                  <span>Correctos: {stats.total - stats.countObs1} docs</span>
+                  {stats.countObs1 > 0 && (
+                    <span className="text-warning">⚠ {stats.countObs1} con diferencias (OBS 1)</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Número de Identidad */}
+              <div className="mb-2">
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>Número de Identidad Coincidente (Sin OBS 2)</span>
+                  <span className="badge bg-success bg-opacity-25 text-success font-mono">
+                    {stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100).toFixed(1) : 0}%
+                  </span>
+                </div>
+                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)' }}>
+                  <div 
+                    className="progress-bar bg-success" 
+                    role="progressbar" 
+                    style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100) : 0}%` }}
+                  ></div>
+                </div>
+                <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
+                  <span>Correctos: {stats.total - stats.countObs2} docs</span>
+                  {stats.countObs2 > 0 && (
+                    <span className="text-warning">⚠ {stats.countObs2} con diferencias (OBS 2)</span>
+                  )}
+                </div>
               </div>
             </div>
           </div>

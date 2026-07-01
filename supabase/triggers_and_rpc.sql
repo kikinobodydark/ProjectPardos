@@ -105,10 +105,6 @@ BEGIN
     IF public.get_user_rol() <> 'admin' THEN
         RAISE EXCEPTION 'Solo administradores pueden crear usuarios.';
     END IF;
-    
-    IF public.get_user_empresa() <> p_empresa_id THEN
-        RAISE EXCEPTION 'No tiene permiso para crear usuarios en otra empresa.';
-    END IF;
 
     v_user_id := gen_random_uuid();
     v_encrypted_pw := crypt(p_password, gen_salt('bf'));
@@ -147,10 +143,6 @@ BEGIN
     IF public.get_user_rol() <> 'admin' THEN
         RAISE EXCEPTION 'Solo administradores pueden editar usuarios.';
     END IF;
-    
-    IF (SELECT empresa_id FROM public.usuarios WHERE id = p_id) <> public.get_user_empresa() THEN
-        RAISE EXCEPTION 'No tiene permiso para editar usuarios de otra empresa.';
-    END IF;
 
     UPDATE public.usuarios 
     SET nombre = p_nombre, rol = p_rol, activo = p_activo
@@ -180,29 +172,33 @@ DROP POLICY IF EXISTS all_empresas_admin ON public.empresas;
 CREATE POLICY all_empresas_admin ON public.empresas FOR ALL USING (public.get_user_rol() = 'admin');
 
 DROP POLICY IF EXISTS select_usuarios ON public.usuarios;
-CREATE POLICY select_usuarios ON public.usuarios FOR SELECT USING (empresa_id = public.get_user_empresa());
+CREATE POLICY select_usuarios ON public.usuarios FOR SELECT USING (empresa_id = public.get_user_empresa() OR public.get_user_rol() = 'admin');
 
 DROP POLICY IF EXISTS all_usuarios_admin ON public.usuarios;
-CREATE POLICY all_usuarios_admin ON public.usuarios FOR ALL USING (empresa_id = public.get_user_empresa() AND public.get_user_rol() = 'admin');
+CREATE POLICY all_usuarios_admin ON public.usuarios FOR ALL USING (public.get_user_rol() = 'admin');
 
 DROP POLICY IF EXISTS select_periodos ON public.periodos_carga;
-CREATE POLICY select_periodos ON public.periodos_carga FOR SELECT USING (empresa_id = public.get_user_empresa());
+CREATE POLICY select_periodos ON public.periodos_carga FOR SELECT USING (empresa_id = public.get_user_empresa() OR public.get_user_rol() = 'admin');
 
 DROP POLICY IF EXISTS all_periodos_ops ON public.periodos_carga;
-CREATE POLICY all_periodos_ops ON public.periodos_carga FOR ALL USING (empresa_id = public.get_user_empresa() AND public.get_user_rol() IN ('admin', 'operador'));
+CREATE POLICY all_periodos_ops ON public.periodos_carga FOR ALL USING (
+    (empresa_id = public.get_user_empresa() AND public.get_user_rol() = 'operador')
+    OR public.get_user_rol() = 'admin'
+);
 
 DROP POLICY IF EXISTS select_detalle ON public.detalle_validacion;
 CREATE POLICY select_detalle ON public.detalle_validacion FOR SELECT USING (
     periodo_id IN (SELECT id FROM public.periodos_carga WHERE empresa_id = public.get_user_empresa())
+    OR public.get_user_rol() = 'admin'
 );
 
 DROP POLICY IF EXISTS all_detalle_ops ON public.detalle_validacion;
 CREATE POLICY all_detalle_ops ON public.detalle_validacion FOR ALL USING (
-    periodo_id IN (SELECT id FROM public.periodos_carga WHERE empresa_id = public.get_user_empresa())
-    AND public.get_user_rol() IN ('admin', 'operador')
+    (periodo_id IN (SELECT id FROM public.periodos_carga WHERE empresa_id = public.get_user_empresa()) AND public.get_user_rol() = 'operador')
+    OR public.get_user_rol() = 'admin'
 );
 
 DROP POLICY IF EXISTS select_auditoria ON public.auditoria;
 CREATE POLICY select_auditoria ON public.auditoria FOR SELECT USING (
-    empresa_id = public.get_user_empresa() AND public.get_user_rol() = 'admin'
+    public.get_user_rol() = 'admin'
 );

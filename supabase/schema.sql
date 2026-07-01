@@ -70,6 +70,12 @@ CREATE TABLE IF NOT EXISTS public.detalle_validacion (
     estado_validacion VARCHAR(20) NOT NULL CHECK (estado_validacion IN ('OK', 'OBSERVADO', 'ERROR')),
     errores_json JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ DEFAULT now(),
+    correlativo_int BIGINT GENERATED ALWAYS AS (NULLIF(regexp_replace(correlativo, '[^0-9]', '', 'g'), '')::bigint) STORED,
+    buscar_documento TEXT GENERATED ALWAYS AS (
+        COALESCE(serie, '') || '-' || COALESCE(correlativo, '') || ' ' || 
+        COALESCE(serie, '') || COALESCE(correlativo, '') || ' ' || 
+        COALESCE(serie, '') || ' ' || COALESCE(correlativo, '')
+    ) STORED,
     
     -- Restricción de unicidad del CAR por período
     CONSTRAINT uq_car_por_periodo UNIQUE (periodo_id, car_sunat)
@@ -92,5 +98,9 @@ CREATE INDEX IF NOT EXISTS idx_detalle_validacion_periodo_id ON public.detalle_v
 CREATE INDEX IF NOT EXISTS idx_detalle_validacion_car_sunat ON public.detalle_validacion (car_sunat);
 CREATE INDEX IF NOT EXISTS idx_detalle_validacion_serie_correlativo ON public.detalle_validacion (serie, correlativo);
 CREATE INDEX IF NOT EXISTS idx_detalle_validacion_estado_validacion ON public.detalle_validacion (estado_validacion);
+CREATE INDEX IF NOT EXISTS idx_detalle_validacion_correlativo_int ON public.detalle_validacion (correlativo_int);
+CREATE INDEX IF NOT EXISTS idx_detalle_validacion_fecha_emision ON public.detalle_validacion (fecha_emision);
+CREATE INDEX IF NOT EXISTS idx_detalle_validacion_tipo_doc_pago ON public.detalle_validacion (tipo_doc_pago);
+CREATE INDEX IF NOT EXISTS idx_detalle_validacion_buscar_documento_trgm ON public.detalle_validacion USING gin (buscar_documento gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_periodos_carga_empresa_id ON public.periodos_carga (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_empresa_id ON public.usuarios (empresa_id);

@@ -1,9 +1,9 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiCheckCircle, FiClock, FiUser, FiArrowRight, FiLayers } from 'react-icons/fi';
+import { FiCheckCircle, FiClock, FiUser, FiArrowRight, FiLayers, FiTrash2 } from 'react-icons/fi';
 
-export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
+export default function HistorialCargas({ activeCompany, onSelectPeriod, onDeletePeriod }) {
   const { data: history = [], isLoading, refetch } = useQuery({
     queryKey: ['cargaHistory', activeCompany?.id],
     queryFn: async () => {
@@ -18,6 +18,29 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
     },
     enabled: !!activeCompany?.id,
   });
+
+  const handleDelete = async (periodoId, label) => {
+    const ok = window.confirm(`¿Está seguro de que desea eliminar el período "${label}"? Esta acción borrará permanentemente todos sus comprobantes de validación para liberar espacio.`);
+    if (!ok) return;
+
+    try {
+      const { error } = await supabase
+        .from('periodos_carga')
+        .delete()
+        .eq('id', periodoId);
+
+      if (error) throw error;
+
+      refetch(); // Refrescar historial local
+      if (onDeletePeriod) {
+        onDeletePeriod(periodoId); // Notificar al padre
+      }
+      alert('Período eliminado correctamente.');
+    } catch (err) {
+      console.error('Error al eliminar período:', err);
+      alert(`Error al eliminar: ${err.message}`);
+    }
+  };
 
   const loading = isLoading;
 
@@ -101,13 +124,27 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod }) {
                     )}
                   </td>
                   <td className="text-center">
-                    <button
-                      onClick={() => onSelectPeriod(item.periodo_id, item.periodo, item.dia, item.version)}
-                      className="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center mx-auto"
-                      style={{ cursor: 'pointer', padding: '0.3rem 0.8rem', borderRadius: '6px' }}
-                    >
-                      Cargar <FiArrowRight className="ms-1" />
-                    </button>
+                    <div className="d-flex gap-2 justify-content-center">
+                      <button
+                        onClick={() => onSelectPeriod(item.periodo_id, item.periodo, item.dia, item.version)}
+                        className="btn btn-sm btn-outline-primary d-flex align-items-center"
+                        style={{ cursor: 'pointer', padding: '0.3rem 0.6rem', borderRadius: '6px' }}
+                      >
+                        Cargar <FiArrowRight className="ms-1" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          let label = item.periodo;
+                          if (item.dia) label += ` (Día: ${item.dia}, v${item.version || 1})`;
+                          handleDelete(item.periodo_id, label);
+                        }}
+                        className="btn btn-sm btn-outline-danger d-flex align-items-center"
+                        style={{ cursor: 'pointer', padding: '0.3rem 0.6rem', borderRadius: '6px' }}
+                        title="Eliminar período y liberar espacio"
+                      >
+                        <FiTrash2 className="me-1" /> Eliminar
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

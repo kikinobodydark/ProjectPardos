@@ -5,6 +5,29 @@ const allCharactersEqual = (str) => {
   return str.split('').every(char => char === str[0]);
 };
 
+export const isRecordAnulado = (row) => {
+  if (!row) return false;
+  return (
+    row.estado_sap === '2' || 
+    row.estado_sunat === '2' || 
+    row.nombre_sap?.toUpperCase() === 'ANULADO' ||
+    (
+      (row.base_sap || 0) === 0 &&
+      (row.igv_sap || 0) === 0 &&
+      (row.total_sap || 0) === 0 &&
+      (row.base_sunat || 0) === 0 &&
+      (row.igv_sunat || 0) === 0 &&
+      (row.total_sunat || 0) === 0 &&
+      (row.exonerado_sap || 0) === 0 &&
+      (row.exonerado_sunat || 0) === 0 &&
+      (row.inafecto_sap || 0) === 0 &&
+      (row.inafecto_sunat || 0) === 0 &&
+      (row.otros_sap || 0) === 0 &&
+      (row.otros_sunat || 0) === 0
+    )
+  );
+};
+
 // Generar CAR SUNAT desde los datos de SAP
 export function buildCarFromSAP(rucEmpresa, tipo, serie, correlativo) {
   const tipoPad = normalizeDocType(tipo).padStart(2, '0');
@@ -30,10 +53,7 @@ export function validateRow(row, cortesiasSet = new Set()) {
   const errors = [];
   let status = 'OK';
 
-  const isAnulado = 
-    row.estado_sap === '2' || 
-    row.estado_sunat === '2' || 
-    row.nombre_sap?.toUpperCase() === 'ANULADO';
+  const isAnulado = isRecordAnulado(row);
 
   if (isAnulado) {
     return { status: 'OK', errors: ['Documento Anulado (validaciones omitidas)'] };
@@ -278,7 +298,6 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesia
   // 5. Validaciones de Secuencia Relacional Flexibilizada
   const groupedBySeries = {};
   Object.values(unified).forEach(r => {
-    if (r.estado_sunat === '2' || r.estado_sap === '2') return;
     const groupKey = `${r.tipo_doc_pago}-${r.serie}`;
     if (!groupedBySeries[groupKey]) groupedBySeries[groupKey] = [];
     groupedBySeries[groupKey].push(r);
@@ -289,6 +308,12 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesia
     for (let i = 1; i < list.length; i++) {
       const prev = list[i - 1];
       const curr = list[i];
+
+      // Si el documento actual está anulado, no se le aplican observaciones de secuencia ni fecha
+      if (isRecordAnulado(curr)) {
+        continue;
+      }
+
       const prevNum = parseInt(prev.correlativo, 10);
       const currNum = parseInt(curr.correlativo, 10);
       
@@ -303,7 +328,7 @@ export function reconcileData(sapList, sunatList, sireList, rucEmpresa, cortesia
       }
       
       // Fecha inconsistente (cronológica) catalogada como ERROR
-      if (new Date(curr.fecha_emision) < new Date(prev.fecha_emision)) {
+      if (curr.fecha_emision && prev.fecha_emision && new Date(curr.fecha_emision) < new Date(prev.fecha_emision)) {
         curr.errores_json.push(`Fecha inconsistente: Folio ${curr.correlativo} (${curr.fecha_emision}) es previo a folio ${prev.correlativo} (${prev.fecha_emision})`);
         curr.estado_validacion = 'ERROR';
       }
