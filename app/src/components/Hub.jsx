@@ -149,40 +149,42 @@ export default function Hub({
           {cards.map(card => {
             const isClickable = card.active;
             return (
-              <div key={card.id} className="col-12 col-md-6 col-lg-4">
+              <div key={card.id} className="col-12 col-md-6 col-lg-4 d-flex justify-content-center">
                 <div 
                   onClick={() => isClickable && onSelectModule(card.id)}
-                  className={`card-premium h-100 d-flex flex-column justify-content-between p-5 ${isClickable ? 'card-clickable' : ''}`}
+                  className={`card-premium h-100 d-flex flex-column align-items-center justify-content-between p-5 text-center ${isClickable ? 'card-clickable' : ''}`}
                   style={{
                     opacity: isClickable ? 1 : 0.6,
                     cursor: isClickable ? 'pointer' : 'default',
                     borderTop: isClickable ? `4px solid ${card.color}` : '1px solid var(--border-color)',
                     transition: 'all 0.2s ease',
                     position: 'relative',
-                    minHeight: '280px'
+                    minHeight: '280px',
+                    width: '100%',
+                    maxWidth: '360px'
                   }}
                 >
-                  <div>
+                  <div className="d-flex flex-column align-items-center">
                     {/* Icono con background circular */}
                     <div 
-                      className="d-flex align-items-center justify-content-center rounded-3 mb-4"
+                      className="d-flex align-items-center justify-content-center rounded-circle mb-4"
                       style={{ 
-                        width: '72px', 
-                        height: '72px', 
+                        width: '80px', 
+                        height: '80px', 
                         backgroundColor: card.bgColor,
                         color: card.color,
-                        fontSize: '2.2rem'
+                        fontSize: '2.4rem'
                       }}
                     >
                       {card.icon}
                     </div>
 
-                    <h4 className="fw-bold mb-2 text-dark" style={{ fontSize: '2rem', marginTop: '1rem' }}>
+                    <h4 className="fw-bold mb-0 text-dark" style={{ fontSize: '2rem' }}>
                       {card.title}
                     </h4>
                   </div>
 
-                  <div className="d-flex justify-content-between align-items-center mt-auto pt-3">
+                  <div className="d-flex justify-content-center align-items-center mt-auto pt-4">
                     {card.active ? (
                       <span className="fw-bold text-primary" style={{ fontSize: '1.25rem' }}>
                         Ingresar &rarr;
