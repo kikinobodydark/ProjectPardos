@@ -26,6 +26,7 @@ const STATIC_OBSERVATIONS = [
 
 export default function TablaUnificada({ periodId, activePeriod, initialFilter, onFilterReset, activeModule }) {
   const [exportLoading, setExportLoading] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   const getStaticErrors = () => {
     if (activeModule === 'compras') {
@@ -131,11 +132,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
     enabled: !!periodId
   });
 
-  const visibleErrors = getStaticErrors().filter(err => 
+  const visibleErrors = getStaticErrors().filter(err =>
     existingFilters.errors.some(dbErr => dbErr.startsWith(err.value.slice(0, 8)))
   );
 
-  const visibleObservations = getStaticObservations().filter(obs => 
+  const visibleObservations = getStaticObservations().filter(obs =>
     existingFilters.obs.some(dbObs => dbObs.startsWith(obs.value.slice(0, 6)))
   );
 
@@ -323,10 +324,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
   // Exportar a Excel (consulta completa de registros filtrados para descarga)
   const handleExport = async () => {
     setExportLoading(true);
+    setExportProgress(0);
     try {
       let allRows = [];
       let page = 0;
-      const pageSize = 2000;
+      const pageSize = 1000;
       let hasMore = true;
 
       while (hasMore) {
@@ -413,6 +415,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           hasMore = false;
         } else {
           allRows = allRows.concat(data);
+          setExportProgress(allRows.length);
           if (data.length < pageSize) {
             hasMore = false;
           } else {
@@ -529,11 +532,11 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         </div>
         <button
           onClick={handleExport}
-          disabled={totalRecords === 0}
+          disabled={totalRecords === 0 || exportLoading}
           className="btn btn-outline-primary d-flex align-items-center px-3 py-2 rounded-3"
           style={{ cursor: 'pointer' }}
         >
-          <FiDownload className="me-2" /> Exportar a Excel
+          <FiDownload className="me-2" /> {exportLoading ? `Exportando (${exportProgress} filas)...` : 'Exportar a Excel'}
         </button>
       </div>
 
@@ -553,7 +556,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         </div>
 
         <div className="col-lg-3">
-          <select 
+          <select
             className="form-select form-control-premium"
             value={stateFilter}
             onChange={(e) => handleStateFilterChange(e.target.value)}
@@ -721,8 +724,8 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
             <FiCheckCircle className="me-2 text-info fs-5" />
             Mostrando comprobantes <strong>Observados</strong> con <strong>Número de Identidad {filterObsIdOk === 'SAP_OK' ? 'SAP' : 'SUNAT'} Correcto</strong>.
           </div>
-          <button 
-            className="btn btn-sm btn-link text-info p-0" 
+          <button
+            className="btn btn-sm btn-link text-info p-0"
             onClick={() => setFilterObsIdOk('ALL')}
             style={{ textDecoration: 'none', cursor: 'pointer' }}
           >
@@ -800,7 +803,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                         : (r.nombre_sunat || '(Falta en SUNAT)')
                       }
                     </td>
-                    
+
                     {isObs1 ? (
                       <>
                         <td className="font-mono">{formatIdentityType(r.tipo_identidad_sap)}</td>
@@ -818,12 +821,12 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                         <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
                           {r.base_sunat.toFixed(2)}
                         </td>
-                        
+
                         <td className="text-end font-mono">{r.igv_sap.toFixed(2)}</td>
                         <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
                           {r.igv_sunat.toFixed(2)}
                         </td>
-                        
+
                         <td className="text-end font-mono">{r.total_sap.toFixed(2)}</td>
                         <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
                           {r.total_sunat.toFixed(2)}
@@ -885,8 +888,8 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                 }
                 return (
                   <li key={`page-${num}`} className={`page-item ${currentPage === num ? 'active' : ''}`}>
-                    <button 
-                      className="page-link" 
+                    <button
+                      className="page-link"
                       onClick={() => setCurrentPage(num)}
                     >
                       {num}
@@ -906,23 +909,23 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
       {/* Modal Detalle Errores */}
       {selectedRow && createPortal(
-        <div 
-          className="modal fade show d-block" 
-          tabIndex="-1" 
+        <div
+          className="modal fade show d-block"
+          tabIndex="-1"
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.65)' }}
         >
           <div className="modal-dialog modal-dialog-centered modal-xl">
-            <div 
-              className="modal-content rounded-3 p-5" 
+            <div
+              className="modal-content rounded-3 p-5"
               style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', minHeight: '450px' }}
             >
               <div className="modal-header border-0 pb-0 d-flex justify-content-between align-items-center">
                 <h3 className="modal-title fw-bold text-dark" style={{ fontSize: '2rem' }}>
                   Auditoría Folio: {selectedRow.serie}-{selectedRow.correlativo}
                 </h3>
-                <button 
-                  type="button" 
-                  className="border-0 bg-transparent fs-2 text-muted p-0 d-flex align-items-center justify-content-center" 
+                <button
+                  type="button"
+                  className="border-0 bg-transparent fs-2 text-muted p-0 d-flex align-items-center justify-content-center"
                   onClick={() => setSelectedRow(null)}
                   style={{ cursor: 'pointer' }}
                 >
@@ -967,7 +970,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                     <FiAlertCircle className={`me-2 fs-3 ${selectedRow.estado_validacion === 'OK' ? 'text-success' : selectedRow.estado_validacion === 'ERROR' ? 'text-danger' : 'text-warning'}`} />
                     <span className="fw-bold text-dark" style={{ fontSize: '1.3rem' }}>Reglas Infraccionadas ({selectedRow.errores_json?.length || 0})</span>
                   </div>
-                  
+
                   {selectedRow.errores_json && selectedRow.errores_json.length > 0 ? (
                     <ul className="ps-4 mb-0" style={{ fontSize: '1.2rem', lineHeight: '1.6' }}>
                       {selectedRow.errores_json.map((err, idx) => (
