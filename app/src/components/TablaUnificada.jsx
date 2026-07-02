@@ -294,6 +294,21 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
   const totalRecords = reconciliationData?.count || 0;
   const loading = isLoading || exportLoading;
 
+  const isObs1 = subFilter === "OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD";
+  const isObs2 = subFilter === "OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD";
+
+  const formatIdentityType = (type) => {
+    if (!type) return 'N/A';
+    const mapping = {
+      '1': 'DNI',
+      '6': 'RUC',
+      '4': 'CE',
+      '7': 'Pasaporte',
+      '0': 'Otros'
+    };
+    return mapping[type] ? `${mapping[type]} (${type})` : type;
+  };
+
   const getDocDescription = (code) => {
     if (code === '01') return 'Factura';
     if (code === '03') return 'Boleta';
@@ -414,27 +429,37 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           'Tipo Doc': getDocDescription(r.tipo_doc_pago),
           'Serie': r.serie,
           'Correlativo': r.correlativo,
-          'Base SAP': r.base_sap,
-          'Base SUNAT': r.base_sunat,
-          'Diferencia Base': r.base_sap - r.base_sunat,
-          'IGV SAP': r.igv_sap,
-          'IGV SUNAT': r.igv_sunat,
-          'Diferencia IGV': r.igv_sap - r.igv_sunat,
-          'Exonerado SAP': r.exonerado_sap || 0,
-          'Exonerado SUNAT': r.exonerado_sunat || 0,
-          'Diferencia Exonerado': (r.exonerado_sap || 0) - (r.exonerado_sunat || 0),
-          'Inafecto SAP': r.inafecto_sap || 0,
-          'Inafecto SUNAT': r.inafecto_sunat || 0,
-          'Diferencia Inafecto': (r.inafecto_sap || 0) - (r.inafecto_sunat || 0),
-          'Servicios/Otros SAP': r.otros_sap,
-          'Servicios/Otros SUNAT': r.otros_sunat,
-          'Diferencia Servicios': r.otros_sap - r.otros_sunat,
-          'Total SAP': r.total_sap,
-          'Total SUNAT': r.total_sunat,
-          'Diferencia Total': r.total_sap - r.total_sunat,
-          'Estado Validación': r.estado_validacion,
-          'Errores Encontrados': r.errores_json ? r.errores_json.join('; ') : ''
         };
+
+        if (isObs1) {
+          rowObj['Tipo Identidad SAP'] = formatIdentityType(r.tipo_identidad_sap);
+          rowObj['Tipo Identidad SUNAT'] = formatIdentityType(r.tipo_identidad_sunat);
+        } else if (isObs2) {
+          rowObj['Nro Doc Identidad SAP'] = r.nro_identidad_sap || '';
+          rowObj['Nro Doc Identidad SUNAT'] = r.nro_identidad_sunat || '';
+        } else {
+          rowObj['Base SAP'] = r.base_sap;
+          rowObj['Base SUNAT'] = r.base_sunat;
+          rowObj['Diferencia Base'] = r.base_sap - r.base_sunat;
+          rowObj['IGV SAP'] = r.igv_sap;
+          rowObj['IGV SUNAT'] = r.igv_sunat;
+          rowObj['Diferencia IGV'] = r.igv_sap - r.igv_sunat;
+          rowObj['Exonerado SAP'] = r.exonerado_sap || 0;
+          rowObj['Exonerado SUNAT'] = r.exonerado_sunat || 0;
+          rowObj['Diferencia Exonerado'] = (r.exonerado_sap || 0) - (r.exonerado_sunat || 0);
+          rowObj['Inafecto SAP'] = r.inafecto_sap || 0;
+          rowObj['Inafecto SUNAT'] = r.inafecto_sunat || 0;
+          rowObj['Diferencia Inafecto'] = (r.inafecto_sap || 0) - (r.inafecto_sunat || 0);
+          rowObj['Servicios/Otros SAP'] = r.otros_sap;
+          rowObj['Servicios/Otros SUNAT'] = r.otros_sunat;
+          rowObj['Diferencia Servicios'] = r.otros_sap - r.otros_sunat;
+          rowObj['Total SAP'] = r.total_sap;
+          rowObj['Total SUNAT'] = r.total_sunat;
+          rowObj['Diferencia Total'] = r.total_sap - r.total_sunat;
+        }
+
+        rowObj['Estado Validación'] = r.estado_validacion;
+        rowObj['Errores Encontrados'] = r.errores_json ? r.errores_json.join('; ') : '';
 
         if (activeModule === 'compras') {
           rowObj['RUC Proveedor'] = r.ruc_proveedor || r.nro_identidad_sunat || r.nro_identidad_sap;
@@ -727,12 +752,26 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                 <th>TIPO DOC</th>
                 <th>IDENTIDAD {activeModule === 'compras' ? 'PROV' : 'SUNAT'}</th>
                 <th>{activeModule === 'compras' ? 'PROVEEDOR' : 'CLIENTE SUNAT'}</th>
-                <th className="text-end">BASE SAP</th>
-                <th className="text-end">BASE SUNAT</th>
-                <th className="text-end">IGV SAP</th>
-                <th className="text-end">IGV SUNAT</th>
-                <th className="text-end">TOTAL SAP</th>
-                <th className="text-end">TOTAL SUNAT</th>
+                {isObs1 ? (
+                  <>
+                    <th>TIPO IDENTIDAD SAP</th>
+                    <th>TIPO IDENTIDAD SUNAT</th>
+                  </>
+                ) : isObs2 ? (
+                  <>
+                    <th>NRO DOC IDENTIDAD SAP</th>
+                    <th>NRO DOC IDENTIDAD SUNAT</th>
+                  </>
+                ) : (
+                  <>
+                    <th className="text-end">BASE SAP</th>
+                    <th className="text-end">BASE SUNAT</th>
+                    <th className="text-end">IGV SAP</th>
+                    <th className="text-end">IGV SUNAT</th>
+                    <th className="text-end">TOTAL SAP</th>
+                    <th className="text-end">TOTAL SUNAT</th>
+                  </>
+                )}
                 <th>SIRE LOG</th>
                 <th className="text-center">ESTADO</th>
                 <th className="text-center">LOG</th>
@@ -762,21 +801,35 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
                       }
                     </td>
                     
-                    {/* Montos */}
-                    <td className="text-end font-mono">{r.base_sap.toFixed(2)}</td>
-                    <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
-                      {r.base_sunat.toFixed(2)}
-                    </td>
-                    
-                    <td className="text-end font-mono">{r.igv_sap.toFixed(2)}</td>
-                    <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
-                      {r.igv_sunat.toFixed(2)}
-                    </td>
-                    
-                    <td className="text-end font-mono">{r.total_sap.toFixed(2)}</td>
-                    <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
-                      {r.total_sunat.toFixed(2)}
-                    </td>
+                    {isObs1 ? (
+                      <>
+                        <td className="font-mono">{formatIdentityType(r.tipo_identidad_sap)}</td>
+                        <td className="font-mono cell-mismatch">{formatIdentityType(r.tipo_identidad_sunat)}</td>
+                      </>
+                    ) : isObs2 ? (
+                      <>
+                        <td className="font-mono">{r.nro_identidad_sap || 'N/A'}</td>
+                        <td className="font-mono cell-mismatch">{r.nro_identidad_sunat || 'N/A'}</td>
+                      </>
+                    ) : (
+                      <>
+                        {/* Montos */}
+                        <td className="text-end font-mono">{r.base_sap.toFixed(2)}</td>
+                        <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
+                          {r.base_sunat.toFixed(2)}
+                        </td>
+                        
+                        <td className="text-end font-mono">{r.igv_sap.toFixed(2)}</td>
+                        <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
+                          {r.igv_sunat.toFixed(2)}
+                        </td>
+                        
+                        <td className="text-end font-mono">{r.total_sap.toFixed(2)}</td>
+                        <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
+                          {r.total_sunat.toFixed(2)}
+                        </td>
+                      </>
+                    )}
 
                     {/* Mensaje SIRE */}
                     <td className="text-truncate" style={{ maxWidth: '180px' }} title={r.mensaje_sire}>
