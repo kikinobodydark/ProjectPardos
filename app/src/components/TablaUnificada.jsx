@@ -430,6 +430,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         const rowObj = {
           'Mensaje SIRE': r.mensaje_sire || 'Registro OK.',
           'Tipo Doc': getDocDescription(r.tipo_doc_pago),
+          'Folio (Serie-Correlativo)': `${r.serie}-${r.correlativo}`,
           'Serie': r.serie,
           'Correlativo': r.correlativo,
         };

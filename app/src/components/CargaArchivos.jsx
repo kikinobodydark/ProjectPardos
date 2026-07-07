@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import { parseSAP, parseSUNAT, parseSIRE, stripBOM, parseSAPCompras, parseSUNATCompras } from '../utils/parsers';
 import { reconcileData } from '../utils/validations';
@@ -18,6 +18,34 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
   const [statusText, setStatusText] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [recentLoads, setRecentLoads] = useState([]);
+  const [showPeriodSuggestions, setShowPeriodSuggestions] = useState(false);
+  const [showDiaSuggestions, setShowDiaSuggestions] = useState(false);
+  const [showVersionSuggestions, setShowVersionSuggestions] = useState(false);
+
+  const fetchRecentLoads = useCallback(async () => {
+    if (!activeCompany?.id) return;
+    try {
+      const { data, error } = await supabase
+        .from('periodos_carga')
+        .select('periodo, dia, version, fecha_carga')
+        .eq('empresa_id', activeCompany.id)
+        .eq('modulo', activeModule)
+        .eq('estado', 'completado')
+        .order('fecha_carga', { ascending: false })
+        .limit(10);
+      
+      if (!error && data) {
+        setRecentLoads(data);
+      }
+    } catch (err) {
+      console.error('Error fetching recent loads:', err);
+    }
+  }, [activeCompany?.id, activeModule]);
+
+  useEffect(() => {
+    fetchRecentLoads();
+  }, [fetchRecentLoads]);
 
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
@@ -217,6 +245,9 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
         .update({ estado: 'completado' })
         .eq('id', periodId);
 
+      // Recargar histórico de cargas recientes
+      fetchRecentLoads();
+
       setSuccessMsg(`¡Proceso exitoso! Se cargaron y conciliaron ${reconciledList.length} registros del período ${periodo}.`);
       
       // Limpiar inputs
@@ -262,49 +293,172 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       )}
 
       <form id="form-carga" onSubmit={handleProcess}>
+        {recentLoads.length > 0 && (
+          <div className="mb-3 d-flex flex-wrap align-items-center gap-2 animate-fade-in" style={{ fontSize: '0.85rem' }}>
+            <span className="text-muted fw-semibold">Usar reciente:</span>
+            {recentLoads.slice(0, 5).map((load, index) => {
+              const formattedPeriod = load.periodo.slice(0, 4) + '-' + load.periodo.slice(4);
+              return (
+                <button
+                  key={index}
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary py-1 px-2.5 rounded-3 font-mono text-xs d-flex align-items-center gap-1 hover-scale"
+                  style={{ fontSize: '0.78rem', borderStyle: 'dashed' }}
+                  onClick={() => {
+                    setPeriodo(load.periodo);
+                    setDia(load.dia || '');
+                    setVersion(String(load.version || 1));
+                  }}
+                >
+                  {formattedPeriod} (Día {load.dia}, v{load.version})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className="row g-2 mb-4">
+          {/* Período Contable */}
           <div className="col-md-4">
             <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Período Contable (Año/Mes)</label>
-            <input
-              type="text"
-              required
-              disabled={loading}
-              maxLength={6}
-              className="form-control form-control-premium font-mono"
-              placeholder="Ej: 202606"
-              value={periodo}
-              onChange={(e) => setPeriodo(e.target.value)}
-            />
+            <div className="position-relative">
+              <input
+                type="text"
+                required
+                disabled={loading}
+                maxLength={6}
+                className="form-control form-control-premium font-mono"
+                placeholder="Ej: 202606"
+                value={periodo}
+                onChange={(e) => setPeriodo(e.target.value)}
+                onFocus={() => setShowPeriodSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowPeriodSuggestions(false), 200)}
+                autoComplete="off"
+              />
+              {showPeriodSuggestions && recentLoads.length > 0 && (
+                (() => {
+                  const filteredPeriods = Array.from(new Set(recentLoads.map(l => l.periodo)))
+                    .filter(p => p.includes(periodo))
+                    .slice(0, 5);
+                  if (filteredPeriods.length === 0) return null;
+                  return (
+                    <ul className="dropdown-premium-menu show w-100" style={{ left: 0, marginTop: '4px' }}>
+                      {filteredPeriods.map(p => (
+                        <li key={p}>
+                          <button
+                            type="button"
+                            className="dropdown-premium-item font-mono text-start w-100"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setPeriodo(p);
+                              setShowPeriodSuggestions(false);
+                            }}
+                          >
+                            {p.slice(0, 4) + '-' + p.slice(4)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()
+              )}
+            </div>
             <small className="text-muted d-block mt-1" style={{ fontSize: '0.72rem' }}>Formato: AAAAMM (Año y Mes)</small>
           </div>
 
+          {/* Día de Carga */}
           <div className="col-md-4">
             <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Día de Carga</label>
-            <input
-              type="text"
-              required
-              disabled={loading}
-              maxLength={2}
-              className="form-control form-control-premium font-mono"
-              placeholder="Ej: 25"
-              value={dia}
-              onChange={(e) => setDia(e.target.value)}
-            />
+            <div className="position-relative">
+              <input
+                type="text"
+                required
+                disabled={loading}
+                maxLength={2}
+                className="form-control form-control-premium font-mono"
+                placeholder="Ej: 25"
+                value={dia}
+                onChange={(e) => setDia(e.target.value)}
+                onFocus={() => setShowDiaSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowDiaSuggestions(false), 200)}
+                autoComplete="off"
+              />
+              {showDiaSuggestions && recentLoads.length > 0 && (
+                (() => {
+                  const filteredDays = Array.from(new Set(recentLoads.map(l => l.dia).filter(Boolean)))
+                    .filter(d => d.includes(dia))
+                    .slice(0, 5);
+                  if (filteredDays.length === 0) return null;
+                  return (
+                    <ul className="dropdown-premium-menu show w-100" style={{ left: 0, marginTop: '4px' }}>
+                      {filteredDays.map(d => (
+                        <li key={d}>
+                          <button
+                            type="button"
+                            className="dropdown-premium-item font-mono text-start w-100"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setDia(d);
+                              setShowDiaSuggestions(false);
+                            }}
+                          >
+                            {d}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()
+              )}
+            </div>
             <small className="text-muted d-block mt-1" style={{ fontSize: '0.72rem' }}>Día del mes (1-31)</small>
           </div>
 
+          {/* Versión */}
           <div className="col-md-4">
             <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Versión</label>
-            <input
-              type="number"
-              required
-              disabled={loading}
-              min={1}
-              className="form-control form-control-premium font-mono"
-              placeholder="Ej: 1"
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
-            />
+            <div className="position-relative">
+              <input
+                type="number"
+                required
+                disabled={loading}
+                min={1}
+                className="form-control form-control-premium font-mono"
+                placeholder="Ej: 1"
+                value={version}
+                onChange={(e) => setVersion(e.target.value)}
+                onFocus={() => setShowVersionSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowVersionSuggestions(false), 200)}
+                autoComplete="off"
+              />
+              {showVersionSuggestions && recentLoads.length > 0 && (
+                (() => {
+                  const filteredVersions = Array.from(new Set(recentLoads.map(l => String(l.version || 1))))
+                    .filter(v => v.includes(version))
+                    .slice(0, 5);
+                  if (filteredVersions.length === 0) return null;
+                  return (
+                    <ul className="dropdown-premium-menu show w-100" style={{ left: 0, marginTop: '4px' }}>
+                      {filteredVersions.map(v => (
+                        <li key={v}>
+                          <button
+                            type="button"
+                            className="dropdown-premium-item font-mono text-start w-100"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setVersion(v);
+                              setShowVersionSuggestions(false);
+                            }}
+                          >
+                            v{v}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()
+              )}
+            </div>
             <small className="text-muted d-block mt-1" style={{ fontSize: '0.72rem' }}>Versión de carga para el día</small>
           </div>
         </div>
