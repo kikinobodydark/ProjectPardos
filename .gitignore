@@ -15,3 +15,7 @@ Thumbs.db
 /LE*.txt
 /LOG*.TXT
 /LOG*.xlsx
+
+# Archivos temporales y de scratch
+app/scratch/
+

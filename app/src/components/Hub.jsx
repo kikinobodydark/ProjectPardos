@@ -102,7 +102,7 @@ export default function Hub({
                   {activeCompany.razon_social}
                 </span>
                 
-                {isAdmin && companies.length > 0 ? (
+                {isAdmin && companies.length > 1 ? (
                   <div className="dropdown-premium d-inline-block" ref={dropdownRef}>
                     <button
                       type="button"

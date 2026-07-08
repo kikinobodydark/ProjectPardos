@@ -266,6 +266,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
               <input
                 type="text"
                 required
+                disabled={editingId !== null}
                 maxLength={11}
                 className="form-control form-control-premium font-mono"
                 placeholder="11 dígitos"
