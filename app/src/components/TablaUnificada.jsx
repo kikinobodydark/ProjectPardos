@@ -237,8 +237,9 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         }
       }
 
-      if (searchTerm.trim() !== '') {
-        const term = `%${searchTerm.trim()}%`;
+      const cleanTerm = searchTerm.trim().replace(/[(),.:"']/g, '');
+      if (cleanTerm !== '') {
+        const term = `%${cleanTerm}%`;
         query = query.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
       }
 
@@ -365,8 +366,9 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           }
         }
 
-        if (searchTerm.trim() !== '') {
-          const term = `%${searchTerm.trim()}%`;
+        const cleanTerm = searchTerm.trim().replace(/[(),.:"']/g, '');
+        if (cleanTerm !== '') {
+          const term = `%${cleanTerm}%`;
           currentQuery = currentQuery.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
         }
 
