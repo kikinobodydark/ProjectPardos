@@ -15,10 +15,62 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [activeCompany, setActiveCompany] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  
+  const [activeCompany, setActiveCompany] = useState(() => {
+    const saved = localStorage.getItem('activeCompany');
+    try {
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('activeTab') || 'dashboard';
+  });
+
+  const [activeModule, setActiveModule] = useState(() => {
+    return localStorage.getItem('activeModule') || null;
+  }); // null = Hub, 'ventas' = Ventas, 'compras' = Compras, 'configuracion' = Configuración
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeModule, setActiveModule] = useState(null); // null = Hub, 'ventas' = Ventas, 'compras' = Compras, 'configuracion' = Configuración
+
+  // Guardar estado en localStorage
+  useEffect(() => {
+    if (activeModule === null) {
+      localStorage.removeItem('activeModule');
+    } else {
+      localStorage.setItem('activeModule', activeModule);
+    }
+  }, [activeModule]);
+
+  useEffect(() => {
+    localStorage.setItem('activeTab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeCompany) {
+      localStorage.setItem('activeCompany', JSON.stringify(activeCompany));
+    } else {
+      localStorage.removeItem('activeCompany');
+    }
+  }, [activeCompany]);
+
+  // Limpiar localStorage si cambia el usuario de la sesión para evitar fugas de estado
+  useEffect(() => {
+    if (session?.user?.id) {
+      const savedUserId = localStorage.getItem('userId');
+      if (savedUserId !== session.user.id) {
+        localStorage.removeItem('activeModule');
+        localStorage.removeItem('activeTab');
+        localStorage.removeItem('activeCompany');
+        localStorage.setItem('userId', session.user.id);
+        setActiveModule(null);
+        setActiveTab('dashboard');
+        setActiveCompany(null);
+      }
+    }
+  }, [session?.user?.id]);
 
   const changeTab = (tabId) => {
     setActiveTab(tabId);
@@ -42,7 +94,7 @@ export default function App() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('usuarios')
-        .select('*, empresas(*)')
+        .select('*, empresas!usuarios_empresa_id_fkey(*)')
         .eq('id', session.user.id)
         .single();
       if (error) throw error;
@@ -51,18 +103,27 @@ export default function App() {
     enabled: !!session?.user?.id,
   });
 
-  // 2. Query de empresas (solo administradores)
+  // 2. Query de empresas (todas para administradores, o las asignadas para operadores/consulta)
   const { data: companies = [] } = useQuery({
-    queryKey: ['companies'],
+    queryKey: ['companies', userProfile?.id, userProfile?.rol],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('empresas')
-        .select('*')
-        .order('razon_social', { ascending: true });
-      if (error) throw error;
-      return data;
+      if (userProfile.rol === 'admin') {
+        const { data, error } = await supabase
+          .from('empresas')
+          .select('*')
+          .order('razon_social', { ascending: true });
+        if (error) throw error;
+        return data || [];
+      } else {
+        const { data, error } = await supabase
+          .from('usuario_empresas')
+          .select('empresas(*)')
+          .eq('usuario_id', userProfile.id);
+        if (error) throw error;
+        return data?.map(d => d.empresas).filter(Boolean) || [];
+      }
     },
-    enabled: !!userProfile && userProfile.rol === 'admin',
+    enabled: !!userProfile,
   });
 
   // 3. Query de periodos de la empresa activa y módulo activo
@@ -82,12 +143,14 @@ export default function App() {
     enabled: !!activeCompany?.id && (activeModule === 'ventas' || activeModule === 'compras'),
   });
 
-  // Sincronizar activeCompany inicial al cargar el perfil
+  // Sincronizar activeCompany inicial al cargar el perfil o como fallback usando la primera de la lista
   useEffect(() => {
     if (userProfile?.empresas && !activeCompany) {
       setActiveCompany(userProfile.empresas);
+    } else if (!activeCompany && companies.length > 0) {
+      setActiveCompany(companies[0]);
     }
-  }, [userProfile, activeCompany]);
+  }, [userProfile, companies, activeCompany]);
 
   const handleCompanyChange = (companyId) => {
     const selected = companies.find(c => c.id === companyId);
@@ -135,6 +198,10 @@ export default function App() {
         setActiveCompany(null);
         setPeriodId(null);
         setActivePeriod('');
+        localStorage.removeItem('activeModule');
+        localStorage.removeItem('activeTab');
+        localStorage.removeItem('activeCompany');
+        localStorage.removeItem('userId');
       }
     });
 

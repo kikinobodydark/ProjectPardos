@@ -60,16 +60,16 @@ export default function Navbar({
         {activeCompany && (
           <div 
             ref={companyRef}
-            className={`d-flex align-items-center px-3 py-2 rounded-3 position-relative select-none ${userRole === 'admin' && companies.length > 1 ? 'cursor-pointer' : ''}`}
+            className={`d-flex align-items-center px-3 py-2 rounded-3 position-relative select-none ${companies.length > 1 ? 'cursor-pointer' : ''}`}
             style={{ 
               backgroundColor: 'var(--bg-surface)', 
               border: '1px solid var(--border-color)', 
               minHeight: '54px',
               transition: 'all 0.2s ease',
-              cursor: userRole === 'admin' && companies.length > 1 ? 'pointer' : 'default'
+              cursor: companies.length > 1 ? 'pointer' : 'default'
             }}
             onClick={() => {
-              if (userRole === 'admin' && companies.length > 1) {
+              if (companies.length > 1) {
                 setShowCompanyDropdown(!showCompanyDropdown);
               }
             }}
@@ -84,7 +84,7 @@ export default function Navbar({
               </div>
             </div>
 
-            {userRole === 'admin' && companies.length > 1 && (
+            {companies.length > 1 && (
               <FiChevronDown 
                 className="ms-3 text-muted fs-6 flex-shrink-0" 
                 style={{ 
@@ -95,7 +95,7 @@ export default function Navbar({
             )}
 
             {/* Menú Dropdown */}
-            {userRole === 'admin' && companies.length > 1 && (
+            {companies.length > 1 && (
               <ul 
                 className={`dropdown-premium-menu ${showCompanyDropdown ? 'show' : ''}`} 
                 style={{ right: 0, left: 'auto', marginTop: '4px' }}
@@ -104,7 +104,7 @@ export default function Navbar({
                 {companies.map(c => (
                   <li key={c.id}>
                     <button
-                      type="button"
+                       type="button"
                       className={`dropdown-premium-item text-truncate ${c.id === activeCompany.id ? 'active' : ''}`}
                       style={{ maxWidth: '280px' }}
                       onClick={() => {

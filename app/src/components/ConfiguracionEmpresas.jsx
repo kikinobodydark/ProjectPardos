@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiPlus, FiEdit2, FiTrash2, FiCheck, FiX, FiAlertTriangle } from 'react-icons/fi';
 import { isValidIdentityNumber, isRecordAnulado } from '../utils/validations';
 
 export default function ConfiguracionEmpresas({ activeCompany }) {
+  const queryClient = useQueryClient();
   // Formulario
   const [editingId, setEditingId] = useState(null);
   const [ruc, setRuc] = useState('');
@@ -186,6 +187,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
       setSuccessMsg(editingId ? 'Empresa actualizada correctamente.' : 'Empresa creada correctamente.');
       resetForm();
       refetch();
+      queryClient.invalidateQueries({ queryKey: ['companies'] });
     },
     onError: (err) => {
       setErrorMsg(err.message || 'Error al guardar empresa.');
@@ -230,6 +232,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
     onSuccess: () => {
       setSuccessMsg('Empresa eliminada correctamente.');
       refetch();
+      queryClient.invalidateQueries({ queryKey: ['companies'] });
     },
     onError: (err) => {
       setErrorMsg(err.message || 'Error al eliminar empresa.');
