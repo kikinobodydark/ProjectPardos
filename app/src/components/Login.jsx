@@ -24,7 +24,7 @@ export default function Login({ onLoginSuccess }) {
       // Fetch user profile to verify they have a linked company
       const { data: profile, error: profileErr } = await supabase
         .from('usuarios')
-        .select('*, empresas(*)')
+        .select('*, empresas!usuarios_empresa_id_fkey(*)')
         .eq('id', data.user.id)
         .single();
 

@@ -127,23 +127,29 @@ CREATE OR REPLACE FUNCTION public.crear_usuario(
     p_password TEXT,
     p_nombre TEXT,
     p_rol TEXT,
-    p_empresa_id UUID
+    p_empresa_ids UUID[]
 ) RETURNS UUID AS $$
 DECLARE
     v_user_id UUID;
     v_encrypted_pw TEXT;
     v_caller_estudio_id UUID;
+    v_emp_id UUID;
 BEGIN
     IF public.get_user_rol() <> 'admin' THEN RAISE EXCEPTION 'Solo administradores pueden crear usuarios.'; END IF;
+    IF array_length(p_empresa_ids, 1) IS NULL OR array_length(p_empresa_ids, 1) = 0 THEN
+        RAISE EXCEPTION 'Debes asignar al menos una empresa al colaborador.';
+    END IF;
     
     v_caller_estudio_id := public.get_user_estudio();
     
-    -- Validar IDOR: que la empresa destino pertenezca al estudio contable del administrador
-    IF v_caller_estudio_id IS NULL OR NOT EXISTS (
-        SELECT 1 FROM public.empresas WHERE id = p_empresa_id AND estudio_id = v_caller_estudio_id
-    ) THEN
-        RAISE EXCEPTION 'No tienes permisos para crear usuarios en empresas de otro estudio.';
-    END IF;
+    -- Validar IDOR para cada empresa asignada
+    FOREACH v_emp_id IN ARRAY p_empresa_ids LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM public.empresas WHERE id = v_emp_id AND estudio_id = v_caller_estudio_id
+        ) THEN
+            RAISE EXCEPTION 'No tienes permisos para asignar empresas de otro estudio.';
+        END IF;
+    END LOOP;
 
     -- Validaciones de email y password
     IF p_email !~* '^[A-Za-z0-9._%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN RAISE EXCEPTION 'Formato de correo electrónico inválido.'; END IF;
@@ -154,15 +160,19 @@ BEGIN
     v_user_id := gen_random_uuid();
     v_encrypted_pw := extensions.crypt(p_password, extensions.gen_salt('bf'));
 
-    -- Inserción alineada con el esquema de GoTrue v2 (omitido confirmed_at que es generada)
+    -- Inserción alineada con el esquema de GoTrue v2 (incluyendo los tokens vacíos)
     INSERT INTO auth.users (
         instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
-        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, is_sso_user, is_anonymous
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, is_sso_user, is_anonymous,
+        confirmation_token, recovery_token, email_change_token_new, email_change,
+        email_change_token_current, reauthentication_token, phone_change, phone_change_token
     ) VALUES (
         '00000000-0000-0000-0000-000000000000', v_user_id, 'authenticated', 'authenticated', 
         p_email, v_encrypted_pw, now(), 
         '{"provider":"email","providers":["email"]}', json_build_object('nombre', p_nombre), 
-        now(), now(), false, false
+        now(), now(), false, false,
+        '', '', '', '',
+        '', '', '', ''
     );
 
     INSERT INTO auth.identities (
@@ -171,22 +181,32 @@ BEGIN
         v_user_id, v_user_id, json_build_object('sub', v_user_id::text, 'email', p_email), 'email', v_user_id::text, now(), now(), now()
     );
 
+    -- Insertar en public.usuarios (usando la primera empresa como la predeterminada)
     INSERT INTO public.usuarios (id, empresa_id, estudio_id, nombre, rol, activo)
-    VALUES (v_user_id, p_empresa_id, v_caller_estudio_id, p_nombre, p_rol, true);
+    VALUES (v_user_id, p_empresa_ids[1], v_caller_estudio_id, p_nombre, p_rol, true);
+
+    -- Insertar relaciones muchos a muchos
+    INSERT INTO public.usuario_empresas (usuario_id, empresa_id)
+    SELECT v_user_id, unnest(p_empresa_ids);
 
     RETURN v_user_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
+
+-- Eliminar firma antigua para evitar sobrecarga
+DROP FUNCTION IF EXISTS public.actualizar_usuario(UUID, TEXT, TEXT, BOOLEAN, TEXT, UUID);
 
 CREATE OR REPLACE FUNCTION public.actualizar_usuario(
     p_id UUID,
     p_nombre TEXT,
     p_rol TEXT,
     p_activo BOOLEAN,
-    p_password TEXT DEFAULT NULL
+    p_password TEXT DEFAULT NULL,
+    p_empresa_ids UUID[] DEFAULT NULL
 ) RETURNS VOID AS $$
 DECLARE
     v_caller_estudio_id UUID;
+    v_emp_id UUID;
 BEGIN
     IF public.get_user_rol() <> 'admin' THEN RAISE EXCEPTION 'Solo administradores pueden editar usuarios.'; END IF;
     
@@ -198,6 +218,21 @@ BEGIN
         WHERE id = p_id AND estudio_id = v_caller_estudio_id
     ) THEN
         RAISE EXCEPTION 'El usuario objetivo no pertenece a tu estudio contable o no existe.';
+    END IF;
+
+    -- Validar IDOR de las empresas
+    IF p_empresa_ids IS NOT NULL THEN
+        IF array_length(p_empresa_ids, 1) IS NULL OR array_length(p_empresa_ids, 1) = 0 THEN
+            RAISE EXCEPTION 'Debes asignar al menos una empresa al colaborador.';
+        END IF;
+
+        FOREACH v_emp_id IN ARRAY p_empresa_ids LOOP
+            IF NOT EXISTS (
+                SELECT 1 FROM public.empresas WHERE id = v_emp_id AND estudio_id = v_caller_estudio_id
+            ) THEN
+                RAISE EXCEPTION 'No tienes permisos para asignar empresas de otro estudio.';
+            END IF;
+        END LOOP;
     END IF;
 
     IF p_id = auth.uid() AND (p_rol <> 'admin' OR p_activo = false) THEN
@@ -214,7 +249,52 @@ BEGIN
         WHERE id = p_id;
     END IF;
 
-    UPDATE public.usuarios SET nombre = p_nombre, rol = p_rol, activo = p_activo WHERE id = p_id;
+    -- Actualizar relaciones si se pasaron empresas
+    IF p_empresa_ids IS NOT NULL THEN
+        DELETE FROM public.usuario_empresas WHERE usuario_id = p_id;
+        
+        INSERT INTO public.usuario_empresas (usuario_id, empresa_id)
+        SELECT p_id, unnest(p_empresa_ids);
+
+        UPDATE public.usuarios 
+        SET nombre = p_nombre, 
+            rol = p_rol, 
+            activo = p_activo,
+            empresa_id = p_empresa_ids[1]
+        WHERE id = p_id;
+    ELSE
+        UPDATE public.usuarios 
+        SET nombre = p_nombre, 
+            rol = p_rol, 
+            activo = p_activo
+        WHERE id = p_id;
+    END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
+
+CREATE OR REPLACE FUNCTION public.eliminar_usuario(
+    p_id UUID
+) RETURNS VOID AS $$
+DECLARE
+    v_caller_estudio_id UUID;
+BEGIN
+    IF public.get_user_rol() <> 'admin' THEN RAISE EXCEPTION 'Solo administradores pueden eliminar usuarios.'; END IF;
+    
+    v_caller_estudio_id := public.get_user_estudio();
+    
+    -- Validar IDOR del usuario objetivo
+    IF NOT EXISTS (
+        SELECT 1 FROM public.usuarios 
+        WHERE id = p_id AND estudio_id = v_caller_estudio_id
+    ) THEN
+        RAISE EXCEPTION 'El usuario objetivo no pertenece a tu estudio contable o no existe.';
+    END IF;
+
+    IF p_id = auth.uid() THEN
+        RAISE EXCEPTION 'No puedes eliminar tu propio usuario administrador.';
+    END IF;
+
+    DELETE FROM auth.users WHERE id = p_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
 

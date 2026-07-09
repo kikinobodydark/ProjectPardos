@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiPlus, FiEdit2, FiCheck, FiAlertTriangle, FiUserCheck, FiKey } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiUserCheck, FiKey } from 'react-icons/fi';
 
 export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   // Formulario
@@ -11,24 +11,47 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   const [password, setPassword] = useState('');
   const [rol, setRol] = useState('operador');
   const [activo, setActivo] = useState(true);
+  const [empresaIds, setEmpresaIds] = useState([]);
 
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // TanStack Query para obtener la lista de usuarios
+  // Sync empresaIds with activeCompany on initial load/creation mode
+  useEffect(() => {
+    if (activeCompany?.id && !editingId) {
+      setEmpresaIds([activeCompany.id]);
+    }
+  }, [activeCompany, editingId]);
+
+  // TanStack Query para obtener la lista de empresas (para asignar al usuario)
+  const { data: companies = [] } = useQuery({
+    queryKey: ['companies'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('empresas')
+        .select('*')
+        .order('razon_social', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const activeCompanies = companies.filter(c => c.activo === true);
+
+  // TanStack Query para obtener la lista de usuarios del estudio (con join de empresas y relaciones muchos a muchos)
   const { data: usuarios = [], isLoading, refetch } = useQuery({
-    queryKey: ['usuarios', activeCompany?.id],
+    queryKey: ['usuarios', userProfile?.estudio_id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('usuarios')
-        .select('*')
-        .eq('empresa_id', activeCompany.id)
+        .select('*, empresas!usuarios_empresa_id_fkey(*), usuario_empresas(empresa_id, empresas(razon_social))')
+        .eq('estudio_id', userProfile.estudio_id)
         .order('nombre', { ascending: true });
 
       if (error) throw error;
       return data || [];
     },
-    enabled: !!activeCompany?.id,
+    enabled: !!userProfile?.estudio_id,
   });
 
   const resetForm = () => {
@@ -38,6 +61,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     setPassword('');
     setRol('operador');
     setActivo(true);
+    setEmpresaIds(activeCompany?.id ? [activeCompany.id] : []);
     setErrorMsg('');
   };
 
@@ -51,7 +75,8 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
           p_nombre: payload.nombre,
           p_rol: payload.rol,
           p_activo: payload.activo,
-          p_password: payload.password || null
+          p_password: payload.password || null,
+          p_empresa_ids: payload.empresaIds
         });
         if (error) throw error;
       } else {
@@ -61,7 +86,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
           p_password: payload.password,
           p_nombre: payload.nombre,
           p_rol: payload.rol,
-          p_empresa_id: activeCompany.id
+          p_empresa_ids: payload.empresaIds
         });
         if (error) throw error;
       }
@@ -76,6 +101,23 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     }
   });
 
+  // TanStack Mutation para eliminar usuario
+  const deleteUserMutation = useMutation({
+    mutationFn: async (id) => {
+      const { error } = await supabase.rpc('eliminar_usuario', {
+        p_id: id
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setSuccessMsg('Usuario eliminado correctamente del sistema.');
+      refetch();
+    },
+    onError: (err) => {
+      setErrorMsg(err.message || 'Error al eliminar el usuario.');
+    }
+  });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
@@ -86,17 +128,30 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
       return;
     }
 
+    if (empresaIds.length === 0) {
+      setErrorMsg('Debes asignar al menos una empresa al colaborador.');
+      return;
+    }
+
     saveUserMutation.mutate({
       id: editingId,
       nombre,
       email,
       password,
       rol,
-      activo
+      activo,
+      empresaIds
     });
   };
 
-  const loading = isLoading || saveUserMutation.isPending;
+  const handleDelete = (id) => {
+    const confirmMsg = '¿Estás seguro de que deseas eliminar permanentemente este colaborador? Esta acción eliminará su cuenta de acceso y es irreversible.\n\nTip: Si solo quieres suspender su acceso, desactívalo desmarcando "Colaborador Activo" al editar.';
+    if (window.confirm(confirmMsg)) {
+      deleteUserMutation.mutate(id);
+    }
+  };
+
+  const loading = isLoading || saveUserMutation.isPending || deleteUserMutation.isPending;
 
   const handleEdit = (user) => {
     setEditingId(user.id);
@@ -105,6 +160,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     setPassword(''); // En blanco a menos que se desee cambiar
     setRol(user.rol);
     setActivo(user.activo);
+    setEmpresaIds(user.usuario_empresas?.map(ue => ue.empresa_id).filter(Boolean) || []);
   };
 
   return (
@@ -149,6 +205,40 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
             )}
 
             <div className="mb-3">
+              <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Empresas Asignadas</label>
+              <div className="d-flex flex-column gap-2 p-3 rounded-3" style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', maxHeight: '180px', overflowY: 'auto' }}>
+                {activeCompanies.length === 0 ? (
+                  <span className="text-muted" style={{ fontSize: '0.85rem' }}>No hay empresas activas disponibles.</span>
+                ) : (
+                  activeCompanies.map(c => {
+                    const isChecked = empresaIds.includes(c.id);
+                    return (
+                      <div key={c.id} className="d-flex align-items-center">
+                        <input
+                          type="checkbox"
+                          id={`empresa-${c.id}`}
+                          className="form-check-input me-2"
+                          checked={isChecked}
+                          disabled={editingId === userProfile?.id}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setEmpresaIds([...empresaIds, c.id]);
+                            } else {
+                              setEmpresaIds(empresaIds.filter(id => id !== c.id));
+                            }
+                          }}
+                        />
+                        <label htmlFor={`empresa-${c.id}`} className="form-check-label text-truncate" style={{ fontSize: '0.85rem', cursor: 'pointer' }} title={c.razon_social}>
+                          {c.razon_social}
+                        </label>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="mb-3">
               <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>
                 {editingId ? 'Nueva Contraseña (Opcional)' : 'Contraseña Inicial'}
               </label>
@@ -156,7 +246,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                 type="password"
                 required={!editingId}
                 className="form-control form-control-premium"
-                placeholder={editingId ? 'Dejar en blanco para no cambiar' : 'Mínimo 6 caracteres'}
+                placeholder={editingId ? 'Dejar en blanco para no cambiar' : 'Mínimo 8 caracteres, 1 mayúscula, 1 número'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -168,6 +258,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                 className="form-select form-control-premium"
                 value={rol}
                 onChange={(e) => setRol(e.target.value)}
+                disabled={editingId === userProfile?.id}
               >
                 <option value="operador">Operador (Carga y Concilia)</option>
                 <option value="consulta">Consulta (Solo Lectura y Reportes)</option>
@@ -183,6 +274,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                   className="form-check-input me-2"
                   checked={activo}
                   onChange={(e) => setActivo(e.target.checked)}
+                  disabled={editingId === userProfile?.id}
                 />
                 <label htmlFor="user-activo" className="form-check-label" style={{ fontSize: '0.85rem' }}>Colaborador Activo</label>
               </div>
@@ -233,6 +325,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <th>NOMBRE</th>
+                    <th>EMPRESA</th>
                     <th>ROL</th>
                     <th className="text-center">ESTADO</th>
                     <th className="text-center">ACCIONES</th>
@@ -242,6 +335,15 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                   {usuarios.map(user => (
                     <tr key={user.id}>
                       <td className="fw-semibold">{user.nombre}</td>
+                      <td className="text-muted" style={{ fontSize: '0.85rem' }}>
+                        <div className="d-flex flex-wrap gap-1">
+                          {user.usuario_empresas?.map(ue => (
+                            <span key={ue.empresa_id} className="badge bg-secondary border border-secondary font-mono" style={{ fontSize: '0.7rem' }}>
+                              {ue.empresas?.razon_social}
+                            </span>
+                          )) || <span className="text-muted">Ninguna</span>}
+                        </div>
+                      </td>
                       <td>
                         <span className="badge bg-secondary font-mono" style={{ fontSize: '0.75rem' }}>
                           {user.rol.toUpperCase()}
@@ -260,9 +362,17 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                           className="btn btn-sm btn-outline-warning me-1"
                           style={{ cursor: 'pointer' }}
                           title="Editar"
-                          disabled={user.id === userProfile.id} // Evitar auto-edición de rol o estado desde aquí
                         >
                           <FiEdit2 />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(user.id)}
+                          className="btn btn-sm btn-outline-danger"
+                          style={{ cursor: 'pointer' }}
+                          title="Eliminar"
+                          disabled={user.id === userProfile?.id}
+                        >
+                          <FiTrash2 />
                         </button>
                       </td>
                     </tr>
