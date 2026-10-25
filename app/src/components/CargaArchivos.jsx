@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import { parseSAP, parseSUNAT, parseSIRE, stripBOM, parseSAPCompras, parseSUNATCompras } from '../utils/parsers';
 import { reconcileData } from '../utils/validations';
-import { FiUpload, FiFileText, FiCheck, FiPlay, FiAlertTriangle } from 'react-icons/fi';
+import { FiUpload, FiCheck, FiPlay, FiAlertTriangle } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
 
 export default function CargaArchivos({ activeCompany, userProfile, onProcessComplete, activeModule }) {
@@ -272,9 +272,11 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
   };
 
   return (
-    <div className="card-premium animate-fade-in">
-      <h4 className="mb-3 fw-bold">Nueva Carga de Reportes Mensuales</h4>
-      <p className="text-muted" style={{ fontSize: '0.88rem' }}>
+    <div className="card-premium animate-fade-in w-100 p-4">
+      <h4 className="mb-2 fw-bold" style={{ color: 'var(--color-text)', letterSpacing: '-0.02em' }}>
+        Nueva Carga de Reportes Mensuales
+      </h4>
+      <p className="text-muted mb-4" style={{ fontSize: '0.86rem' }}>
         Sube los tres reportes TXT de SAP, SUNAT y el log del SIRE correspondientes al mismo período contable.
       </p>
 

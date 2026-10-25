@@ -5,24 +5,6 @@ import { supabase } from '../utils/supabaseClient';
 import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle, FiCheckCircle } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
 
-const STATIC_ERRORS = [
-  { value: "ERROR 1: DIFERENCIA EN LA BI Gravada", label: "ERROR 1: DIFERENCIA EN BI Gravada" },
-  { value: "ERROR 2: DIFERENCIA EN EL IGV / IPM", label: "ERROR 2: DIFERENCIA EN IGV / IPM" },
-  { value: "ERROR 3: DIFERENCIA EN Mto Exonerado", label: "ERROR 3: DIFERENCIA EN Mto Exonerado" },
-  { value: "ERROR 4: DIFERENCIA EN Mto Inafecto", label: "ERROR 4: DIFERENCIA EN Mto Inafecto" },
-  { value: "ERROR 5: DIFERENCIA EN TOTALES", label: "ERROR 5: DIFERENCIA EN TOTALES" },
-  { value: "ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI", label: "ERROR 6: BOLETAS > 700 SIN DNI" }
-];
-
-const STATIC_OBSERVATIONS = [
-  { value: "OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD", label: "OBS 1: DIFERENCIA TIPO IDENTIDAD" },
-  { value: "OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD", label: "OBS 2: DIFERENCIA NUMERO IDENTIDAD" },
-  { value: "OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS", label: "OBS 3: DIFERENCIA SECUENCIA" },
-  { value: "OBS 4: NO EXISTE EN SAP", label: "OBS 4: NO EXISTE EN SAP" },
-  { value: "OBS 5: NO EXISTE EN SUNAT", label: "OBS 5: NO EXISTE EN SUNAT" },
-  { value: "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO", label: "OBS 6: LONGITUD IDENTIDAD SAP INCORRECTO" },
-  { value: "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO", label: "OBS 7: LONGITUD IDENTIDAD SUNAT INCORRECTO" }
-];
 
 export default function TablaUnificada({ periodId, activePeriod, initialFilter, onFilterReset, activeModule }) {
   const [exportLoading, setExportLoading] = useState(false);
@@ -547,7 +529,9 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
       <div className="row g-2 mb-4">
         <div className="col-lg-3">
           <div className="input-group">
-            <span className="input-group-text border-0 bg-dark text-muted"><FiSearch /></span>
+            <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B' }}>
+              <FiSearch />
+            </span>
             <input
               type="text"
               className="form-control form-control-premium"
@@ -652,7 +636,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
       <div className="row g-2 mb-4 animate-fade-in">
         <div className="col-lg-2">
           <div className="input-group">
-            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Serie</span>
+            <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.82rem' }}>Serie</span>
             <input
               type="text"
               className="form-control form-control-premium"
@@ -664,7 +648,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         </div>
         <div className="col-lg-2">
           <div className="input-group">
-            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Corr. Desde</span>
+            <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.82rem' }}>Corr. Desde</span>
             <input
               type="text"
               className="form-control form-control-premium"
@@ -676,7 +660,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         </div>
         <div className="col-lg-2">
           <div className="input-group">
-            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Corr. Hasta</span>
+            <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.82rem' }}>Corr. Hasta</span>
             <input
               type="text"
               className="form-control form-control-premium"
@@ -688,7 +672,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         </div>
         <div className="col-lg-2">
           <div className="input-group">
-            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Fecha Desde</span>
+            <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.82rem' }}>Fecha Desde</span>
             <input
               type="date"
               className="form-control form-control-premium"
@@ -699,7 +683,7 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         </div>
         <div className="col-lg-2">
           <div className="input-group">
-            <span className="input-group-text border-0 bg-dark text-muted" style={{ fontSize: '0.85rem' }}>Fecha Hasta</span>
+            <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.82rem' }}>Fecha Hasta</span>
             <input
               type="date"
               className="form-control form-control-premium"
@@ -710,7 +694,8 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
         </div>
         <div className="col-lg-2">
           <button
-            className="btn btn-outline-secondary w-100 h-100 d-flex align-items-center justify-content-center py-2 rounded-3"
+            type="button"
+            className="btn btn-outline-secondary w-100 h-100 d-flex align-items-center justify-content-center py-2 rounded-3 fw-semibold"
             onClick={handleClearAdvancedFilters}
             style={{ fontSize: '0.85rem', cursor: 'pointer' }}
             disabled={!startDate && !endDate && !filterSerie && !startCorr && !endCorr && originFilter === 'ALL'}
@@ -722,13 +707,17 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
 
       {/* Alerta del filtro de consistencia de identidad */}
       {filterObsIdOk !== 'ALL' && (
-        <div className="alert alert-info py-2 px-3 mb-3 border-0 rounded-3 d-flex align-items-center justify-content-between text-white bg-info bg-opacity-10 animate-fade-in" style={{ fontSize: '0.85rem' }}>
+        <div 
+          className="alert alert-info py-2.5 px-3 mb-3 border-0 rounded-3 d-flex align-items-center justify-content-between animate-fade-in" 
+          style={{ backgroundColor: 'rgba(14, 165, 233, 0.1)', color: '#0369A1', border: '1px solid rgba(14, 165, 233, 0.25)', fontSize: '0.85rem' }}
+        >
           <div>
             <FiCheckCircle className="me-2 text-info fs-5" />
             Mostrando comprobantes <strong>Observados</strong> con <strong>Número de Identidad {filterObsIdOk === 'SAP_OK' ? 'SAP' : 'SUNAT'} Correcto</strong>.
           </div>
           <button
-            className="btn btn-sm btn-link text-info p-0"
+            type="button"
+            className="btn btn-sm btn-link text-info p-0 fw-semibold"
             onClick={() => setFilterObsIdOk('ALL')}
             style={{ textDecoration: 'none', cursor: 'pointer' }}
           >
@@ -744,20 +733,23 @@ export default function TablaUnificada({ periodId, activePeriod, initialFilter, 
           <p className="text-muted mt-2">Cargando registros conciliados...</p>
         </div>
       ) : totalRecords === 0 ? (
-        <div className="text-center py-5 bg-dark rounded-3 bg-opacity-25">
+        <div 
+          className="text-center py-5 rounded-3"
+          style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
+        >
           <FiAlertCircle className="text-muted fs-1 mb-2" />
-          <p className="text-muted mb-0">No se encontraron registros que coincidan con la búsqueda.</p>
+          <p className="text-muted mb-0 fw-semibold">No se encontraron registros que coincidan con la búsqueda.</p>
         </div>
       ) : (
         <div className="table-responsive">
-          <table className="table table-dark table-borderless table-dense align-middle text-nowrap">
+          <table className="table table-hover table-dense align-middle text-nowrap mb-0">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                <th>FOLIO (SERIE-NRO)</th>
-                <th>FECHA EMIS.</th>
-                <th>TIPO DOC</th>
-                <th>IDENTIDAD {activeModule === 'compras' ? 'PROV' : 'SUNAT'}</th>
-                <th>{activeModule === 'compras' ? 'PROVEEDOR' : 'CLIENTE SUNAT'}</th>
+              <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
+                <th style={{ backgroundColor: 'var(--bg-surface)' }}>FOLIO (SERIE-NRO)</th>
+                <th style={{ backgroundColor: 'var(--bg-surface)' }}>FECHA EMIS.</th>
+                <th style={{ backgroundColor: 'var(--bg-surface)' }}>TIPO DOC</th>
+                <th style={{ backgroundColor: 'var(--bg-surface)' }}>IDENTIDAD {activeModule === 'compras' ? 'PROV' : 'SUNAT'}</th>
+                <th style={{ backgroundColor: 'var(--bg-surface)' }}>{activeModule === 'compras' ? 'PROVEEDOR' : 'CLIENTE SUNAT'}</th>
                 {isObs1 ? (
                   <>
                     <th>TIPO IDENTIDAD SAP</th>

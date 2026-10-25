@@ -352,6 +352,7 @@ export default function App() {
           periods={periods}
           periodId={periodId}
           onChangePeriod={handlePeriodChange}
+          activeModule={activeModule}
         />
 
         {activeTab === 'dashboard' && (
