@@ -99,71 +99,122 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
   };
 
   return (
-    <div className="animate-fade-in">
-      <h3 className="mb-4 fw-bold">Panel Resumen Ejecutivo</h3>
+    <div className="animate-fade-in w-100">
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h3 className="mb-1 fw-bold" style={{ letterSpacing: '-0.02em', color: 'var(--color-text)' }}>
+            Panel Resumen Ejecutivo
+          </h3>
+          <p className="text-muted mb-0" style={{ fontSize: '0.86rem' }}>
+            Métricas de conciliación y calidad de datos del período seleccionado
+          </p>
+        </div>
+      </div>
 
       {/* KPI Cards Grid */}
       <div className="row g-3 mb-4">
+        {/* Total Comprobantes */}
         <div className="col-xl-3 col-sm-6">
           <div 
-            className="card-premium card-clickable d-flex align-items-center"
+            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
             onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}
+            title="Ver todos los comprobantes"
           >
-            <div className="bg-secondary bg-opacity-25 rounded-3 p-3 me-3 text-secondary fs-3">
+            <div 
+              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
+              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: '#4F46E5', fontSize: '1.4rem' }}
+            >
               <FiLayers />
             </div>
-            <div>
-              <div className="text-muted" style={{ fontSize: '0.78rem' }}>TOTAL COMPROBANTES</div>
-              <h3 className="fw-bold mb-0 font-mono">{stats.total}</h3>
-              <small className="text-muted">100% de la carga</small>
+            <div className="text-truncate">
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                TOTAL COMPROBANTES
+              </div>
+              <h3 className="fw-bold mb-0 font-mono" style={{ color: 'var(--color-text)' }}>
+                {stats.total.toLocaleString('es-PE')}
+              </h3>
+              <small className="text-muted" style={{ fontSize: '0.75rem' }}>100% de la carga procesada</small>
             </div>
           </div>
         </div>
 
+        {/* Registros Correctos */}
         <div className="col-xl-3 col-sm-6">
           <div 
-            className="card-premium card-clickable d-flex align-items-center"
+            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
             onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OK')}
+            title="Ver comprobantes correctos (OK)"
           >
-            <div className="bg-success bg-opacity-25 rounded-3 p-3 me-3 text-success fs-3">
+            <div 
+              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
+              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '1.4rem' }}
+            >
               <FiCheckCircle />
             </div>
-            <div>
-              <div className="text-muted" style={{ fontSize: '0.78rem' }}>REGISTROS CORRECTOS</div>
-              <h3 className="fw-bold mb-0 text-success font-mono">{stats.ok}</h3>
-              <small className="text-success font-mono">{getPercentage(stats.ok)} del total</small>
+            <div className="text-truncate">
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                REGISTROS CORRECTOS
+              </div>
+              <h3 className="fw-bold mb-0 text-success font-mono">
+                {stats.ok.toLocaleString('es-PE')}
+              </h3>
+              <small className="text-success font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>
+                {getPercentage(stats.ok)} del total
+              </small>
             </div>
           </div>
         </div>
 
+        {/* Observaciones */}
         <div className="col-xl-3 col-sm-6">
           <div 
-            className="card-premium card-clickable d-flex align-items-center"
+            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
             onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OBSERVADO')}
+            title="Ver comprobantes observados"
           >
-            <div className="bg-warning bg-opacity-25 rounded-3 p-3 me-3 text-warning fs-3">
+            <div 
+              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
+              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#D97706', fontSize: '1.4rem' }}
+            >
               <FiAlertTriangle />
             </div>
-            <div>
-              <div className="text-muted" style={{ fontSize: '0.78rem' }}>OBSERVACIONES</div>
-              <h3 className="fw-bold mb-0 text-warning font-mono">{stats.observed}</h3>
-              <small className="text-warning font-mono">{getPercentage(stats.observed)} de advertencia</small>
+            <div className="text-truncate">
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                OBSERVACIONES
+              </div>
+              <h3 className="fw-bold mb-0 text-warning font-mono">
+                {stats.observed.toLocaleString('es-PE')}
+              </h3>
+              <small className="text-warning font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>
+                {getPercentage(stats.observed)} de advertencia
+              </small>
             </div>
           </div>
         </div>
 
+        {/* Errores / Discrepancias */}
         <div className="col-xl-3 col-sm-6">
           <div 
-            className="card-premium card-clickable d-flex align-items-center"
+            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
             onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ERROR')}
+            title="Ver comprobantes con errores"
           >
-            <div className="bg-danger bg-opacity-25 rounded-3 p-3 me-3 text-danger fs-3">
+            <div 
+              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
+              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(220, 38, 38, 0.1)', color: '#DC2626', fontSize: '1.4rem' }}
+            >
               <FiXCircle />
             </div>
-            <div>
-              <div className="text-muted" style={{ fontSize: '0.78rem' }}>CON DISCREPANCIAS / ERROR</div>
-              <h3 className="fw-bold mb-0 text-danger font-mono">{stats.errors}</h3>
-              <small className="text-danger font-mono">{getPercentage(stats.errors)} críticos</small>
+            <div className="text-truncate">
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                CON DISCREPANCIAS / ERROR
+              </div>
+              <h3 className="fw-bold mb-0 text-danger font-mono">
+                {stats.errors.toLocaleString('es-PE')}
+              </h3>
+              <small className="text-danger font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>
+                {getPercentage(stats.errors)} críticos
+              </small>
             </div>
           </div>
         </div>
@@ -172,17 +223,19 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
       <div className="row g-4">
         {/* Comparative Table */}
         <div className="col-lg-8">
-          <div className="card-premium h-100">
-            <h5 className="mb-3 fw-bold">Comparativa Monetaria Lote (SAP vs. SUNAT)</h5>
+          <div className="card-premium h-100 p-4">
+            <h5 className="mb-3 fw-bold" style={{ color: 'var(--color-text)' }}>
+              Comparativa Monetaria Lote (SAP vs. SUNAT)
+            </h5>
             <div className="table-responsive">
-              <table className="table table-hover table-borderless table-dense align-middle mb-0 text-white-on-dark-only">
+              <table className="table table-hover table-dense align-middle mb-0">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <th>CONCEPTO</th>
-                    <th className="text-end">SAP (S/.)</th>
-                    <th className="text-end">SUNAT (S/.)</th>
-                    <th className="text-end">DIFERENCIA (S/.)</th>
-                    <th className="text-center">ESTADO</th>
+                  <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
+                    <th style={{ backgroundColor: 'var(--bg-surface)' }}>CONCEPTO</th>
+                    <th className="text-end" style={{ backgroundColor: 'var(--bg-surface)' }}>SAP (S/.)</th>
+                    <th className="text-end" style={{ backgroundColor: 'var(--bg-surface)' }}>SUNAT (S/.)</th>
+                    <th className="text-end" style={{ backgroundColor: 'var(--bg-surface)' }}>DIFERENCIA (S/.)</th>
+                    <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ESTADO</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -239,9 +292,9 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
 
         {/* Informative Side Panel */}
         <div className="col-lg-4">
-          <div className="card-premium h-100 d-flex flex-column justify-content-between">
+          <div className="card-premium h-100 p-4 d-flex flex-column justify-content-between">
             <div>
-              <h5 className="mb-3 fw-bold">Estado de Lote</h5>
+              <h5 className="mb-3 fw-bold" style={{ color: 'var(--color-text)' }}>Estado del Lote</h5>
               <div className="text-center py-4">
                 {stats.total === 0 ? (
                   <p className="text-muted mb-0">No hay datos procesados en este período.</p>
@@ -275,10 +328,10 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
 
             <div className="border-top pt-3" style={{ borderColor: 'var(--border-color)' }}>
               <div className="d-flex justify-content-between align-items-center mb-1">
-                <span className="text-muted" style={{ fontSize: '0.8rem' }}>Tasa de Validación</span>
-                <span className="text-white font-mono fw-semibold">{getPercentage(stats.ok)}</span>
+                <span className="text-muted fw-semibold" style={{ fontSize: '0.8rem' }}>Tasa de Validación</span>
+                <span className="font-mono fw-bold" style={{ color: 'var(--color-text)' }}>{getPercentage(stats.ok)}</span>
               </div>
-              <div className="progress" style={{ height: '6px', backgroundColor: 'var(--bg-primary)' }}>
+              <div className="progress" style={{ height: '7px', backgroundColor: 'var(--bg-primary)', borderRadius: '4px' }}>
                 <div 
                   className="progress-bar bg-success" 
                   role="progressbar" 
@@ -286,64 +339,78 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
                   aria-valuenow={stats.ok} 
                   aria-valuemin="0" 
                   aria-valuemax={stats.total}
-                ></div>
+                />
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Fila 2: Gráfico de Comprobantes Correctos y Consistencia de Identidades */}
+      {/* Fila 2: Gráficos de Consistencia de Identidades */}
       <div className="row g-4 mt-1">
         {/* Gráfico de Barras de Comprobantes Correctos */}
         <div className="col-lg-6">
-          <div className="card-premium h-100">
-            <h5 className="mb-2 fw-bold">Consistencia de Identidades en Observados</h5>
+          <div className="card-premium h-100 p-4">
+            <h5 className="mb-2 fw-bold" style={{ color: 'var(--color-text)' }}>
+              Consistencia de Identidades en Observados
+            </h5>
             <p className="text-muted mb-4" style={{ fontSize: '0.82rem' }}>
-              Cantidad de comprobantes <strong>Observados</strong> que tienen un número de identidad con longitud/formato correcto por origen. Haz clic en las barras para ver el detalle filtrado.
+              Cantidad de comprobantes <strong>Observados</strong> con formato de identidad válido por origen. Haz clic en las barras para filtrar.
             </p>
 
-            <div className="d-flex align-items-end justify-content-around mt-4 mb-4" style={{ height: '180px', paddingBottom: '10px', borderBottom: '1px solid var(--border-color)' }}>
+            <div className="d-flex align-items-end justify-content-around mt-4 mb-3" style={{ height: '170px', paddingBottom: '10px', borderBottom: '1px solid var(--border-color)' }}>
               {/* Barra SAP */}
               <div 
                 className="d-flex flex-column align-items-center justify-content-end h-100" 
-                style={{ width: '120px' }}
+                style={{ width: '130px' }}
               >
                 <div 
                   className="bar-sap-glow animate-fade-in"
                   onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SAP_OBS_ID_OK')}
                   style={{
-                    width: '50px',
+                    width: '54px',
                     height: `${stats.observed > 0 ? (stats.countSapOk / stats.observed * 100) : 0}%`,
                     background: 'linear-gradient(to top, #4f46e5, #8b5cf6)',
                     cursor: 'pointer',
-                    borderRadius: '6px 6px 0 0',
+                    borderRadius: '8px 8px 0 0',
+                    transition: 'transform 0.2s ease',
+                    boxShadow: '0 4px 10px rgba(79, 70, 229, 0.2)'
                   }}
                   title="Ver detalle de documentos observados con ID SAP válido"
-                ></div>
-                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SAP (ID Válido)</span>
-                <span className="font-mono text-muted" style={{ fontSize: '0.8rem' }}>{stats.countSapOk} docs</span>
+                />
+                <span className="fw-semibold mt-2" style={{ fontSize: '0.84rem', color: 'var(--color-text)' }}>
+                  SAP (ID Válido)
+                </span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.78rem' }}>
+                  {stats.countSapOk} docs
+                </span>
               </div>
 
               {/* Barra SUNAT */}
               <div 
                 className="d-flex flex-column align-items-center justify-content-end h-100" 
-                style={{ width: '120px' }}
+                style={{ width: '130px' }}
               >
                 <div 
                   className="bar-sunat-glow animate-fade-in"
                   onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SUNAT_OBS_ID_OK')}
                   style={{
-                    width: '50px',
+                    width: '54px',
                     height: `${stats.observed > 0 ? (stats.countSunatOk / stats.observed * 100) : 0}%`,
-                    background: 'linear-gradient(to top, #3b82f6, #60a5fa)',
+                    background: 'linear-gradient(to top, #2563eb, #60a5fa)',
                     cursor: 'pointer',
-                    borderRadius: '6px 6px 0 0',
+                    borderRadius: '8px 8px 0 0',
+                    transition: 'transform 0.2s ease',
+                    boxShadow: '0 4px 10px rgba(37, 99, 235, 0.2)'
                   }}
                   title="Ver detalle de documentos observados con ID SUNAT válido"
-                ></div>
-                <span className="fw-semibold mt-2 text-white" style={{ fontSize: '0.85rem' }}>SUNAT (ID Válido)</span>
-                <span className="font-mono text-muted" style={{ fontSize: '0.8rem' }}>{stats.countSunatOk} docs</span>
+                />
+                <span className="fw-semibold mt-2" style={{ fontSize: '0.84rem', color: 'var(--color-text)' }}>
+                  SUNAT (ID Válido)
+                </span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.78rem' }}>
+                  {stats.countSunatOk} docs
+                </span>
               </div>
             </div>
           </div>
@@ -351,9 +418,9 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
 
         {/* Consistencia de Calidad de Datos de Identidades */}
         <div className="col-lg-6">
-          <div className="card-premium h-100 d-flex flex-column justify-content-between">
+          <div className="card-premium h-100 p-4 d-flex flex-column justify-content-between">
             <div>
-              <h5 className="mb-2 fw-bold">
+              <h5 className="mb-2 fw-bold" style={{ color: 'var(--color-text)' }}>
                 {activeModule === 'compras' 
                   ? 'Calidad de Datos de Proveedores (RUC)' 
                   : 'Calidad de Datos de Identidades (RUC/DNI)'}
@@ -367,26 +434,26 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
               {/* Tipo de Identidad or SAP RUC Validity */}
               <div className="mb-4">
                 <div className="d-flex justify-content-between align-items-center mb-1">
-                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>
+                  <span className="fw-semibold" style={{ fontSize: '0.85rem', color: 'var(--color-text)' }}>
                     {activeModule === 'compras' 
                       ? 'RUC Proveedor SAP Válido (Sin OBS 6)' 
                       : 'Tipo de Identidad Coincidente (Sin OBS 1)'}
                   </span>
-                  <span className="badge bg-primary bg-opacity-10 text-primary font-mono">
+                  <span className="badge font-mono" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', color: '#2563EB', border: '1px solid rgba(37, 99, 235, 0.2)' }}>
                     {stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100).toFixed(1) : 0}%
                   </span>
                 </div>
-                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)' }}>
+                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)', borderRadius: '4px' }}>
                   <div 
                     className="progress-bar bg-primary" 
                     role="progressbar" 
                     style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100) : 0}%` }}
-                  ></div>
+                  />
                 </div>
                 <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
                   <span>Correctos: {stats.total - stats.countObs1} docs</span>
                   {stats.countObs1 > 0 && (
-                    <span className="text-muted">
+                    <span className="text-warning fw-semibold">
                       • {stats.countObs1} con discrepancias ({activeModule === 'compras' ? 'OBS 6' : 'OBS 1'})
                     </span>
                   )}
@@ -396,26 +463,26 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
               {/* Número de Identidad or SUNAT RUC Validity */}
               <div className="mb-2">
                 <div className="d-flex justify-content-between align-items-center mb-1">
-                  <span className="fw-semibold text-white" style={{ fontSize: '0.85rem' }}>
+                  <span className="fw-semibold" style={{ fontSize: '0.85rem', color: 'var(--color-text)' }}>
                     {activeModule === 'compras' 
                       ? 'RUC Proveedor SUNAT Válido (Sin OBS 7)' 
                       : 'Número de Identidad Coincidente (Sin OBS 2)'}
                   </span>
-                  <span className="badge bg-primary bg-opacity-10 text-primary font-mono">
+                  <span className="badge font-mono" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', color: '#2563EB', border: '1px solid rgba(37, 99, 235, 0.2)' }}>
                     {stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100).toFixed(1) : 0}%
                   </span>
                 </div>
-                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)' }}>
+                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)', borderRadius: '4px' }}>
                   <div 
                     className="progress-bar bg-primary" 
                     role="progressbar" 
                     style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100) : 0}%` }}
-                  ></div>
+                  />
                 </div>
                 <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
                   <span>Correctos: {stats.total - stats.countObs2} docs</span>
                   {stats.countObs2 > 0 && (
-                    <span className="text-muted">
+                    <span className="text-warning fw-semibold">
                       • {stats.countObs2} con discrepancias ({activeModule === 'compras' ? 'OBS 7' : 'OBS 2'})
                     </span>
                   )}

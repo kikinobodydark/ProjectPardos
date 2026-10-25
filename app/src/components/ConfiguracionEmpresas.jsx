@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiPlus, FiEdit2, FiTrash2, FiCheck, FiX, FiAlertTriangle } from 'react-icons/fi';
+import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle } from 'react-icons/fi';
 import { isValidIdentityNumber, isRecordAnulado } from '../utils/validations';
 
 export default function ConfiguracionEmpresas({ activeCompany }) {
@@ -344,20 +344,20 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
             <p className="text-muted mb-0">No se encontraron empresas registradas.</p>
           ) : (
             <div className="table-responsive">
-              <table className="table table-dark table-borderless table-dense align-middle mb-0">
+              <table className="table table-hover table-dense align-middle mb-0">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <th>RAZÓN SOCIAL</th>
-                    <th>RUC</th>
-                    <th className="text-center">ESTADO</th>
-                    <th className="text-center">ACCIONES</th>
+                  <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
+                    <th style={{ backgroundColor: 'var(--bg-surface)' }}>RAZÓN SOCIAL</th>
+                    <th style={{ backgroundColor: 'var(--bg-surface)' }}>RUC</th>
+                    <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ESTADO</th>
+                    <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ACCIONES</th>
                   </tr>
                 </thead>
                 <tbody>
                   {empresas.map(emp => (
                     <tr key={emp.id}>
                       <td className="fw-semibold">{emp.razon_social}</td>
-                      <td className="font-mono">{emp.ruc}</td>
+                      <td className="font-mono text-muted">{emp.ruc}</td>
                       <td className="text-center">
                         {emp.activo ? (
                           <span className="badge badge-status badge-status-ok">Activo</span>
@@ -367,6 +367,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
                       </td>
                       <td className="text-center">
                         <button
+                          type="button"
                           onClick={() => handleEdit(emp)}
                           className="btn btn-sm btn-outline-warning me-1"
                           style={{ cursor: 'pointer' }}
@@ -375,6 +376,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
                           <FiEdit2 />
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleDelete(emp.id)}
                           className="btn btn-sm btn-outline-danger"
                           style={{ cursor: 'pointer' }}
@@ -395,8 +397,8 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
 
       {/* Herramientas de Mantenimiento (Solo Admins) */}
       <div className="col-12 mt-4">
-        <div className="card-premium">
-          <h5 className="mb-2 fw-bold">Mantenimiento y Calidad de Datos</h5>
+        <div className="card-premium p-4">
+          <h5 className="mb-2 fw-bold" style={{ color: 'var(--color-text)' }}>Mantenimiento y Calidad de Datos</h5>
           <p className="text-muted mb-3" style={{ fontSize: '0.88rem' }}>
             Ejecuta diagnósticos y actualizaciones masivas en los registros de conciliación.
           </p>
@@ -413,17 +415,21 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
             </div>
           )}
 
-          <div className="d-flex align-items-center justify-content-between p-3 rounded-3 bg-dark bg-opacity-25 border border-secondary border-opacity-10">
-            <div className="me-3">
-              <h6 className="fw-bold mb-1 text-white">Revalidación Masiva de Números de Identidad</h6>
+          <div 
+            className="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between p-3 rounded-3 gap-3"
+            style={{ backgroundColor: 'rgba(241, 245, 249, 0.7)', border: '1px solid var(--border-color)' }}
+          >
+            <div>
+              <h6 className="fw-bold mb-1" style={{ color: 'var(--color-text)' }}>Revalidación Masiva de Números de Identidad</h6>
               <small className="text-muted">
                 Vuelve a evaluar todos los registros históricos de SAP y SUNAT contra la longitud de dígitos correcta de DNI (8), RUC (11) y CE (9).
               </small>
             </div>
             <button
+              type="button"
               onClick={handleRevalidateAll}
               disabled={revalLoading}
-              className="btn btn-warning px-4 py-2 rounded-3 fw-semibold d-flex align-items-center"
+              className="btn btn-warning px-4 py-2 rounded-3 fw-bold d-flex align-items-center"
               style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               {revalLoading ? (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiPlus, FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiUserCheck, FiKey } from 'react-icons/fi';
+import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle } from 'react-icons/fi';
 
 export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   // Formulario
@@ -321,31 +321,48 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
             <p className="text-muted mb-0">No se encontraron usuarios registrados.</p>
           ) : (
             <div className="table-responsive">
-              <table className="table table-dark table-borderless table-dense align-middle mb-0">
+              <table className="table table-hover table-dense align-middle mb-0">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <th>NOMBRE</th>
-                    <th>EMPRESA</th>
-                    <th>ROL</th>
-                    <th className="text-center">ESTADO</th>
-                    <th className="text-center">ACCIONES</th>
+                  <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
+                    <th style={{ backgroundColor: 'var(--bg-surface)' }}>NOMBRE</th>
+                    <th style={{ backgroundColor: 'var(--bg-surface)' }}>EMPRESA</th>
+                    <th style={{ backgroundColor: 'var(--bg-surface)' }}>ROL</th>
+                    <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ESTADO</th>
+                    <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ACCIONES</th>
                   </tr>
                 </thead>
                 <tbody>
                   {usuarios.map(user => (
                     <tr key={user.id}>
                       <td className="fw-semibold">{user.nombre}</td>
-                      <td className="text-muted" style={{ fontSize: '0.85rem' }}>
+                      <td className="text-muted" style={{ fontSize: '0.82rem' }}>
                         <div className="d-flex flex-wrap gap-1">
                           {user.usuario_empresas?.map(ue => (
-                            <span key={ue.empresa_id} className="badge bg-secondary border border-secondary font-mono" style={{ fontSize: '0.7rem' }}>
+                            <span 
+                              key={ue.empresa_id} 
+                              className="badge font-mono" 
+                              style={{ 
+                                backgroundColor: 'rgba(241, 245, 249, 0.9)', 
+                                color: '#334155', 
+                                border: '1px solid #E2E8F0', 
+                                fontSize: '0.72rem' 
+                              }}
+                            >
                               {ue.empresas?.razon_social}
                             </span>
                           )) || <span className="text-muted">Ninguna</span>}
                         </div>
                       </td>
                       <td>
-                        <span className="badge bg-secondary font-mono" style={{ fontSize: '0.75rem' }}>
+                        <span 
+                          className="badge font-mono" 
+                          style={{ 
+                            backgroundColor: user.rol === 'admin' ? 'rgba(37, 99, 235, 0.1)' : 'rgba(100, 116, 139, 0.1)', 
+                            color: user.rol === 'admin' ? '#2563EB' : '#475569', 
+                            border: `1px solid ${user.rol === 'admin' ? 'rgba(37, 99, 235, 0.2)' : '#E2E8F0'}`, 
+                            fontSize: '0.74rem' 
+                          }}
+                        >
                           {user.rol.toUpperCase()}
                         </span>
                       </td>
@@ -358,6 +375,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                       </td>
                       <td className="text-center">
                         <button
+                          type="button"
                           onClick={() => handleEdit(user)}
                           className="btn btn-sm btn-outline-warning me-1"
                           style={{ cursor: 'pointer' }}
@@ -366,6 +384,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                           <FiEdit2 />
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleDelete(user.id)}
                           className="btn btn-sm btn-outline-danger"
                           style={{ cursor: 'pointer' }}

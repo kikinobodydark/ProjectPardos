@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
-import { FiMail, FiLock, FiUser, FiBriefcase, FiAlertCircle } from 'react-icons/fi';
+import { FiMail, FiLock, FiAlertCircle, FiArrowRight } from 'react-icons/fi';
 
 export default function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -47,44 +47,77 @@ export default function Login({ onLoginSuccess }) {
   return (
     <div 
       className="d-flex align-items-center justify-content-center min-vh-100 px-3"
-      style={{ backgroundColor: 'var(--bg-primary)' }}
+      style={{ 
+        backgroundColor: '#F8FAFC',
+        backgroundImage: 'radial-gradient(at 50% 0%, rgba(37, 99, 235, 0.06) 0px, transparent 60%)'
+      }}
     >
       <div 
-        className="card-premium animate-fade-in w-100" 
-        style={{ maxWidth: '400px' }}
+        className="card-premium animate-fade-in w-100 p-4 p-md-5" 
+        style={{ 
+          maxWidth: '440px',
+          borderRadius: '16px',
+          boxShadow: '0 20px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04)'
+        }}
       >
         <div className="text-center mb-4">
           <div 
-            className="bg-primary rounded-circle d-inline-flex align-items-center justify-content-center mb-3" 
-            style={{ width: '56px', height: '56px' }}
+            className="rounded-3 d-inline-flex align-items-center justify-content-center mb-3" 
+            style={{ 
+              width: '54px', 
+              height: '54px',
+              background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
+              color: '#FFFFFF',
+              fontWeight: 800,
+              fontSize: '1.4rem',
+              letterSpacing: '-0.04em',
+              boxShadow: '0 6px 14px -3px rgba(15, 23, 42, 0.25)'
+            }}
           >
-            <span className="text-white fw-bold fs-3">C</span>
+            CT
           </div>
-          <h3 className="fw-bold text-white mb-1">
-            Iniciar Sesión
-          </h3>
-          <p className="text-muted" style={{ fontSize: '0.88rem' }}>
-            Accede al validador y conciliador contable
+          <div className="d-flex align-items-center justify-content-center gap-2 mb-1">
+            <h3 className="fw-bold mb-0" style={{ color: 'var(--color-text)', letterSpacing: '-0.02em', fontSize: '1.5rem' }}>
+              ConciliaTributo
+            </h3>
+            <span 
+              className="badge" 
+              style={{ 
+                fontSize: '0.72rem', 
+                backgroundColor: 'rgba(220, 38, 38, 0.08)', 
+                color: '#DC2626',
+                border: '1px solid rgba(220, 38, 38, 0.2)'
+              }}
+            >
+              Pardos
+            </span>
+          </div>
+          <p className="text-muted" style={{ fontSize: '0.86rem' }}>
+            Accede al sistema de auditoría fiscal y conciliación
           </p>
         </div>
 
         {errorMsg && (
-          <div className="alert alert-danger d-flex align-items-center py-2 px-3 mb-3 border-0 rounded-3" style={{ fontSize: '0.85rem' }}>
-            <FiAlertCircle className="me-2 fs-5" />
+          <div className="alert alert-danger d-flex align-items-center py-2.5 px-3 mb-4 border-0 rounded-3 animate-fade-in" style={{ fontSize: '0.84rem' }}>
+            <FiAlertCircle className="me-2 fs-5 flex-shrink-0" />
             <div>{errorMsg}</div>
           </div>
         )}
 
         <form onSubmit={handleLogin}>
           <div className="mb-3">
-            <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Correo Electrónico</label>
+            <label className="form-label text-muted fw-semibold" style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Correo Electrónico
+            </label>
             <div className="input-group">
-              <span className="input-group-text border-0 bg-dark text-muted"><FiMail /></span>
+              <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B' }}>
+                <FiMail />
+              </span>
               <input
                 type="email"
                 required
                 className="form-control form-control-premium"
-                placeholder="correo@empresa.com"
+                placeholder="operador@pardoschicken.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
@@ -92,9 +125,13 @@ export default function Login({ onLoginSuccess }) {
           </div>
 
           <div className="mb-4">
-            <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Contraseña</label>
+            <label className="form-label text-muted fw-semibold" style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Contraseña
+            </label>
             <div className="input-group">
-              <span className="input-group-text border-0 bg-dark text-muted"><FiLock /></span>
+              <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B' }}>
+                <FiLock />
+              </span>
               <input
                 type="password"
                 required
@@ -109,10 +146,20 @@ export default function Login({ onLoginSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="btn btn-primary w-100 py-2.5 rounded-3 fw-semibold"
-            style={{ cursor: 'pointer' }}
+            className="btn btn-primary w-100 py-2.5 rounded-3 fw-bold d-flex align-items-center justify-content-center gap-2 shadow-sm"
+            style={{ cursor: loading ? 'not-allowed' : 'pointer', fontSize: '0.95rem' }}
           >
-            {loading ? 'Procesando...' : 'Ingresar'}
+            {loading ? (
+              <>
+                <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+                <span>Validando credenciales...</span>
+              </>
+            ) : (
+              <>
+                <span>Ingresar al Sistema</span>
+                <FiArrowRight />
+              </>
+            )}
           </button>
         </form>
       </div>

@@ -1,18 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   FiTrendingUp, 
-  FiPackage, 
-  FiInbox, 
-  FiUsers, 
-  FiSettings, 
   FiTruck, 
-  FiCheckSquare, 
+  FiSliders, 
   FiBriefcase, 
-  FiUser, 
-  FiArrowUpRight, 
   FiLogOut,
-  FiChevronDown
+  FiChevronDown,
+  FiArrowRight,
+  FiCheck,
+  FiRepeat,
+  FiCalendar,
+  FiLock
 } from 'react-icons/fi';
+import './Hub.css';
 
 export default function Hub({ 
   userProfile, 
@@ -25,6 +25,7 @@ export default function Hub({
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
   const dropdownRef = useRef(null);
 
+  // Cerrar dropdown al hacer click fuera
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -37,178 +38,328 @@ export default function Hub({
 
   const isAdmin = userProfile?.rol === 'admin';
 
-  // Tarjetas del Hub
+  // Iniciales del usuario para el avatar
+  const getInitials = (name) => {
+    if (!name) return 'US';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+  };
+
+  // Fecha actual formateada en español
+  const formattedDate = (() => {
+    try {
+      const d = new Date().toLocaleDateString('es-PE', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+      return d.charAt(0).toUpperCase() + d.slice(1);
+    } catch {
+      return 'Fecha Actual';
+    }
+  })();
+
+  // Saludo contextual según la hora del día
+  const greeting = (() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Buenos días';
+    if (hour < 19) return 'Buenas tardes';
+    return 'Buenas noches';
+  })();
+
+  // Definición de Módulos del Hub
   const cards = [
     {
       id: 'ventas',
-      title: 'Ventas',
-      description: 'Cruce, conciliación y validación del Registro de Ventas e Ingresos (RVIE) con SAP y propuesta.',
+      title: 'Conciliación de Ventas',
+      badge: 'RVIE • SUNAT • SAP',
+      badgeBg: 'rgba(16, 185, 129, 0.1)',
+      badgeColor: '#059669',
+      badgeBorder: 'rgba(16, 185, 129, 0.25)',
+      description: 'Cruce tridireccional de registros RVIE (SUNAT), SIRE y SAP mediante cálculo de CAR. Validación automática de cortesías y detección de inconsistencias.',
+      chips: ['Cruce 3 Vías', 'Cálculo CAR', 'Detección Cortesías', 'Validación RUC/DNI', 'Reportes Excel'],
       icon: <FiTrendingUp />,
-      color: '#10B981', // Emerald green
+      color: '#10B981',
       bgColor: 'rgba(16, 185, 129, 0.1)',
-      active: true
+      active: true,
+      ctaText: 'Acceder a Ventas'
     },
     {
       id: 'compras',
-      title: 'Compras',
-      description: 'Central de abastecimiento, gestión de OC/OS y control de compras.',
+      title: 'Gestión de Compras',
+      badge: 'RCE • SIRE Compras',
+      badgeBg: 'rgba(139, 92, 246, 0.1)',
+      badgeColor: '#7C3AED',
+      badgeBorder: 'rgba(139, 92, 246, 0.25)',
+      description: 'Auditoría del Registro de Compras Electrónico (RCE), cotejo de propuestas SUNAT con compras SAP y control de comprobantes con crédito fiscal.',
+      chips: ['RCE SUNAT', 'Órdenes de Compra', 'Validación Proveedores', 'Control Detracciones'],
       icon: <FiTruck />,
-      color: '#8B5CF6', // Purple
+      color: '#8B5CF6',
       bgColor: 'rgba(139, 92, 246, 0.1)',
-      active: true
+      active: true,
+      ctaText: 'Acceder a Compras'
     },
     {
       id: 'configuracion',
-      title: 'Configuración',
-      description: 'Gestión de usuarios, obras, frentes y especialidades del sistema.',
-      icon: <FiSettings />,
-      color: '#64748B', // Slate
-      bgColor: 'rgba(100, 116, 139, 0.1)',
-      active: isAdmin // Solo admins pueden entrar a configuración global
+      title: 'Configuración Global',
+      badge: isAdmin ? 'Acceso Administrador' : 'Solo Administradores',
+      badgeBg: isAdmin ? 'rgba(37, 99, 235, 0.1)' : '#F1F5F9',
+      badgeColor: isAdmin ? '#2563EB' : '#64748B',
+      badgeBorder: isAdmin ? 'rgba(37, 99, 235, 0.25)' : '#E2E8F0',
+      description: 'Administración de empresas asociadas, gestión de operadores, asignación de permisos multi-tenant y revalidación masiva de reglas contables.',
+      chips: ['Multi-empresa', 'Usuarios & Roles', 'Auditoría RLS', 'Revalidación Reglas'],
+      icon: <FiSliders />,
+      color: '#3B82F6',
+      bgColor: 'rgba(59, 130, 246, 0.1)',
+      active: isAdmin,
+      ctaText: isAdmin ? 'Administrar Sistema' : 'Requiere Rol Admin'
     }
   ];
 
   return (
-    <div className="min-vh-100 py-5 px-4" style={{ backgroundColor: 'var(--bg-primary)' }}>
-      <div className="container-fluid" style={{ maxWidth: '1400px' }}>
-        {/* Cabecera Premium */}
-        <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-5 pb-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div>
-            <div className="d-flex align-items-center mb-2">
-              <h2 className="fw-bold mb-0 me-3" style={{ letterSpacing: '-0.03em', color: 'var(--color-text)', fontSize: '2.4rem' }}>
-                Bienvenido / {userProfile?.nombre || 'Usuario'}
-              </h2>
-              <span 
-                className="badge font-mono fw-bold" 
-                style={{ 
-                  backgroundColor: 'rgba(37, 99, 235, 0.1)', 
-                  color: 'var(--accent-color)',
-                  fontSize: '0.85rem',
-                  padding: '0.4em 0.8em',
-                  borderRadius: '12px',
-                  textTransform: 'uppercase'
-                }}
-              >
-                {userProfile?.rol || 'Rol'}
-              </span>
+    <div className="hub-wrapper">
+      <div className="hub-container">
+        
+        {/* Cabecera Principal / Header */}
+        <header className="hub-header">
+          <div className="hub-brand-group">
+            <div className="hub-brand-logo" title="ConciliaTributo - Pardos Chicken">
+              CT
             </div>
-            
-            {/* Selector de Empresa */}
-            {activeCompany && (
-              <div className="d-flex align-items-center mt-3 p-3 rounded-3 bg-white border border-light" style={{ width: 'fit-content' }}>
-                <span className="text-danger me-2 d-flex align-items-center" style={{ fontSize: '1.2rem' }}>🏢</span>
-                <span className="fw-semibold text-muted me-1" style={{ fontSize: '1.05rem' }}>Empresa:</span>
-                <span className="fw-bold text-dark me-2" style={{ fontSize: '1.05rem' }}>
-                  {activeCompany.razon_social}
-                </span>
-                
-                {isAdmin && companies.length > 1 ? (
-                  <div className="dropdown-premium d-inline-block" ref={dropdownRef}>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-link text-decoration-none p-0 fw-bold"
-                      style={{ fontSize: '0.95rem', color: '#EF4444', outline: 'none' }}
-                      onClick={() => setShowCompanyDropdown(!showCompanyDropdown)}
-                    >
-                      (CAMBIAR) <FiChevronDown className="ms-1" />
-                    </button>
-                    <ul className={`dropdown-premium-menu ${showCompanyDropdown ? 'show' : ''}`} style={{ left: 0, marginTop: '8px' }}>
-                      {companies.map(c => (
-                        <li key={c.id}>
-                          <button
-                            type="button"
-                            className={`dropdown-premium-item text-truncate ${c.id === activeCompany.id ? 'active' : ''}`}
-                            onClick={() => {
-                              if (onChangeCompany) onChangeCompany(c.id);
-                              setShowCompanyDropdown(false);
-                            }}
-                            style={{ fontSize: '0.95rem' }}
-                          >
-                            {c.razon_social}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            )}
+            <div>
+              <h1 className="hub-brand-title">
+                ConciliaTributo
+                <span className="hub-brand-badge">Pardos Chicken</span>
+              </h1>
+              <p className="hub-brand-subtitle">
+                Sistema Integrado de Auditoría y Conciliación Tributaria RVIE • SUNAT • SAP
+              </p>
+            </div>
           </div>
 
-          <button
-            onClick={onLogout}
-            className="btn btn-outline-danger d-flex align-items-center px-4 py-2.5 mt-3 mt-md-0 rounded-3 fw-bold"
-            style={{ transition: 'all 0.2s ease', fontSize: '1rem' }}
-          >
-            <FiLogOut className="me-2" /> Cerrar sesión
-          </button>
+          {/* Perfil del Usuario y Acciones */}
+          <div className="hub-user-group">
+            <div className="hub-user-pill">
+              <div className="hub-user-avatar">
+                {getInitials(userProfile?.nombre)}
+              </div>
+              <div className="hub-user-meta">
+                <span className="hub-user-name">
+                  {userProfile?.nombre || 'Usuario Pardos'}
+                </span>
+                <span className="hub-user-role-badge">
+                  <span className="hub-user-role-dot" />
+                  {userProfile?.rol || 'Operador'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onLogout}
+              className="hub-logout-btn"
+              title="Finalizar sesión en el sistema"
+            >
+              <FiLogOut />
+              <span>Cerrar sesión</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Tarjeta Contextual: Selector Multi-tenant */}
+        <div className="hub-context-card">
+          <div className="hub-company-info">
+            <div className="hub-company-icon-box">
+              <FiBriefcase />
+            </div>
+            <div>
+              <div className="hub-company-tag">Empresa Activa en Sesión</div>
+              <div className="hub-company-name-row">
+                <span className="hub-company-name">
+                  {activeCompany?.razon_social || 'Empresa no asignada'}
+                </span>
+                {activeCompany?.ruc && (
+                  <span className="hub-company-ruc-badge" title="RUC registrado">
+                    RUC: {activeCompany.ruc}
+                  </span>
+                )}
+
+                {/* Dropdown de Cambio de Empresa para Administradores */}
+                {isAdmin && companies.length > 1 && (
+                  <div className="dropdown-premium d-inline-block ms-md-2" ref={dropdownRef}>
+                    <button
+                      type="button"
+                      className="hub-change-company-btn"
+                      onClick={() => setShowCompanyDropdown(!showCompanyDropdown)}
+                      aria-expanded={showCompanyDropdown}
+                    >
+                      <FiRepeat />
+                      <span>Cambiar Empresa</span>
+                      <FiChevronDown />
+                    </button>
+
+                    <ul 
+                      className={`dropdown-premium-menu ${showCompanyDropdown ? 'show' : ''}`}
+                      style={{ minWidth: '320px', left: 0, marginTop: '8px', zIndex: 1050 }}
+                    >
+                      <div className="px-3 py-2 border-bottom text-muted fw-bold" style={{ fontSize: '0.75rem', letterSpacing: '0.05em' }}>
+                        EMPRESAS DISPONIBLES ({companies.length})
+                      </div>
+                      {companies.map((c) => {
+                        const isSelected = c.id === activeCompany?.id;
+                        return (
+                          <li key={c.id}>
+                            <button
+                              type="button"
+                              className={`dropdown-premium-item d-flex align-items-center justify-content-between ${isSelected ? 'active' : ''}`}
+                              onClick={() => {
+                                if (onChangeCompany) onChangeCompany(c.id);
+                                setShowCompanyDropdown(false);
+                              }}
+                            >
+                              <div className="text-truncate me-2">
+                                <div className="fw-semibold text-truncate">{c.razon_social}</div>
+                                {c.ruc && (
+                                  <small className="text-muted font-mono" style={{ fontSize: '0.75rem' }}>
+                                    RUC: {c.ruc}
+                                  </small>
+                                )}
+                              </div>
+                              {isSelected && <FiCheck className="text-primary flex-shrink-0" />}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="hub-context-meta">
+            <div className="hub-meta-item" title="Fecha del sistema">
+              <FiCalendar />
+              <span>{formattedDate}</span>
+            </div>
+          </div>
         </div>
 
-        {/* Grid de Tarjetas (Cards) */}
-        <div className="row g-4 justify-content-center">
-          {cards.map(card => {
+        {/* Sección de Selección de Módulo */}
+        <div className="hub-section-header">
+          <h2 className="hub-section-title">
+            {greeting}, {userProfile?.nombre?.split(' ')[0] || 'Administrador'}
+          </h2>
+          <p className="hub-section-desc">
+            Selecciona el entorno de trabajo para iniciar la conciliación o administración de comprobantes:
+          </p>
+        </div>
+
+        {/* Grid de Tarjetas de Módulos (Full Width) */}
+        <div className="hub-cards-grid">
+          {cards.map((card) => {
             const isClickable = card.active;
             return (
-              <div key={card.id} className="col-12 col-md-6 col-lg-4 d-flex justify-content-center">
+              <div
+                key={card.id}
+                role="button"
+                tabIndex={isClickable ? 0 : -1}
+                aria-disabled={!isClickable}
+                onClick={() => isClickable && onSelectModule(card.id)}
+                onKeyDown={(e) => {
+                  if (isClickable && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onSelectModule(card.id);
+                  }
+                }}
+                className={`hub-card ${isClickable ? 'hub-card-active' : 'hub-card-disabled'}`}
+              >
+                {/* Barra de Acento Superior */}
                 <div 
-                  onClick={() => isClickable && onSelectModule(card.id)}
-                  className={`card-premium h-100 d-flex flex-column align-items-center justify-content-between p-5 text-center ${isClickable ? 'card-clickable' : ''}`}
-                  style={{
-                    opacity: isClickable ? 1 : 0.6,
-                    cursor: isClickable ? 'pointer' : 'default',
-                    borderTop: isClickable ? `4px solid ${card.color}` : '1px solid var(--border-color)',
-                    transition: 'all 0.2s ease',
-                    position: 'relative',
-                    minHeight: '280px',
-                    width: '100%',
-                    maxWidth: '360px'
-                  }}
-                >
-                  <div className="d-flex flex-column align-items-center">
-                    {/* Icono con background circular */}
-                    <div 
-                      className="d-flex align-items-center justify-content-center rounded-circle mb-4"
+                  className="hub-card-accent-bar" 
+                  style={{ backgroundColor: card.color }} 
+                />
+
+                <div>
+                  {/* Fila Superior: Badge del Módulo */}
+                  <div className="hub-card-top-row">
+                    <span 
+                      className="hub-card-status-badge"
                       style={{ 
-                        width: '80px', 
-                        height: '80px', 
-                        backgroundColor: card.bgColor,
-                        color: card.color,
-                        fontSize: '2.4rem'
+                        backgroundColor: card.badgeBg,
+                        color: card.badgeColor,
+                        border: `1px solid ${card.badgeBorder}`
                       }}
                     >
-                      {card.icon}
-                    </div>
-
-                    <h4 className="fw-bold mb-0 text-dark" style={{ fontSize: '2rem' }}>
-                      {card.title}
-                    </h4>
+                      {card.badge}
+                    </span>
                   </div>
 
-                  <div className="d-flex justify-content-center align-items-center mt-auto pt-4">
-                    {card.active ? (
-                      <span className="fw-bold text-primary" style={{ fontSize: '1.25rem' }}>
-                        Ingresar &rarr;
-                      </span>
-                    ) : (
-                      <span 
-                        className="badge font-mono" 
-                        style={{ 
-                          backgroundColor: '#F1F5F9', 
-                          color: '#64748B', 
-                          fontSize: '0.75rem',
-                          padding: '0.4em 0.8em',
-                          borderRadius: '8px'
-                        }}
-                      >
-                        Próximamente
-                      </span>
-                    )}
+                  {/* Icono con Contenedor Estilizado */}
+                  <div 
+                    className="hub-card-icon-wrapper"
+                    style={{ 
+                      backgroundColor: card.bgColor, 
+                      color: card.color 
+                    }}
+                  >
+                    {card.icon}
                   </div>
+
+                  {/* Título y Descripción Rica */}
+                  <h3 className="hub-card-title">
+                    {card.title}
+                  </h3>
+                  <p className="hub-card-description">
+                    {card.description}
+                  </p>
+
+                  {/* Tags / Chips de Capacidades */}
+                  <div className="hub-card-chips">
+                    {card.chips.map((chip, idx) => (
+                      <span key={idx} className="hub-card-chip">
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Footer de Tarjeta con Acción Interactiva */}
+                <div className="hub-card-footer">
+                  {isClickable ? (
+                    <span 
+                      className="hub-card-cta-btn" 
+                      style={{ color: card.color }}
+                    >
+                      {card.ctaText}
+                      <FiArrowRight />
+                    </span>
+                  ) : (
+                    <span 
+                      className="text-muted d-inline-flex align-items-center gap-1"
+                      style={{ fontSize: '0.85rem' }}
+                    >
+                      <FiLock style={{ fontSize: '0.85rem' }} />
+                      {card.ctaText}
+                    </span>
+                  )}
+
+                  <span 
+                    className="text-muted" 
+                    style={{ fontSize: '0.8rem', fontWeight: 500 }}
+                  >
+                    {isClickable ? 'Disponible' : 'Bloqueado'}
+                  </span>
                 </div>
               </div>
             );
           })}
         </div>
+
       </div>
     </div>
   );
