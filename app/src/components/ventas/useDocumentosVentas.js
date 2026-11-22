@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../utils/supabaseClient';
 import { desdeFilaBD } from '../../utils/ventas/persistencia';
 import { getNetworkProfile } from '../../utils/networkProfile';
+import { idbGetQuery, idbSetQuery } from '../../utils/queryPersister';
 
 export const COLUMNAS_DETALLE_VENTAS = [
   'id',
@@ -45,6 +46,14 @@ export function useDocumentosVentas(periodId, enabled = true) {
     queryKey: ['ventasDocumentos', periodId],
     queryFn: async () => {
       if (!periodId) return [];
+
+      // 0. Verificar primero en caché persistente IndexedDB (restauración en ~20ms tras F5)
+      const cacheKeyHash = JSON.stringify(['ventasDocumentos', periodId]);
+      const cachedDocs = await idbGetQuery(cacheKeyHash);
+      if (Array.isArray(cachedDocs) && cachedDocs.length > 0) {
+        return cachedDocs;
+      }
+
       const net = getNetworkProfile();
       const pageSize = net.recommendedBatchSize || 1000;
 
@@ -90,9 +99,12 @@ export function useDocumentosVentas(periodId, enabled = true) {
         }
       }
 
-      return all.map(desdeFilaBD);
+      const docs = all.map(desdeFilaBD);
+      idbSetQuery(cacheKeyHash, ['ventasDocumentos', periodId], docs);
+      return docs;
     },
     enabled: !!periodId && enabled,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
   });
 }

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, memo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { checkRateLimit, logSuspiciousActivity } from '../utils/security';
+import { clearPersistedQueryCache } from '../utils/queryPersister';
 import { SkeletonTable } from './SkeletonLoader';
 import { FiClock, FiUser, FiArrowRight, FiTrash2, FiRefreshCw } from 'react-icons/fi';
 
@@ -87,6 +88,7 @@ const HistorialCargas = memo(function HistorialCargas({
 
       if (error) throw error;
 
+      await clearPersistedQueryCache();
       refetch();
       if (onDeletePeriod) {
         onDeletePeriod(periodoId);
@@ -113,6 +115,7 @@ const HistorialCargas = memo(function HistorialCargas({
 
       if (error) throw error;
 
+      await clearPersistedQueryCache();
       await refetch();
       if (onDeletePeriod) {
         onDeletePeriod(null);

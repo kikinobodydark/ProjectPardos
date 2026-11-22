@@ -7,7 +7,7 @@ import {
   checkRateLimit,
   validateUploadedFile,
 } from '../utils/security';
-import { runCpuTaskInWorker, executeParallelBatches } from '../utils/jobQueue';
+import { runCpuTaskInWorker, serializeDocsInWorkerPool, executeParallelBatches } from '../utils/jobQueue';
 import { useNetworkProfile } from '../utils/networkProfile';
 import {
   FiUpload, FiCheck, FiPlay, FiAlertTriangle, FiXCircle,
@@ -35,7 +35,7 @@ const CargaArchivos = memo(function CargaArchivos({
   const [sireFile, setSireFile] = useState(null);
   const [cortesiasFile, setCortesiasFile] = useState(null);
 
-  // Resultados de validación de lectura previa (Ventas - procesados en Web Worker)
+  // Resultados de validación de lectura previa (Ventas - procesados en Pool de Web Workers)
   const [lecturaSap, setLecturaSap] = useState(null);
   const [lecturaSunat, setLecturaSunat] = useState(null);
   const [lecturaCortesias, setLecturaCortesias] = useState(null);
@@ -43,13 +43,13 @@ const CargaArchivos = memo(function CargaArchivos({
 
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
+  const [progressPct, setProgressPct] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [showPeriodSuggestions, setShowPeriodSuggestions] = useState(false);
   const [showDiaSuggestions, setShowDiaSuggestions] = useState(false);
   const [showVersionSuggestions, setShowVersionSuggestions] = useState(false);
 
-  // Reutiliza la lista `periods` ya consultada por App.jsx (evita llamada duplicada a periodos_carga)
   const recentLoads = periods.slice(0, 10);
 
   const readFileAsArrayBuffer = (file) =>
@@ -60,7 +60,6 @@ const CargaArchivos = memo(function CargaArchivos({
       reader.readAsArrayBuffer(file);
     });
 
-  // Carga dinámica (code-splitting) de XLSX únicamente cuando se sube un archivo Excel de cortesías
   const readExcelFile = async (file) => {
     const buffer = await readFileAsArrayBuffer(file);
     const XLSX = await import('xlsx');
@@ -71,7 +70,7 @@ const CargaArchivos = memo(function CargaArchivos({
     return XLSX.utils.sheet_to_json(sheet, { raw: false, defval: '' });
   };
 
-  // Lectura y validación en Web Worker al seleccionar archivo en Ventas
+  // Lectura y validación inmediata en Web Worker con Transferable ArrayBuffer (zero-copy)
   const handleFileChange = async (e, type) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -96,13 +95,13 @@ const CargaArchivos = memo(function CargaArchivos({
       if (type === 'sap') {
         setSapFile(file);
         const buffer = await readFileAsArrayBuffer(file);
-        const res = await runCpuTaskInWorker('PARSE_SAP_VENTAS', { buffer });
+        const res = await runCpuTaskInWorker('PARSE_SAP_VENTAS', { buffer }, [buffer]);
         setLecturaSap(res);
         if (res.periodoDetectado && !periodo) setPeriodo(res.periodoDetectado);
       } else if (type === 'sunat') {
         setSunatFile(file);
         const buffer = await readFileAsArrayBuffer(file);
-        const res = await runCpuTaskInWorker('PARSE_SUNAT_VENTAS', { buffer });
+        const res = await runCpuTaskInWorker('PARSE_SUNAT_VENTAS', { buffer }, [buffer]);
         if (activeCompany?.ruc && res.rucDetectado && res.rucDetectado !== activeCompany.ruc) {
           res.advertencias.push(
             `El RUC del archivo (${res.rucDetectado}) difiere de la empresa activa (${activeCompany.ruc}).`
@@ -205,52 +204,76 @@ const CargaArchivos = memo(function CargaArchivos({
     }
 
     setLoading(true);
-    const chunkSize = networkProfile.recommendedBatchSize || 1000;
+    setProgressPct(5);
+    const chunkSize = networkProfile.recommendedBatchSize || 1500;
     const concurrency = networkProfile.recommendedConcurrency || 4;
 
     try {
       if (esVentas) {
-        setStatusText('Creando período y ejecutando motor de validación en Web Worker...');
+        setStatusText('Conciliando comprobantes y creando período en paralelo...');
 
-        const { data: periodData, error: periodErr } = await supabase
-          .from('periodos_carga')
-          .insert({
-            empresa_id: activeCompany.id,
-            usuario_id: userProfile.id,
-            periodo: periodoFinal,
-            dia: String(diaNum).padStart(2, '0'),
-            version: versionNum,
-            estado: 'procesando',
-            modulo: activeModule,
-          })
-          .select('id')
-          .single();
+        // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera del período en Supabase
+        const [conciliacionRes, periodRes] = await Promise.all([
+          runCpuTaskInWorker('CONCILIAR_VENTAS', {
+            sap: lecturaSap.registros,
+            sunat: lecturaSunat.registros,
+            cortesias: lecturaCortesias?.registros || null,
+          }),
+          supabase
+            .from('periodos_carga')
+            .insert({
+              empresa_id: activeCompany.id,
+              usuario_id: userProfile.id,
+              periodo: periodoFinal,
+              dia: String(diaNum).padStart(2, '0'),
+              version: versionNum,
+              estado: 'procesando',
+              modulo: activeModule,
+            })
+            .select('id')
+            .single(),
+        ]);
 
-        if (periodErr) throw periodErr;
-        const periodId = periodData.id;
+        if (periodRes.error) throw periodRes.error;
+        const periodId = periodRes.data.id;
+        const { docs } = conciliacionRes;
+        setProgressPct(25);
 
-        const { docs, filasParaInsertar } = await runCpuTaskInWorker('CONCILIAR_VENTAS', {
-          sap: lecturaSap.registros,
-          sunat: lecturaSunat.registros,
-          cortesias: lecturaCortesias?.registros || null,
-          metaBD: { periodoId, empresaId: activeCompany.id, ruc: activeCompany.ruc },
-        });
+        // 2. Dividir la serialización de las filas (`aFilaBD`) entre el Pool de Web Workers en paralelo
+        setStatusText(`Preparando ${docs.length.toLocaleString('es-PE')} comprobantes en paralelo (Pool de Workers)...`);
+        const serializedChunks = await serializeDocsInWorkerPool(
+          docs,
+          { periodoId, empresaId: activeCompany.id, ruc: activeCompany.ruc },
+          chunkSize
+        );
+        setProgressPct(40);
 
-        setStatusText(`Guardando ${filasParaInsertar.length.toLocaleString('es-PE')} registros en lotes paralelos...`);
+        // 3. Insertar todos los lotes en paralelo usando la RPC masiva `insertar_lote_ventas`
+        let insertedCount = 0;
+        setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase...`);
         try {
           await executeParallelBatches(
-            filasParaInsertar,
-            chunkSize,
-            async (chunk) => {
-              const { error: insertErr } = await supabase.from('detalle_ventas').insert(chunk);
-              if (insertErr) throw insertErr;
+            serializedChunks,
+            1,
+            async ([chunk]) => {
+              const { error: rpcErr } = await supabase.rpc('insertar_lote_ventas', {
+                p_periodo_id: periodId,
+                p_empresa_id: activeCompany.id,
+                p_filas: chunk,
+              });
+              if (rpcErr) {
+                // Fallback a insert directo si la RPC no estuviera disponible
+                const { error: insertErr } = await supabase.from('detalle_ventas').insert(chunk);
+                if (insertErr) throw insertErr;
+              }
+              insertedCount += chunk.length;
+              const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
+              setProgressPct(pct);
+              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
             },
             {
               concurrency,
-              label: 'InsertDetalleVentas',
-              onProgress: (done, total) => {
-                setStatusText(`Guardando en Supabase (${done.toLocaleString('es-PE')} / ${total.toLocaleString('es-PE')})...`);
-              },
+              label: 'BulkRpcVentas',
             }
           );
         } catch (insertErr) {
@@ -259,6 +282,7 @@ const CargaArchivos = memo(function CargaArchivos({
         }
 
         await supabase.from('periodos_carga').update({ estado: 'completado' }).eq('id', periodId);
+        setProgressPct(100);
         queryClient.setQueryData(['ventasDocumentos', periodId], docs);
 
         setSuccessMsg(
@@ -273,87 +297,80 @@ const CargaArchivos = memo(function CargaArchivos({
 
         onProcessComplete(periodId, `${periodoFinal} (Día: ${String(diaNum).padStart(2, '0')}, v${versionNum})`);
       } else {
-        // Flujo de Compras optimizado: lectura en paralelo + conciliación en Worker + inserción paralela en cola
-        setStatusText('Leyendo los 3 archivos en paralelo...');
+        // Flujo de Compras:
+        // 1. Leer los 3 archivos y parsear CADA UNO en un Web Worker distinto en paralelo + crear período simultáneamente
+        setStatusText('Leyendo y parseando los 3 archivos en Workers paralelos...');
         const [sunatBuffer, sapBuffer, sireBuffer] = await Promise.all([
           readFileAsArrayBuffer(sunatFile),
           readFileAsArrayBuffer(sapFile),
           readFileAsArrayBuffer(sireFile),
         ]);
+        setProgressPct(15);
 
-        setStatusText('Conciliando y aplicando reglas tributarias en Web Worker...');
-        const { reconciledList } = await runCpuTaskInWorker('CONCILIAR_COMPRAS', {
-          sunatBuffer,
-          sapBuffer,
-          sireBuffer,
+        const [sunatData, sapData, sireData, periodRes] = await Promise.all([
+          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sunat', buffer: sunatBuffer }, [sunatBuffer]),
+          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sap', buffer: sapBuffer }, [sapBuffer]),
+          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sire', buffer: sireBuffer }, [sireBuffer]),
+          supabase
+            .from('periodos_carga')
+            .insert({
+              empresa_id: activeCompany.id,
+              usuario_id: userProfile.id,
+              periodo: periodoFinal,
+              dia: dia,
+              version: versionNum,
+              estado: 'procesando',
+              modulo: activeModule,
+            })
+            .select('id')
+            .single(),
+        ]);
+
+        if (periodRes.error) throw periodRes.error;
+        const periodId = periodRes.data.id;
+
+        if (!sunatData.length || !sapData.length || !sireData.length) {
+          await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
+          throw new Error('Uno de los archivos (SAP, SUNAT o SIRE) está vacío o no coincide con el formato.');
+        }
+        setProgressPct(30);
+
+        setStatusText('Conciliando y preparando lotes en Web Worker...');
+        const { totalCount, mappedRows } = await runCpuTaskInWorker('CONCILIAR_COMPRAS_PARSED', {
+          sapData,
+          sunatData,
+          sireData,
           rucEmpresa: activeCompany.ruc,
           modulo: activeModule,
+          periodId,
+          empresaId: activeCompany.id,
         });
+        setProgressPct(45);
 
-        const { data: periodData, error: periodErr } = await supabase
-          .from('periodos_carga')
-          .insert({
-            empresa_id: activeCompany.id,
-            usuario_id: userProfile.id,
-            periodo: periodoFinal,
-            dia: dia,
-            version: versionNum,
-            estado: 'procesando',
-            modulo: activeModule,
-          })
-          .select('id')
-          .single();
-
-        if (periodErr) throw periodErr;
-        const periodId = periodData.id;
-
-        const mappedRows = reconciledList.map((r) => ({
-          periodo_id: periodId,
-          empresa_id: activeCompany.id,
-          car_sunat: r.car_sunat,
-          ruc_proveedor: r.ruc_proveedor,
-          serie: r.serie,
-          correlativo: r.correlativo,
-          fecha_emision: r.fecha_emision,
-          tipo_doc_pago: r.tipo_doc_pago,
-          tipo_identidad_sap: r.tipo_identidad_sap,
-          nro_identidad_sap: r.nro_identidad_sap,
-          nombre_sap: r.nombre_sap,
-          base_sap: r.base_sap,
-          igv_sap: r.igv_sap,
-          exonerado_sap: r.exonerado_sap || 0,
-          inafecto_sap: r.inafecto_sap || 0,
-          otros_sap: r.otros_sap,
-          total_sap: r.total_sap,
-          tipo_identidad_sunat: r.tipo_identidad_sunat,
-          nro_identidad_sunat: r.nro_identidad_sunat,
-          nombre_sunat: r.nombre_sunat,
-          base_sunat: r.base_sunat,
-          igv_sunat: r.igv_sunat,
-          exonerado_sunat: r.exonerado_sunat || 0,
-          inafecto_sunat: r.inafecto_sunat || 0,
-          otros_sunat: r.otros_sunat,
-          total_sunat: r.total_sunat,
-          mensaje_sire: r.mensaje_sire,
-          estado_validacion: r.estado_validacion,
-          errores_json: r.errores_json,
-        }));
-
-        setStatusText('Cargando registros unificados a Supabase en lotes paralelos...');
+        let insertedCount = 0;
+        setStatusText(`Guardando ${totalCount.toLocaleString('es-PE')} registros en lotes paralelos...`);
         try {
           await executeParallelBatches(
             mappedRows,
             chunkSize,
             async (chunk) => {
-              const { error: insertErr } = await supabase.from('detalle_compras').insert(chunk);
-              if (insertErr) throw insertErr;
+              const { error: rpcErr } = await supabase.rpc('insertar_lote_compras', {
+                p_periodo_id: periodId,
+                p_empresa_id: activeCompany.id,
+                p_filas: chunk,
+              });
+              if (rpcErr) {
+                const { error: insertErr } = await supabase.from('detalle_compras').insert(chunk);
+                if (insertErr) throw insertErr;
+              }
+              insertedCount += chunk.length;
+              const pct = Math.min(95, 45 + Math.round((insertedCount / Math.max(1, totalCount)) * 50));
+              setProgressPct(pct);
+              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${totalCount.toLocaleString('es-PE')})...`);
             },
             {
               concurrency,
-              label: 'InsertDetalleCompras',
-              onProgress: (done, total) => {
-                setStatusText(`Guardando en Supabase (${done.toLocaleString('es-PE')} / ${total.toLocaleString('es-PE')})...`);
-              },
+              label: 'BulkRpcCompras',
             }
           );
         } catch (insertErr) {
@@ -362,7 +379,8 @@ const CargaArchivos = memo(function CargaArchivos({
         }
 
         await supabase.from('periodos_carga').update({ estado: 'completado' }).eq('id', periodId);
-        setSuccessMsg(`¡Proceso exitoso! Se cargaron y conciliaron ${reconciledList.length} registros del período ${periodoFinal}.`);
+        setProgressPct(100);
+        setSuccessMsg(`¡Proceso exitoso! Se cargaron y conciliaron ${totalCount} registros del período ${periodoFinal}.`);
         setSapFile(null);
         setSunatFile(null);
         setSireFile(null);
@@ -374,6 +392,7 @@ const CargaArchivos = memo(function CargaArchivos({
     } finally {
       setLoading(false);
       setStatusText('');
+      setProgressPct(0);
     }
   };
 
@@ -852,16 +871,32 @@ const CargaArchivos = memo(function CargaArchivos({
           </div>
         )}
 
+        {loading && (
+          <div className="mb-3 animate-fade-in">
+            <div className="d-flex justify-content-between align-items-center mb-1" style={{ fontSize: '0.82rem' }}>
+              <span className="text-primary fw-semibold">{statusText}</span>
+              <span className="font-mono fw-bold text-primary">{progressPct}%</span>
+            </div>
+            <div className="progress" style={{ height: '7px' }}>
+              <div
+                className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                role="progressbar"
+                style={{ width: `${progressPct}%`, transition: 'width 0.2s ease' }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
           <span className="text-muted" style={{ fontSize: '0.85rem' }}>
-            {loading ? (
-              <span className="text-primary fw-semibold">{statusText}</span>
-            ) : esVentas ? (
-              <span className="d-flex align-items-center gap-1">
-                <FiFileText /> Los archivos originales no se modifican. El botón se habilita al cargar los dos TXT obligatorios.
-              </span>
-            ) : (
-              'Los archivos son procesados en el navegador de manera segura.'
+            {!loading && (
+              esVentas ? (
+                <span className="d-flex align-items-center gap-1">
+                  <FiFileText /> Los archivos originales no se modifican. El botón se habilita al cargar los dos TXT obligatorios.
+                </span>
+              ) : (
+                'Los archivos son procesados en el navegador de manera segura.'
+              )
             )}
           </span>
           <button

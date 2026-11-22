@@ -104,18 +104,24 @@ const FilaDocumentoCompra = memo(function FilaDocumentoCompra({
         </>
       ) : (
         <>
-          <td className="text-end font-mono">{Number(r.base_sap || 0).toFixed(2)}</td>
-          <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
+          <td className={`text-end font-mono col-group-bi col-pair-start ${diffBase ? 'cell-mismatch' : ''}`}>
+            {Number(r.base_sap || 0).toFixed(2)}
+          </td>
+          <td className={`text-end font-mono col-group-bi col-pair-end ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
             {Number(r.base_sunat || 0).toFixed(2)}
           </td>
 
-          <td className="text-end font-mono">{Number(r.igv_sap || 0).toFixed(2)}</td>
-          <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
+          <td className={`text-end font-mono col-group-igv col-pair-start ${diffIgv ? 'cell-mismatch' : ''}`}>
+            {Number(r.igv_sap || 0).toFixed(2)}
+          </td>
+          <td className={`text-end font-mono col-group-igv col-pair-end ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
             {Number(r.igv_sunat || 0).toFixed(2)}
           </td>
 
-          <td className="text-end font-mono">{Number(r.total_sap || 0).toFixed(2)}</td>
-          <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
+          <td className={`text-end font-mono fw-semibold col-group-total col-pair-start ${diffTotal ? 'cell-mismatch' : ''}`}>
+            {Number(r.total_sap || 0).toFixed(2)}
+          </td>
+          <td className={`text-end font-mono fw-semibold col-group-total col-pair-end ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
             {Number(r.total_sunat || 0).toFixed(2)}
           </td>
         </>
@@ -893,12 +899,12 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
                   </>
                 ) : (
                   <>
-                    <th className="text-end">BASE SAP</th>
-                    <th className="text-end">BASE SUNAT</th>
-                    <th className="text-end">IGV SAP</th>
-                    <th className="text-end">IGV SUNAT</th>
-                    <th className="text-end">TOTAL SAP</th>
-                    <th className="text-end">TOTAL SUNAT</th>
+                    <th className="text-end col-group-bi col-pair-start">BASE SAP</th>
+                    <th className="text-end col-group-bi col-pair-end">BASE SUNAT</th>
+                    <th className="text-end col-group-igv col-pair-start">IGV SAP</th>
+                    <th className="text-end col-group-igv col-pair-end">IGV SUNAT</th>
+                    <th className="text-end col-group-total col-pair-start">TOTAL SAP</th>
+                    <th className="text-end col-group-total col-pair-end">TOTAL SUNAT</th>
                   </>
                 )}
                 <th>SIRE LOG</th>

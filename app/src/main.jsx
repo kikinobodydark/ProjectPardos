@@ -5,19 +5,25 @@ import './index.css';
 import App from './App.jsx';
 import { initWebVitalsObserver } from './utils/telemetry.js';
 import { runAfterPageIdle, loadThirdPartyStylesheet } from './utils/thirdPartyLoader.js';
+import { setupQueryPersistence } from './utils/queryPersister.js';
 
-// Configuración de caché inteligente en cliente para evitar llamadas duplicadas
+// Configuración de TanStack React Query con persistencia en sessionStorage + IndexedDB
+// para que al recargar la página (F5) los datos se restauren instantáneamente sin re-descargar
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000, // 5 minutos sin re-consultar datos frescos
-      gcTime: 15 * 60 * 1000,   // 15 minutos en memoria caché
+      staleTime: 30 * 60 * 1000, // 30 minutos de frescura (no vuelve a pedir a red al recargar o cambiar de pestaña)
+      gcTime: 60 * 60 * 1000,    // 60 minutos en caché
       refetchOnWindowFocus: false,
       refetchOnMount: false,
+      refetchOnReconnect: false,
       retry: 1,
     },
   },
 });
+
+// Hidratar y sincronizar caché persistente (sessionStorage + IndexedDB)
+setupQueryPersistence(queryClient);
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -27,7 +33,6 @@ createRoot(document.getElementById('root')).render(
   </StrictMode>
 );
 
-// Inicializar observadores OpenTelemetry y cargar recursos externos/Service Worker después de la página
 runAfterPageIdle(() => {
   initWebVitalsObserver();
   loadThirdPartyStylesheet('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');

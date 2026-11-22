@@ -74,24 +74,32 @@ const FilaDocumentoVenta = memo(function FilaDocumentoVenta({
         {d.en_sunat ? (d.sunat.nombre || '—') : <span className="text-muted">(Sin registro SUNAT)</span>}
       </td>
 
-      {/* Importes (10 - 18) */}
-      <td className="text-end font-mono">{d.en_sap ? formatoMonto(d.sap.base) : '—'}</td>
-      <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
+      {/* Importes (10 - 18) con marcado visual por par SAP vs SUNAT */}
+      <td className={`text-end font-mono col-group-bi col-pair-start ${diffBase ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.base) : '—'}
+      </td>
+      <td className={`text-end font-mono col-group-bi col-pair-end ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
         {d.en_sunat ? formatoMonto(d.sunat.base) : '—'}
       </td>
 
-      <td className="text-end font-mono">{d.en_sap ? formatoMonto(d.sap.igv) : '—'}</td>
-      <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
+      <td className={`text-end font-mono col-group-igv col-pair-start ${diffIgv ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.igv) : '—'}
+      </td>
+      <td className={`text-end font-mono col-group-igv col-pair-end ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
         {d.en_sunat ? formatoMonto(d.sunat.igv) : '—'}
       </td>
 
-      <td className="text-end font-mono">{d.en_sap ? formatoMonto(d.sap.otros) : '—'}</td>
-      <td className={`text-end font-mono ${diffOtros ? 'cell-mismatch' : 'cell-match'}`}>
+      <td className={`text-end font-mono col-group-otros col-pair-start ${diffOtros ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.otros) : '—'}
+      </td>
+      <td className={`text-end font-mono col-group-otros col-pair-end ${diffOtros ? 'cell-mismatch' : 'cell-match'}`}>
         {d.en_sunat ? formatoMonto(d.sunat.otros) : '—'}
       </td>
 
-      <td className="text-end font-mono fw-semibold">{d.en_sap ? formatoMonto(d.sap.total) : '—'}</td>
-      <td className={`text-end font-mono fw-semibold ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
+      <td className={`text-end font-mono fw-semibold col-group-total col-pair-start ${diffTotal ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.total) : '—'}
+      </td>
+      <td className={`text-end font-mono fw-semibold col-group-total col-pair-end ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
         {d.en_sunat ? formatoMonto(d.sunat.total) : '—'}
       </td>
 
@@ -166,6 +174,7 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
   const [reporteInicial, setReporteInicial] = useState('resumen');
   const [mostrarMenuExportar, setMostrarMenuExportar] = useState(false);
   const [docSeleccionado, setDocSeleccionado] = useState(null);
+  const [ocultarSinIncidencias, setOcultarSinIncidencias] = useState(false);
 
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState(() => networkProfile.recommendedPageSize || 20);
@@ -315,109 +324,137 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
 
   return (
     <div className="animate-fade-in">
-      {/* SECCIÓN 9: Panel de Filtros por Grupo de Errores y Observaciones (multi-selección) */}
-      <div className="card-premium mb-3 p-3">
+      {/* SECCIÓN 9: Panel de Filtros por Grupo de Errores y Observaciones (Diseño UI/UX Pro Max) */}
+      <div className="incidence-filter-panel mb-3">
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
           <div className="d-flex align-items-center gap-2">
             <FiFilter className="text-primary" />
-            <span className="fw-bold" style={{ fontSize: '0.88rem' }}>
-              Filtro por Grupo de Errores y Observaciones (selección individual o múltiple)
+            <span className="fw-bold" style={{ fontSize: '0.88rem', color: 'var(--color-text)' }}>
+              Filtro Rápido por Código de Incidencia
+            </span>
+            <span className="text-muted" style={{ fontSize: '0.76rem' }}>
+              (selección individual o múltiple)
             </span>
           </div>
-          {filtros.codigos.length > 0 && (
-            <button
-              type="button"
-              className="btn btn-sm btn-link p-0 text-decoration-none fw-semibold"
-              style={{ fontSize: '0.78rem' }}
-              onClick={() => actualizarFiltro({ codigos: [] })}
-            >
-              Limpiar selección ({filtros.codigos.length})
-            </button>
-          )}
+          <div className="d-flex align-items-center gap-3">
+            <div className="form-check form-switch mb-0 d-flex align-items-center gap-1.5">
+              <input
+                id="switch-ocultar-ceros"
+                type="checkbox"
+                className="form-check-input m-0"
+                style={{ cursor: 'pointer' }}
+                checked={ocultarSinIncidencias}
+                onChange={(e) => setOcultarSinIncidencias(e.target.checked)}
+              />
+              <label
+                htmlFor="switch-ocultar-ceros"
+                className="form-check-label text-muted fw-semibold"
+                style={{ fontSize: '0.76rem', cursor: 'pointer', userSelect: 'none' }}
+              >
+                Solo con hallazgos (&gt; 0)
+              </label>
+            </div>
+            {filtros.codigos.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-sm btn-link p-0 text-decoration-none fw-semibold"
+                style={{ fontSize: '0.78rem' }}
+                onClick={() => actualizarFiltro({ codigos: [] })}
+              >
+                Limpiar selección ({filtros.codigos.length})
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="row g-2">
+          {/* Columna Errores */}
           <div className="col-lg-6">
-            <div className="small fw-bold text-danger mb-1" style={{ fontSize: '0.73rem', letterSpacing: '0.04em' }}>
-              GRUPOS DE ERROR (INCUMPLIMIENTOS PRINCIPALES)
-            </div>
-            <div className="d-flex flex-wrap gap-1.5" style={{ gap: '6px' }}>
-              {INCIDENCIAS.filter((i) => i.tipo === 'ERROR').map((inc) => {
-                const count = conteoPorCodigoBase[inc.codigo] || 0;
-                const activo = filtros.codigos.includes(inc.codigo);
-                return (
-                  <button
-                    key={inc.codigo}
-                    type="button"
-                    onClick={() => toggleCodigoIncidencia(inc.codigo)}
-                    className="btn btn-sm d-inline-flex align-items-center rounded-2"
-                    style={{
-                      fontSize: '0.75rem',
-                      padding: '0.3rem 0.6rem',
-                      gap: '0.38rem',
-                      backgroundColor: activo ? '#DC2626' : 'rgba(220, 38, 38, 0.06)',
-                      color: activo ? '#FFFFFF' : '#B91C1C',
-                      border: `1px solid ${activo ? '#DC2626' : 'rgba(220, 38, 38, 0.22)'}`,
-                      opacity: count === 0 && !activo ? 0.6 : 1,
-                    }}
-                    title={`${inc.codigo}: ${inc.descripcion} (${count} documentos)`}
-                  >
-                    <strong className="font-mono">{inc.codigo}</strong>
-                    <span>{inc.corto}</span>
-                    <span
-                      className="badge rounded-pill font-mono ms-1"
-                      style={{
-                        backgroundColor: activo ? 'rgba(255,255,255,0.22)' : 'rgba(220, 38, 38, 0.14)',
-                        color: activo ? '#FFFFFF' : '#991B1B',
-                      }}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="incidence-section-box">
+              <div className="incidence-section-header">
+                <span className="fw-bold text-danger" style={{ fontSize: '0.72rem', letterSpacing: '0.04em' }}>
+                  GRUPOS DE ERROR (INCUMPLIMIENTOS PRINCIPALES)
+                </span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.7rem' }}>
+                  {INCIDENCIAS.filter((i) => i.tipo === 'ERROR').reduce((acc, i) => acc + (conteoPorCodigoBase[i.codigo] || 0), 0).toLocaleString('es-PE')} hallazgos
+                </span>
+              </div>
+              <div className="incidence-grid">
+                {INCIDENCIAS.filter((i) => i.tipo === 'ERROR')
+                  .filter((inc) => !ocultarSinIncidencias || (conteoPorCodigoBase[inc.codigo] || 0) > 0 || filtros.codigos.includes(inc.codigo))
+                  .map((inc) => {
+                    const count = conteoPorCodigoBase[inc.codigo] || 0;
+                    const activo = filtros.codigos.includes(inc.codigo);
+                    const hasItems = count > 0;
+                    const chipClass = [
+                      'incidence-chip',
+                      activo ? 'is-active-error' : hasItems ? 'has-items-error' : 'is-empty',
+                    ].join(' ');
+                    return (
+                      <button
+                        key={inc.codigo}
+                        type="button"
+                        onClick={() => toggleCodigoIncidencia(inc.codigo)}
+                        className={chipClass}
+                        aria-pressed={activo}
+                        title={`${inc.codigo}: ${inc.descripcion} (${count.toLocaleString('es-PE')} documentos)`}
+                      >
+                        <span className={`incidence-code-badge ${hasItems || activo ? 'tone-error' : 'tone-muted'}`}>
+                          {inc.codigo}
+                        </span>
+                        <span className="incidence-label">{inc.corto}</span>
+                        <span className={`incidence-count ${hasItems || activo ? 'count-error' : 'count-zero'}`}>
+                          {count.toLocaleString('es-PE')}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
           </div>
 
+          {/* Columna Observaciones */}
           <div className="col-lg-6">
-            <div className="small fw-bold text-warning mb-1" style={{ fontSize: '0.73rem', letterSpacing: '0.04em' }}>
-              GRUPOS DE OBSERVACIÓN (DIFERENCIAS PARA REVISIÓN)
-            </div>
-            <div className="d-flex flex-wrap gap-1.5" style={{ gap: '6px' }}>
-              {INCIDENCIAS.filter((i) => i.tipo === 'OBS').map((inc) => {
-                const count = conteoPorCodigoBase[inc.codigo] || 0;
-                const activo = filtros.codigos.includes(inc.codigo);
-                return (
-                  <button
-                    key={inc.codigo}
-                    type="button"
-                    onClick={() => toggleCodigoIncidencia(inc.codigo)}
-                    className="btn btn-sm d-inline-flex align-items-center rounded-2"
-                    style={{
-                      fontSize: '0.75rem',
-                      padding: '0.3rem 0.6rem',
-                      gap: '0.38rem',
-                      backgroundColor: activo ? '#D97706' : 'rgba(217, 119, 6, 0.07)',
-                      color: activo ? '#FFFFFF' : '#B45309',
-                      border: `1px solid ${activo ? '#D97706' : 'rgba(217, 119, 6, 0.25)'}`,
-                      opacity: count === 0 && !activo ? 0.6 : 1,
-                    }}
-                    title={`${inc.codigo}: ${inc.descripcion} (${count} documentos)`}
-                  >
-                    <strong className="font-mono">{inc.codigo}</strong>
-                    <span>{inc.corto}</span>
-                    <span
-                      className="badge rounded-pill font-mono ms-1"
-                      style={{
-                        backgroundColor: activo ? 'rgba(255,255,255,0.22)' : 'rgba(217, 119, 6, 0.16)',
-                        color: activo ? '#FFFFFF' : '#92400E',
-                      }}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="incidence-section-box">
+              <div className="incidence-section-header">
+                <span className="fw-bold text-warning" style={{ fontSize: '0.72rem', letterSpacing: '0.04em' }}>
+                  GRUPOS DE OBSERVACIÓN (DIFERENCIAS PARA REVISIÓN)
+                </span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.7rem' }}>
+                  {INCIDENCIAS.filter((i) => i.tipo === 'OBS').reduce((acc, i) => acc + (conteoPorCodigoBase[i.codigo] || 0), 0).toLocaleString('es-PE')} hallazgos
+                </span>
+              </div>
+              <div className="incidence-grid">
+                {INCIDENCIAS.filter((i) => i.tipo === 'OBS')
+                  .filter((inc) => !ocultarSinIncidencias || (conteoPorCodigoBase[inc.codigo] || 0) > 0 || filtros.codigos.includes(inc.codigo))
+                  .map((inc) => {
+                    const count = conteoPorCodigoBase[inc.codigo] || 0;
+                    const activo = filtros.codigos.includes(inc.codigo);
+                    const hasItems = count > 0;
+                    const chipClass = [
+                      'incidence-chip',
+                      activo ? 'is-active-obs' : hasItems ? 'has-items-obs' : 'is-empty',
+                    ].join(' ');
+                    return (
+                      <button
+                        key={inc.codigo}
+                        type="button"
+                        onClick={() => toggleCodigoIncidencia(inc.codigo)}
+                        className={chipClass}
+                        aria-pressed={activo}
+                        title={`${inc.codigo}: ${inc.descripcion} (${count.toLocaleString('es-PE')} documentos)`}
+                      >
+                        <span className={`incidence-code-badge ${hasItems || activo ? 'tone-obs' : 'tone-muted'}`}>
+                          {inc.codigo}
+                        </span>
+                        <span className="incidence-label">{inc.corto}</span>
+                        <span className={`incidence-count ${hasItems || activo ? 'count-obs' : 'count-zero'}`}>
+                          {count.toLocaleString('es-PE')}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
           </div>
         </div>
@@ -697,14 +734,14 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
                     <th>7. Tipo ID SUNAT</th>
                     <th>8. N° ID SUNAT</th>
                     <th>9. Nombre SUNAT</th>
-                    <th className="text-end">10. BI SAP</th>
-                    <th className="text-end">11. BI SUNAT</th>
-                    <th className="text-end">12. IGV SAP</th>
-                    <th className="text-end">13. IGV SUNAT</th>
-                    <th className="text-end">14. Otros SAP</th>
-                    <th className="text-end">15. Otros SUNAT</th>
-                    <th className="text-end">16. Total SAP</th>
-                    <th className="text-end">17. Total SUNAT</th>
+                    <th className="text-end col-group-bi col-pair-start">10. BI SAP</th>
+                    <th className="text-end col-group-bi col-pair-end">11. BI SUNAT</th>
+                    <th className="text-end col-group-igv col-pair-start">12. IGV SAP</th>
+                    <th className="text-end col-group-igv col-pair-end">13. IGV SUNAT</th>
+                    <th className="text-end col-group-otros col-pair-start">14. Otros SAP</th>
+                    <th className="text-end col-group-otros col-pair-end">15. Otros SUNAT</th>
+                    <th className="text-end col-group-total col-pair-start">16. Total SAP</th>
+                    <th className="text-end col-group-total col-pair-end">17. Total SUNAT</th>
                     <th className="text-end">18. Diferencia</th>
                     <th className="text-center">19. Estado</th>
                     <th>20. Incidencias</th>

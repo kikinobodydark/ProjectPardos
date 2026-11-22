@@ -9,6 +9,7 @@ import {
   logSuspiciousActivity,
 } from '../utils/security';
 import { executeParallelBatches } from '../utils/jobQueue';
+import { clearPersistedQueryCache } from '../utils/queryPersister';
 import { SkeletonTable } from './SkeletonLoader';
 import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock } from 'react-icons/fi';
 import { isValidIdentityNumber, isRecordAnulado } from '../utils/validations';
@@ -78,6 +79,7 @@ const ConfiguracionEmpresas = memo(function ConfiguracionEmpresas({ activeCompan
 
       if (error) throw error;
 
+      await clearPersistedQueryCache();
       queryClient.invalidateQueries({ queryKey: ['periods'] });
       queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
       queryClient.invalidateQueries({ queryKey: ['ventasDocumentos'] });

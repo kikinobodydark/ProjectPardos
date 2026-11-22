@@ -1,9 +1,8 @@
 // ============================================================================
-// Detección y Adaptación para Móviles y Redes Lentas (2G / 3G / Save-Data)
-// - Detecta `navigator.connection` (Network Information API) y viewport móvil
-// - Ajusta automáticamente tamaño de página, tamaño de lotes (chunks) y
-//   concurrencia del pool para mantener la app fluida en redes con alta latencia
-// - Permite simular perfiles de red lenta y móvil para pruebas automatizadas
+// Detección y Adaptación para Móviles y Redes Lentas (2G / Save-Data)
+// - En conexiones normales o 3G/4G de escritorio mantiene lotes grandes (1500)
+//   y alta concurrencia (4 workers/streams) para máxima velocidad de carga.
+// - Solo reduce el tamaño de lote en redes genuinamente restringidas (2G / Save-Data).
 // ============================================================================
 import { useState, useEffect } from 'react';
 import { setSlowRequestThreshold } from './telemetry.js';
@@ -27,7 +26,7 @@ export function getNetworkProfile() {
       rtt: simulatedOverride.rtt ?? 50,
       downlink: simulatedOverride.downlink ?? 10,
       recommendedPageSize: simulatedOverride.isSlowNetwork || simulatedOverride.isMobile ? 15 : 20,
-      recommendedBatchSize: simulatedOverride.isSlowNetwork ? 400 : 1000,
+      recommendedBatchSize: simulatedOverride.isSlowNetwork ? 400 : 1500,
       recommendedConcurrency: simulatedOverride.isSlowNetwork ? 2 : 4,
     };
   }
@@ -42,17 +41,14 @@ export function getNetworkProfile() {
   const rtt = typeof conn?.rtt === 'number' ? conn.rtt : 50;
   const downlink = typeof conn?.downlink === 'number' ? conn.downlink : 10;
 
+  // Solo activar modo restringido en 2G / slow-2g o cuando el usuario activa Save-Data explícitamente
   const isSlowNetwork =
     saveData ||
     effectiveType === 'slow-2g' ||
-    effectiveType === '2g' ||
-    effectiveType === '3g' ||
-    (rtt > 400 && rtt < 10000) ||
-    (downlink > 0 && downlink < 1.5);
+    effectiveType === '2g';
 
   const isMobile = isBrowser ? window.innerWidth <= 768 : false;
 
-  // Ajustar umbral de alerta de OpenTelemetry según calidad de red
   setSlowRequestThreshold(isSlowNetwork ? 1200 : 500);
 
   return {
@@ -63,7 +59,7 @@ export function getNetworkProfile() {
     rtt,
     downlink,
     recommendedPageSize: isSlowNetwork || isMobile ? 15 : 20,
-    recommendedBatchSize: isSlowNetwork ? 400 : 1000,
+    recommendedBatchSize: isSlowNetwork ? 500 : 1500,
     recommendedConcurrency: isSlowNetwork ? 2 : 4,
   };
 }

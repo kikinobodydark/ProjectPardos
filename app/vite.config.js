@@ -2,7 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Cabeceras de seguridad, compresión y caché en navegador/CDN
 const securityHeaders = {
@@ -20,7 +23,8 @@ const securityHeaders = {
 /**
  * Plugin de Compilación:
  * 1. Pre-renderiza metadatos de compilación (SSG / Build-Time Rendering) en index.html
- * 2. Activa compresión Brotli (.br calidad 11) y Gzip (.gz) para todos los activos estáticos
+ * 2. Activa compresión Brotli (.br calidad 11) y Gzip (.gz) para servidores propios
+ *    (en Vercel la CDN Edge aplica Brotli automáticamente al servir los archivos)
  */
 function brotliAndPrerenderPlugin() {
   return {
@@ -33,7 +37,8 @@ function brotliAndPrerenderPlugin() {
       );
     },
     closeBundle() {
-      const distDir = path.resolve(import.meta.dirname || '.', 'dist');
+      if (process.env.VERCEL) return;
+      const distDir = path.resolve(__dirname, 'dist');
       if (!fs.existsSync(distDir)) return;
 
       const compressibleExts = new Set(['.js', '.css', '.html', '.svg', '.json']);
@@ -46,7 +51,6 @@ function brotliAndPrerenderPlugin() {
             const raw = fs.readFileSync(fullPath);
             if (raw.length < 512) continue;
 
-            // Compresión Brotli nivel máximo (11)
             const br = zlib.brotliCompressSync(raw, {
               params: {
                 [zlib.constants.BROTLI_PARAM_QUALITY]: 11,
@@ -55,7 +59,6 @@ function brotliAndPrerenderPlugin() {
             });
             fs.writeFileSync(`${fullPath}.br`, br);
 
-            // Compresión Gzip nivel 9 como respaldo universal
             const gz = zlib.gzipSync(raw, { level: 9 });
             fs.writeFileSync(`${fullPath}.gz`, gz);
           }
@@ -67,7 +70,6 @@ function brotliAndPrerenderPlugin() {
   };
 }
 
-// Soporte para servir archivos estáticos desde una CDN mediante VITE_CDN_URL
 const cdnBaseUrl = process.env.VITE_CDN_URL || '/';
 
 export default defineConfig({

@@ -63,6 +63,11 @@ DECLARE
     v_old_data JSONB := null;
     v_new_data JSONB := null;
 BEGIN
+    -- Omitir auditoría fila por fila en tablas masivas de detalle (se audita la cabecera en periodos_carga)
+    IF TG_TABLE_NAME IN ('detalle_ventas', 'detalle_compras') THEN
+        IF (TG_OP = 'DELETE') THEN RETURN OLD; ELSE RETURN NEW; END IF;
+    END IF;
+
     BEGIN v_user_id := (SELECT auth.uid()); EXCEPTION WHEN OTHERS THEN v_user_id := null; END;
 
     SELECT estudio_id INTO v_estudio_id FROM public.usuarios WHERE id = v_user_id;

@@ -9,6 +9,7 @@ import {
   SESSION_IDLE_TIMEOUT_MS,
 } from './utils/security';
 import { useNetworkProfile } from './utils/networkProfile';
+import { clearPersistedQueryCache } from './utils/queryPersister';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
 import { SkeletonAppShell, SkeletonDashboard, SkeletonTable } from './components/SkeletonLoader';
@@ -33,7 +34,18 @@ const COLS_PERIODO = 'id, empresa_id, periodo, dia, version, fecha_carga, estado
 export default function App() {
   const queryClient = useQueryClient();
   const networkProfile = useNetworkProfile();
-  const [session, setSession] = useState(null);
+
+  // Restaurar sesión síncronamente desde sessionStorage en el frame 0 para no bloquear con cascada al dar F5
+  const [session, setSession] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem('ct-auth-session');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed?.user ? parsed : null;
+    } catch {
+      return null;
+    }
+  });
   const [securityBanner, setSecurityBanner] = useState('');
 
   const [activeCompany, setActiveCompany] = useState(() => {
@@ -55,9 +67,13 @@ export default function App() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Período activo actualmente seleccionado
-  const [periodId, setPeriodId] = useState(null);
-  const [activePeriod, setActivePeriod] = useState('');
+  // Persistir y restaurar período activo desde sessionStorage para carga instantánea en F5
+  const [periodId, setPeriodId] = useState(() => {
+    return sessionStorage.getItem('activePeriodId') || null;
+  });
+  const [activePeriod, setActivePeriod] = useState(() => {
+    return sessionStorage.getItem('activePeriodLabel') || '';
+  });
 
   // Filtro inicial para la tabla de conciliación
   const [reconciliationFilter, setReconciliationFilter] = useState(null);
@@ -92,6 +108,22 @@ export default function App() {
       sessionStorage.removeItem('activeCompany');
     }
   }, [activeCompany]);
+
+  useEffect(() => {
+    if (periodId) {
+      sessionStorage.setItem('activePeriodId', periodId);
+    } else {
+      sessionStorage.removeItem('activePeriodId');
+    }
+  }, [periodId]);
+
+  useEffect(() => {
+    if (activePeriod) {
+      sessionStorage.setItem('activePeriodLabel', activePeriod);
+    } else {
+      sessionStorage.removeItem('activePeriodLabel');
+    }
+  }, [activePeriod]);
 
   // Limpiar almacenamiento si cambia el usuario de la sesión para evitar fugas de estado
   useEffect(() => {
@@ -169,9 +201,12 @@ export default function App() {
     sessionStorage.removeItem('activeModule');
     sessionStorage.removeItem('activeTab');
     sessionStorage.removeItem('activeCompany');
+    sessionStorage.removeItem('activePeriodId');
+    sessionStorage.removeItem('activePeriodLabel');
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('ct_csrf_token');
     queryClient.clear();
+    await clearPersistedQueryCache();
     await supabase.auth.signOut();
   }, [queryClient]);
 
@@ -253,7 +288,7 @@ export default function App() {
   });
 
   // 3. Query única de periodos (evita la llamada duplicada de loadLastPeriod)
-  const { data: periods = [], refetch: refetchPeriods } = useQuery({
+  const { data: periods = [], isFetched: periodsFetched, refetch: refetchPeriods } = useQuery({
     queryKey: ['periods', activeCompany?.id, activeModule],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -267,7 +302,7 @@ export default function App() {
       return data || [];
     },
     enabled: !!activeCompany?.id && (activeModule === 'ventas' || activeModule === 'compras'),
-    staleTime: 2 * 60 * 1000,
+    staleTime: 30 * 60 * 1000,
   });
 
   // Sincronizar activeCompany inicial
@@ -281,7 +316,7 @@ export default function App() {
     }
   }, [userProfile, companies, activeCompany]);
 
-  // Seleccionar automáticamente el último período a partir de `periods` (SIN llamada duplicada a red)
+  // Seleccionar automáticamente el último período a partir de `periods` sin borrar el `periodId` restaurado mientras carga
   useEffect(() => {
     if (!activeCompany?.id || (activeModule !== 'ventas' && activeModule !== 'compras')) {
       setPeriodId(null);
@@ -299,11 +334,11 @@ export default function App() {
         }
         setActivePeriod(label);
       }
-    } else {
+    } else if (periodsFetched) {
       setPeriodId(null);
       setActivePeriod('');
     }
-  }, [activeCompany?.id, activeModule, periods, periodId]);
+  }, [activeCompany?.id, activeModule, periods, periodsFetched, periodId]);
 
   const handleCompanyChange = useCallback(
     (companyId) => {
