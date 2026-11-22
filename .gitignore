@@ -2,19 +2,25 @@
 app/node_modules/
 app/dist/
 
-# Archivos de entorno local con credenciales
-app/.env.local
-app/.env.*.local
+# Archivos de entorno local con credenciales (todos los .env excepto .env.example)
+.env
+.env.*
+!.env.example
+app/.env
+app/.env.*
+!app/.env.example
 
 # Archivos del sistema
 .DS_Store
 Thumbs.db
 *.log
 
-# Archivos de reportes contables (confidenciales)
+# Archivos de reportes contables y financieros (confidenciales)
 /LE*.txt
 /LOG*.TXT
 /LOG*.xlsx
+/*.xlsx
+app/*.xlsx
 
 # Archivos temporales y de scratch
 app/scratch/

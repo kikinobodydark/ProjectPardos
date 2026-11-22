@@ -1,17 +1,27 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle } from 'react-icons/fi';
+import {
+  getOrCreateCsrfToken,
+  verifyCsrfToken,
+  checkRateLimit,
+  sanitizeTextInput,
+  logSuspiciousActivity,
+} from '../utils/security';
+import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock } from 'react-icons/fi';
 import { isValidIdentityNumber, isRecordAnulado } from '../utils/validations';
 
-export default function ConfiguracionEmpresas({ activeCompany }) {
+export default function ConfiguracionEmpresas({ activeCompany, userProfile }) {
   const queryClient = useQueryClient();
+  const [csrfToken] = useState(() => getOrCreateCsrfToken());
+  const isAdmin = !userProfile || userProfile?.rol === 'admin';
+
   // Formulario
   const [editingId, setEditingId] = useState(null);
   const [ruc, setRuc] = useState('');
   const [razonSocial, setRazonSocial] = useState('');
   const [activo, setActivo] = useState(true);
-  
+
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -19,7 +29,104 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
   const [revalSuccess, setRevalSuccess] = useState('');
   const [revalError, setRevalError] = useState('');
 
+  const { data: empresas = [], isLoading, refetch } = useQuery({
+    queryKey: ['empresas'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('empresas')
+        .select('*')
+        .order('razon_social', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: isAdmin,
+  });
+
+  const resetForm = () => {
+    setEditingId(null);
+    setRuc('');
+    setRazonSocial('');
+    setActivo(true);
+    setErrorMsg('');
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: async (payload) => {
+      if (payload.id) {
+        const { error } = await supabase
+          .from('empresas')
+          .update({
+            ruc: payload.ruc,
+            razon_social: payload.razonSocial,
+            activo: payload.activo,
+          })
+          .eq('id', payload.id);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('empresas')
+          .insert({
+            ruc: payload.ruc,
+            razon_social: payload.razonSocial,
+            activo: true,
+          });
+
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      setSuccessMsg(editingId ? 'Empresa actualizada correctamente.' : 'Empresa creada correctamente.');
+      resetForm();
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['companies'] });
+    },
+    onError: (err) => {
+      setErrorMsg(err.message || 'Error al guardar empresa.');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id) => {
+      const { error } = await supabase
+        .from('empresas')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setSuccessMsg('Empresa eliminada correctamente.');
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['companies'] });
+    },
+    onError: (err) => {
+      setErrorMsg(err.message || 'Error al eliminar empresa.');
+    },
+  });
+
+  if (!isAdmin) {
+    logSuspiciousActivity('RENDER_CONFIG_EMPRESAS_NO_ADMIN', { userId: userProfile?.id });
+    return (
+      <div className="card-premium p-4 text-center">
+        <FiLock className="text-danger fs-2 mb-2" />
+        <h5 className="fw-bold">Acceso Restringido</h5>
+        <p className="text-muted mb-0">Solo los administradores activos pueden gestionar empresas.</p>
+      </div>
+    );
+  }
+
   const handleRevalidateAll = async () => {
+    if (!verifyCsrfToken(csrfToken)) {
+      setRevalError('Token CSRF inválido. Recarga la sesión.');
+      return;
+    }
+    const rl = checkRateLimit('revalidate_all', { maxAttempts: 2, windowMs: 60000, lockoutMs: 60000 });
+    if (!rl.allowed) {
+      setRevalError(rl.message);
+      return;
+    }
+
     setRevalLoading(true);
     setRevalSuccess('');
     setRevalError('');
@@ -57,20 +164,27 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
         for (const row of allRows) {
           const errors = [...(row.errores_json || [])];
 
-          const cleanErrors = errors.filter(e => 
-            !e.startsWith('OBS 6:') && 
-            !e.startsWith('Identidad SAP no cumple') &&
-            !e.startsWith('OBS 7:') && 
-            !e.startsWith('Identidad SUNAT no cumple')
+          const cleanErrors = errors.filter(
+            (e) =>
+              typeof e === 'string' &&
+              !e.startsWith('OBS 6:') &&
+              !e.startsWith('Identidad SAP no cumple') &&
+              !e.startsWith('OBS 7:') &&
+              !e.startsWith('Identidad SUNAT no cumple')
           );
+
+          // Si el registro usa formato estructurado v2 (objetos en errores_json), no sobrescribir con formato v1
+          if (errors.some((e) => e && typeof e === 'object')) {
+            continue;
+          }
 
           const isNoExisteSAP = row.nro_identidad_sap === null && row.nombre_sap === null;
           if (!isNoExisteSAP && row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
             if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
               if (tableName === 'detalle_compras') {
-                cleanErrors.push("OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)");
+                cleanErrors.push('OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)');
               } else {
-                cleanErrors.push("OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO");
+                cleanErrors.push('OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO');
                 cleanErrors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
               }
             }
@@ -80,9 +194,9 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
           if (!isNoExisteSUNAT && row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
             if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
               if (tableName === 'detalle_compras') {
-                cleanErrors.push("OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)");
+                cleanErrors.push('OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)');
               } else {
-                cleanErrors.push("OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO");
+                cleanErrors.push('OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO');
                 cleanErrors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
               }
             }
@@ -90,12 +204,12 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
 
           const isAnulado = isRecordAnulado(row);
           let newStatus = 'OK';
-          
+
           if (isAnulado) {
             newStatus = 'OK';
           } else {
-            const hasError = cleanErrors.some(e => e.startsWith('ERROR '));
-            const hasObs = cleanErrors.some(e => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
+            const hasError = cleanErrors.some((e) => e.startsWith('ERROR '));
+            const hasObs = cleanErrors.some((e) => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
             if (hasError) {
               newStatus = 'ERROR';
             } else if (hasObs) {
@@ -115,7 +229,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
               .from(tableName)
               .update({
                 estado_validacion: newStatus,
-                errores_json: cleanErrors
+                errores_json: cleanErrors,
               })
               .eq('id', row.id);
 
@@ -125,90 +239,49 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
         }
       }
 
-      setRevalSuccess(`Revalidación completada. Se analizaron ${totalAnalyzed} registros (Ventas y Compras) y se actualizaron ${totalUpdated} con discrepancias de formato de identidad.`);
+      setRevalSuccess(
+        `Revalidación completada. Se analizaron ${totalAnalyzed} registros (Ventas y Compras) y se actualizaron ${totalUpdated} con discrepancias de formato de identidad.`
+      );
     } catch (err) {
-      console.error(err);
       setRevalError(err.message || 'Ocurrió un error al revalidar los registros.');
     } finally {
       setRevalLoading(false);
     }
   };
 
-  // TanStack Query para obtener la lista de empresas
-  const { data: empresas = [], isLoading, refetch } = useQuery({
-    queryKey: ['empresas'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('empresas')
-        .select('*')
-        .order('razon_social', { ascending: true });
-      if (error) throw error;
-      return data || [];
-    },
-  });
-
-  const resetForm = () => {
-    setEditingId(null);
-    setRuc('');
-    setRazonSocial('');
-    setActivo(true);
-    setErrorMsg('');
-  };
-
-  // TanStack Mutation para guardar/crear empresa
-  const saveMutation = useMutation({
-    mutationFn: async (payload) => {
-      if (payload.id) {
-        // Actualizar empresa
-        const { error } = await supabase
-          .from('empresas')
-          .update({
-            ruc: payload.ruc,
-            razon_social: payload.razonSocial,
-            activo: payload.activo
-          })
-          .eq('id', payload.id);
-
-        if (error) throw error;
-      } else {
-        // Crear empresa
-        const { error } = await supabase
-          .from('empresas')
-          .insert({
-            ruc: payload.ruc,
-            razon_social: payload.razonSocial,
-            activo: true
-          });
-
-        if (error) throw error;
-      }
-    },
-    onSuccess: () => {
-      setSuccessMsg(editingId ? 'Empresa actualizada correctamente.' : 'Empresa creada correctamente.');
-      resetForm();
-      refetch();
-      queryClient.invalidateQueries({ queryKey: ['companies'] });
-    },
-    onError: (err) => {
-      setErrorMsg(err.message || 'Error al guardar empresa.');
-    }
-  });
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
 
-    if (ruc.length !== 11 || !/^\d+$/.test(ruc)) {
-      setErrorMsg('El RUC debe tener exactamente 11 caracteres numéricos.');
+    if (!verifyCsrfToken(csrfToken)) {
+      setErrorMsg('Token CSRF inválido. Recarga la sesión.');
+      return;
+    }
+
+    const rl = checkRateLimit('admin_company_mutation', { maxAttempts: 10, windowMs: 60000, lockoutMs: 60000 });
+    if (!rl.allowed) {
+      setErrorMsg(rl.message);
+      return;
+    }
+
+    const cleanRuc = ruc.trim();
+    if (cleanRuc.length !== 11 || !/^(10|20)\d{9}$/.test(cleanRuc)) {
+      setErrorMsg('El RUC debe tener exactamente 11 dígitos numéricos e iniciar con 10 o 20.');
+      return;
+    }
+
+    const cleanRazonSocial = sanitizeTextInput(razonSocial, 180);
+    if (cleanRazonSocial.length < 2) {
+      setErrorMsg('La Razón Social debe tener al menos 2 caracteres válidos.');
       return;
     }
 
     saveMutation.mutate({
       id: editingId,
-      ruc,
-      razonSocial,
-      activo
+      ruc: cleanRuc,
+      razonSocial: cleanRazonSocial,
+      activo,
     });
   };
 
@@ -219,29 +292,13 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
     setActivo(emp.activo);
   };
 
-  // TanStack Mutation para eliminar empresa
-  const deleteMutation = useMutation({
-    mutationFn: async (id) => {
-      const { error } = await supabase
-        .from('empresas')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      setSuccessMsg('Empresa eliminada correctamente.');
-      refetch();
-      queryClient.invalidateQueries({ queryKey: ['companies'] });
-    },
-    onError: (err) => {
-      setErrorMsg(err.message || 'Error al eliminar empresa.');
-    }
-  });
-
   const handleDelete = async (id) => {
+    if (!verifyCsrfToken(csrfToken)) {
+      setErrorMsg('Token CSRF inválido. Recarga la sesión.');
+      return;
+    }
     if (!window.confirm('¿Estás seguro de que deseas eliminar esta empresa? Todos los datos relacionados se perderán.')) return;
-    
+
     setErrorMsg('');
     setSuccessMsg('');
     deleteMutation.mutate(id);
@@ -256,14 +313,15 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
           <h5 className="mb-3 fw-bold">
             {editingId ? 'Editar Empresa' : 'Registrar Nueva Empresa'}
           </h5>
-          
+
           {errorMsg && (
             <div className="alert alert-danger py-2 px-3 mb-3 border-0 rounded-3" style={{ fontSize: '0.85rem' }}>
               <FiAlertTriangle className="me-2" /> {errorMsg}
             </div>
           )}
 
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} autoComplete="off">
+            <input type="hidden" name="csrf_token" value={csrfToken} readOnly />
             <div className="mb-3">
               <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>RUC</label>
               <input
@@ -272,7 +330,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
                 disabled={editingId !== null}
                 maxLength={11}
                 className="form-control form-control-premium font-mono"
-                placeholder="11 dígitos"
+                placeholder="11 dígitos (10... o 20...)"
                 value={ruc}
                 onChange={(e) => setRuc(e.target.value)}
               />
@@ -283,6 +341,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
               <input
                 type="text"
                 required
+                maxLength={180}
                 className="form-control form-control-premium"
                 placeholder="Nombre comercial o social"
                 value={razonSocial}
@@ -329,7 +388,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
       <div className="col-lg-7">
         <div className="card-premium">
           <h5 className="mb-3 fw-bold">Empresas bajo tu Administración</h5>
-          
+
           {successMsg && (
             <div className="alert alert-success py-2 px-3 mb-3 border-0 rounded-3" style={{ fontSize: '0.85rem' }}>
               <FiCheck className="me-2" /> {successMsg}
@@ -354,7 +413,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {empresas.map(emp => (
+                  {empresas.map((emp) => (
                     <tr key={emp.id}>
                       <td className="fw-semibold">{emp.razon_social}</td>
                       <td className="font-mono text-muted">{emp.ruc}</td>
@@ -381,7 +440,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
                           className="btn btn-sm btn-outline-danger"
                           style={{ cursor: 'pointer' }}
                           title="Eliminar"
-                          disabled={emp.id === activeCompany.id} // Evitar eliminar la actual activa
+                          disabled={emp.id === activeCompany?.id}
                         >
                           <FiTrash2 />
                         </button>
@@ -415,7 +474,7 @@ export default function ConfiguracionEmpresas({ activeCompany }) {
             </div>
           )}
 
-          <div 
+          <div
             className="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between p-3 rounded-3 gap-3"
             style={{ backgroundColor: 'rgba(241, 245, 249, 0.7)', border: '1px solid var(--border-color)' }}
           >

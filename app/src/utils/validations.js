@@ -1,10 +1,5 @@
 import { normalizeDocType } from './parsers.js';
 
-const allCharactersEqual = (str) => {
-  if (!str) return false;
-  return str.split('').every(char => char === str[0]);
-};
-
 export const isRecordAnulado = (row) => {
   if (!row) return false;
   return (

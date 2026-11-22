@@ -1,6 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './utils/supabaseClient';
+import {
+  enforceHttps,
+  getOrCreateCsrfToken,
+  checkAndExpireRecoveryLinks,
+  logSuspiciousActivity,
+  SESSION_IDLE_TIMEOUT_MS,
+} from './utils/security';
 import Login from './components/Login';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
@@ -14,10 +21,12 @@ import Hub from './components/Hub';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 export default function App() {
+  const queryClient = useQueryClient();
   const [session, setSession] = useState(null);
-  
+  const [securityBanner, setSecurityBanner] = useState('');
+
   const [activeCompany, setActiveCompany] = useState(() => {
-    const saved = localStorage.getItem('activeCompany');
+    const saved = sessionStorage.getItem('activeCompany');
     try {
       return saved ? JSON.parse(saved) : null;
     } catch {
@@ -26,45 +35,59 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState(() => {
-    return localStorage.getItem('activeTab') || 'dashboard';
+    return sessionStorage.getItem('activeTab') || 'dashboard';
   });
 
   const [activeModule, setActiveModule] = useState(() => {
-    return localStorage.getItem('activeModule') || null;
+    return sessionStorage.getItem('activeModule') || null;
   }); // null = Hub, 'ventas' = Ventas, 'compras' = Compras, 'configuracion' = Configuración
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Guardar estado en localStorage
+  // 1. Inicializar defensas de seguridad (HTTPS, CSRF token, expiración de enlaces de recuperación)
+  useEffect(() => {
+    enforceHttps();
+    getOrCreateCsrfToken();
+    const rec = checkAndExpireRecoveryLinks();
+    if (rec.expired && rec.message) {
+      setSecurityBanner(rec.message);
+    }
+  }, []);
+
+  // Guardar estado de navegación en sessionStorage (no en localStorage persistente)
   useEffect(() => {
     if (activeModule === null) {
-      localStorage.removeItem('activeModule');
+      sessionStorage.removeItem('activeModule');
     } else {
-      localStorage.setItem('activeModule', activeModule);
+      sessionStorage.setItem('activeModule', activeModule);
     }
   }, [activeModule]);
 
   useEffect(() => {
-    localStorage.setItem('activeTab', activeTab);
+    sessionStorage.setItem('activeTab', activeTab);
   }, [activeTab]);
 
   useEffect(() => {
     if (activeCompany) {
-      localStorage.setItem('activeCompany', JSON.stringify(activeCompany));
+      sessionStorage.setItem('activeCompany', JSON.stringify(activeCompany));
     } else {
-      localStorage.removeItem('activeCompany');
+      sessionStorage.removeItem('activeCompany');
     }
   }, [activeCompany]);
 
-  // Limpiar localStorage si cambia el usuario de la sesión para evitar fugas de estado
+  // Limpiar almacenamiento si cambia el usuario de la sesión para evitar fugas de estado
   useEffect(() => {
     if (session?.user?.id) {
-      const savedUserId = localStorage.getItem('userId');
+      const savedUserId = sessionStorage.getItem('userId');
       if (savedUserId !== session.user.id) {
+        sessionStorage.removeItem('activeModule');
+        sessionStorage.removeItem('activeTab');
+        sessionStorage.removeItem('activeCompany');
         localStorage.removeItem('activeModule');
         localStorage.removeItem('activeTab');
         localStorage.removeItem('activeCompany');
-        localStorage.setItem('userId', session.user.id);
+        localStorage.removeItem('userId');
+        sessionStorage.setItem('userId', session.user.id);
         setActiveModule(null);
         setActiveTab('dashboard');
         setActiveCompany(null);
@@ -72,12 +95,106 @@ export default function App() {
     }
   }, [session?.user?.id]);
 
+  // 1. Query del perfil de usuario
+  const { data: userProfile, isLoading: profileLoading } = useQuery({
+    queryKey: ['userProfile', session?.user?.id],
+    queryFn: async () => {
+      // Verificar criptográficamente el JWT con el servidor de Auth
+      const { data: userCheck, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userCheck?.user) {
+        await supabase.auth.signOut();
+        throw new Error('Sesión inválida o expirada.');
+      }
+
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('*, empresas!usuarios_empresa_id_fkey(*)')
+        .eq('id', userCheck.user.id)
+        .single();
+      if (error) throw error;
+
+      // Bloquear inmediatamente si el usuario fue desactivado
+      if (!data.activo) {
+        await supabase.auth.signOut();
+        throw new Error('Tu cuenta de colaborador se encuentra desactivada.');
+      }
+      return data;
+    },
+    enabled: !!session?.user?.id,
+  });
+
+  const isAdmin = userProfile?.rol === 'admin';
+  const canUpload = userProfile?.rol === 'admin' || userProfile?.rol === 'operador';
+
+  // Blindaje de rutas en tiempo real: si un no-admin intenta forzar módulo o pestañas de administración
+  useEffect(() => {
+    if (!userProfile) return;
+    if (!isAdmin && (activeModule === 'configuracion' || activeTab === 'companies' || activeTab === 'users')) {
+      logSuspiciousActivity('ACCESO_RUTA_ADMIN_BLOQUEADO', {
+        rol: userProfile.rol,
+        modulo: activeModule,
+        tab: activeTab,
+      });
+      setActiveModule(null);
+      setActiveTab('dashboard');
+    }
+    if (!canUpload && activeTab === 'upload') {
+      logSuspiciousActivity('ACCESO_RUTA_CARGA_BLOQUEADO', {
+        rol: userProfile.rol,
+        tab: activeTab,
+      });
+      setActiveTab('dashboard');
+    }
+  }, [userProfile, isAdmin, canUpload, activeModule, activeTab]);
+
+  // Cierre automático de sesión por inactividad (30 minutos)
+  const handleLogout = useCallback(async () => {
+    sessionStorage.removeItem('activeModule');
+    sessionStorage.removeItem('activeTab');
+    sessionStorage.removeItem('activeCompany');
+    sessionStorage.removeItem('userId');
+    sessionStorage.removeItem('ct_csrf_token');
+    queryClient.clear();
+    await supabase.auth.signOut();
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return undefined;
+    let idleTimer;
+    const resetTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        setSecurityBanner('Tu sesión se cerró automáticamente por inactividad (30 minutos).');
+        handleLogout();
+      }, SESSION_IDLE_TIMEOUT_MS);
+    };
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    events.forEach((ev) => window.addEventListener(ev, resetTimer, { passive: true }));
+    resetTimer();
+    return () => {
+      clearTimeout(idleTimer);
+      events.forEach((ev) => window.removeEventListener(ev, resetTimer));
+    };
+  }, [session?.user?.id, handleLogout]);
+
   const changeTab = (tabId) => {
+    if ((tabId === 'companies' || tabId === 'users') && !isAdmin) {
+      logSuspiciousActivity('INTENTO_TAB_ADMIN_NO_AUTORIZADO', { tabId });
+      return;
+    }
+    if (tabId === 'upload' && !canUpload) {
+      logSuspiciousActivity('INTENTO_TAB_UPLOAD_NO_AUTORIZADO', { tabId });
+      return;
+    }
     setActiveTab(tabId);
     setSidebarOpen(false);
   };
 
   const handleModuleChange = (newModule) => {
+    if (newModule === 'configuracion' && !isAdmin) {
+      logSuspiciousActivity('INTENTO_MODULO_CONFIG_NO_AUTORIZADO', { newModule });
+      return;
+    }
     setActiveModule(newModule);
     setPeriodId(null);
     setActivePeriod('');
@@ -87,21 +204,6 @@ export default function App() {
       setActiveTab('dashboard');
     }
   };
-
-  // 1. Query del perfil de usuario
-  const { data: userProfile, isLoading: profileLoading } = useQuery({
-    queryKey: ['userProfile', session?.user?.id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('usuarios')
-        .select('*, empresas!usuarios_empresa_id_fkey(*)')
-        .eq('id', session.user.id)
-        .single();
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!session?.user?.id,
-  });
 
   // 2. Query de empresas (todas para administradores, o las asignadas para operadores/consulta)
   const { data: companies = [] } = useQuery({
@@ -120,7 +222,7 @@ export default function App() {
           .select('empresas(*)')
           .eq('usuario_id', userProfile.id);
         if (error) throw error;
-        return data?.map(d => d.empresas).filter(Boolean) || [];
+        return data?.map((d) => d.empresas).filter(Boolean) || [];
       }
     },
     enabled: !!userProfile,
@@ -143,17 +245,19 @@ export default function App() {
     enabled: !!activeCompany?.id && (activeModule === 'ventas' || activeModule === 'compras'),
   });
 
-  // Sincronizar activeCompany inicial al cargar el perfil o como fallback usando la primera de la lista
+  // Sincronizar activeCompany inicial y verificar que pertenezca a las empresas permitidas del usuario
   useEffect(() => {
-    if (userProfile?.empresas && !activeCompany) {
+    if (companies.length > 0) {
+      if (!activeCompany || !companies.some((c) => c.id === activeCompany.id)) {
+        setActiveCompany(companies[0]);
+      }
+    } else if (userProfile?.empresas && !activeCompany) {
       setActiveCompany(userProfile.empresas);
-    } else if (!activeCompany && companies.length > 0) {
-      setActiveCompany(companies[0]);
     }
   }, [userProfile, companies, activeCompany]);
 
   const handleCompanyChange = (companyId) => {
-    const selected = companies.find(c => c.id === companyId);
+    const selected = companies.find((c) => c.id === companyId);
     if (selected) {
       setActiveCompany(selected);
       setPeriodId(null);
@@ -162,7 +266,7 @@ export default function App() {
   };
 
   const handlePeriodChange = (selectedPeriodId) => {
-    const p = periods.find(per => per.id === selectedPeriodId);
+    const p = periods.find((per) => per.id === selectedPeriodId);
     if (p) {
       setPeriodId(p.id);
       let label = p.periodo;
@@ -186,22 +290,20 @@ export default function App() {
   const [activePeriod, setActivePeriod] = useState('');
 
   useEffect(() => {
-    // 1. Obtener sesión activa de auth
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      setSession(currentSession);
     });
 
-    // 2. Escuchar cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (!session) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (!newSession) {
         setActiveCompany(null);
         setPeriodId(null);
         setActivePeriod('');
-        localStorage.removeItem('activeModule');
-        localStorage.removeItem('activeTab');
-        localStorage.removeItem('activeCompany');
-        localStorage.removeItem('userId');
+        sessionStorage.removeItem('activeModule');
+        sessionStorage.removeItem('activeTab');
+        sessionStorage.removeItem('activeCompany');
+        sessionStorage.removeItem('userId');
       }
     });
 
@@ -235,8 +337,9 @@ export default function App() {
             setPeriodId(null);
             setActivePeriod('');
           }
-        } catch (e) {
-          console.error("Error obteniendo último período:", e);
+        } catch {
+          setPeriodId(null);
+          setActivePeriod('');
         }
       };
       loadLastPeriod();
@@ -247,11 +350,9 @@ export default function App() {
   }, [activeCompany?.id, activeModule]);
 
   const handleLoginSuccess = (user) => {
+    setSecurityBanner('');
+    getOrCreateCsrfToken();
     setSession({ user });
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
   };
 
   const handleProcessComplete = (newPeriodId, newPeriod) => {
@@ -281,8 +382,8 @@ export default function App() {
 
   if (session && profileLoading) {
     return (
-      <div 
-        className="d-flex align-items-center justify-content-center min-vh-100" 
+      <div
+        className="d-flex align-items-center justify-content-center min-vh-100"
         style={{ backgroundColor: 'var(--bg-primary)' }}
       >
         <div className="spinner-border text-primary" role="status"></div>
@@ -291,28 +392,27 @@ export default function App() {
   }
 
   if (!session || !userProfile) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    return <Login onLoginSuccess={handleLoginSuccess} initialBanner={securityBanner} />;
   }
 
   if (!activeModule) {
     return (
-      <Hub 
-        userProfile={userProfile} 
-        activeCompany={activeCompany} 
-        companies={companies} 
-        onChangeCompany={handleCompanyChange} 
-        onLogout={handleLogout} 
-        onSelectModule={handleModuleChange} 
+      <Hub
+        userProfile={userProfile}
+        activeCompany={activeCompany}
+        companies={companies}
+        onChangeCompany={handleCompanyChange}
+        onLogout={handleLogout}
+        onSelectModule={handleModuleChange}
       />
     );
   }
 
   return (
     <div className="app-container">
-      {/* Backdrop para celular cuando el sidebar está abierto */}
       {sidebarOpen && (
-        <div 
-          className="sidebar-backdrop d-lg-none" 
+        <div
+          className="sidebar-backdrop d-lg-none"
           onClick={() => setSidebarOpen(false)}
           style={{
             position: 'fixed',
@@ -323,15 +423,14 @@ export default function App() {
             backgroundColor: 'rgba(0, 0, 0, 0.4)',
             zIndex: 1050,
             backdropFilter: 'blur(4px)',
-            cursor: 'pointer'
+            cursor: 'pointer',
           }}
         />
       )}
 
-      {/* Sidebar fijo */}
-      <Sidebar 
-        activeTab={activeTab} 
-        setActiveTab={changeTab} 
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={changeTab}
         userProfile={userProfile}
         onLogout={handleLogout}
         sidebarOpen={sidebarOpen}
@@ -340,11 +439,10 @@ export default function App() {
         onReturnToHub={() => handleModuleChange(null)}
       />
 
-      {/* Área de contenido principal */}
       <main className="main-content">
-        <Navbar 
-          activeCompany={activeCompany} 
-          activePeriod={activePeriod} 
+        <Navbar
+          activeCompany={activeCompany}
+          activePeriod={activePeriod}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
           companies={companies}
           onChangeCompany={handleCompanyChange}
@@ -356,18 +454,18 @@ export default function App() {
         />
 
         {activeTab === 'dashboard' && (
-          <Dashboard 
-            activeCompany={activeCompany} 
-            periodId={periodId} 
+          <Dashboard
+            activeCompany={activeCompany}
+            periodId={periodId}
             activePeriod={activePeriod}
             onNavigateToReconciliation={navigateToReconciliation}
             activeModule={activeModule}
           />
         )}
 
-        {activeTab === 'upload' && (
-          <CargaArchivos 
-            activeCompany={activeCompany} 
+        {activeTab === 'upload' && canUpload && (
+          <CargaArchivos
+            activeCompany={activeCompany}
             userProfile={userProfile}
             onProcessComplete={handleProcessComplete}
             activeModule={activeModule}
@@ -375,8 +473,8 @@ export default function App() {
         )}
 
         {activeTab === 'reconciliation' && (
-          <TablaUnificada 
-            periodId={periodId} 
+          <TablaUnificada
+            periodId={periodId}
             activePeriod={activePeriod}
             initialFilter={reconciliationFilter}
             onFilterReset={() => setReconciliationFilter(null)}
@@ -388,24 +486,26 @@ export default function App() {
         )}
 
         {activeTab === 'history' && (
-          <HistorialCargas 
-            activeCompany={activeCompany} 
+          <HistorialCargas
+            activeCompany={activeCompany}
             onSelectPeriod={handleSelectPeriod}
             onDeletePeriod={handleDeletePeriod}
             activeModule={activeModule}
+            userProfile={userProfile}
           />
         )}
 
-        {activeTab === 'companies' && (
-          <ConfiguracionEmpresas 
-            activeCompany={activeCompany} 
+        {activeTab === 'companies' && isAdmin && (
+          <ConfiguracionEmpresas
+            activeCompany={activeCompany}
             activeModule={activeModule}
+            userProfile={userProfile}
           />
         )}
 
-        {activeTab === 'users' && (
-          <ConfiguracionUsuarios 
-            activeCompany={activeCompany} 
+        {activeTab === 'users' && isAdmin && (
+          <ConfiguracionUsuarios
+            activeCompany={activeCompany}
             userProfile={userProfile}
           />
         )}
