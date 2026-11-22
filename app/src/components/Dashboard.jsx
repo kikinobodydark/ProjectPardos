@@ -1,78 +1,284 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiCheckCircle, FiAlertTriangle, FiXCircle, FiLayers } from 'react-icons/fi';
+import {
+  FiCheckCircle, FiAlertTriangle, FiXCircle, FiLayers, FiDownload, FiArrowRight,
+} from 'react-icons/fi';
+import { useDocumentosVentas } from './ventas/useDocumentosVentas';
+import TarjetasIndicadoresVentas from './ventas/TarjetasIndicadoresVentas';
+import { INCIDENCIAS } from '../utils/ventas/catalogos';
+import { REPORTES_ESPECIFICOS, calcularIndicadores, exportarExcelVentas } from '../utils/ventas/reportes';
+import { formatoMonto, dentroDeTolerancia } from '../utils/ventas/montos';
 
-export default function Dashboard({ periodId, onNavigateToReconciliation, activeModule }) {
+export default function Dashboard({ periodId, activePeriod, onNavigateToReconciliation, activeModule }) {
+  if (activeModule !== 'compras') {
+    return (
+      <DashboardVentas
+        periodId={periodId}
+        activePeriod={activePeriod}
+        onNavigateToReconciliation={onNavigateToReconciliation}
+      />
+    );
+  }
+  return (
+    <DashboardCompras
+      periodId={periodId}
+      onNavigateToReconciliation={onNavigateToReconciliation}
+      activeModule={activeModule}
+    />
+  );
+}
+
+// ============================================================================
+// Dashboard del módulo de Ventas (Secciones 3.B, 8, 9, 11 y 13)
+// ============================================================================
+function DashboardVentas({ periodId, activePeriod, onNavigateToReconciliation }) {
+  const { data: docs = [], isLoading } = useDocumentosVentas(periodId, true);
+  const ind = useMemo(() => calcularIndicadores(docs), [docs]);
+
+  const pct = (val) => (ind.totalUnicos > 0 ? `${((val / ind.totalUnicos) * 100).toFixed(1)}%` : '0.0%');
+
+  const irAConciliacion = (payload) => {
+    if (onNavigateToReconciliation) onNavigateToReconciliation(payload);
+  };
+
+  return (
+    <div className="animate-fade-in w-100">
+      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+          <h3 className="mb-1 fw-bold" style={{ letterSpacing: '-0.02em', color: 'var(--color-text)' }}>
+            Panel Resumen Ejecutivo de Conciliación (SAP vs. SUNAT)
+          </h3>
+          <p className="text-muted mb-0" style={{ fontSize: '0.86rem' }}>
+            Haga clic en cualquier tarjeta, estado, grupo de error u observación para abrir el detalle de los documentos.
+          </p>
+        </div>
+        <div className="d-flex gap-2">
+          <button
+            type="button"
+            disabled={docs.length === 0}
+            className="btn btn-sm btn-outline-primary d-flex align-items-center fw-semibold"
+            onClick={() => exportarExcelVentas({ tipo: 'completo', docs, todosDocs: docs, periodo: activePeriod || 'periodo' })}
+          >
+            <FiDownload className="me-1.5" /> Exportar Libro Completo
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary d-flex align-items-center fw-semibold"
+            onClick={() => irAConciliacion('ALL')}
+          >
+            Ir a Tabla de Conciliación <FiArrowRight className="ms-1.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* 10 Indicadores Generales (Sección 3.B) */}
+      <TarjetasIndicadoresVentas
+        indicadores={ind}
+        totalSinFiltro={docs.length}
+        onSelectKpi={(id, filtro) => irAConciliacion({ vista: 'tabla', kpi: id, filtros: filtro })}
+      />
+
+      {isLoading ? (
+        <div className="card-premium text-center py-5">
+          <div className="spinner-border text-primary" role="status" />
+          <p className="text-muted mt-2 mb-0">Calculando indicadores del período...</p>
+        </div>
+      ) : (
+        <>
+          <div className="row g-3 mb-3">
+            {/* Comparativa monetaria por los conceptos verificados */}
+            <div className="col-lg-7">
+              <div className="card-premium h-100 p-3">
+                <h5 className="mb-2 fw-bold">Comparativa Monetaria Lote (SAP vs. SUNAT — Tolerancia S/ 0.05)</h5>
+                <div className="table-responsive">
+                  <table className="table table-hover table-dense align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Concepto</th>
+                        <th className="text-end">SAP (S/)</th>
+                        <th className="text-end">SUNAT (S/)</th>
+                        <th className="text-end">Diferencia (S/)</th>
+                        <th className="text-center">Docs Afectados</th>
+                        <th className="text-center">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        ['Base Imponible Gravada', ind.sumas.base_sap, ind.sumas.base_sunat, 'ERROR 1'],
+                        ['IGV / IPM', ind.sumas.igv_sap, ind.sumas.igv_sunat, 'ERROR 2'],
+                        ['Monto Exonerado', ind.sumas.exonerado_sap, ind.sumas.exonerado_sunat, 'ERROR 3'],
+                        ['Monto Inafecto', ind.sumas.inafecto_sap, ind.sumas.inafecto_sunat, 'ERROR 4'],
+                        ['Otros Tributos / Servicios', ind.sumas.otros_sap, ind.sumas.otros_sunat, 'ERROR 7'],
+                        ['Importe Total', ind.sumas.total_sap, ind.sumas.total_sunat, 'ERROR 5'],
+                      ].map(([concepto, s, u, codigo]) => {
+                        const dif = s - u;
+                        const afectados = ind.porCodigo[codigo] || 0;
+                        const ok = afectados === 0 && dentroDeTolerancia(dif);
+                        return (
+                          <tr
+                            key={codigo}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => irAConciliacion({ vista: 'tabla', filtros: { codigos: [codigo] } })}
+                          >
+                            <td className="fw-semibold">{concepto}</td>
+                            <td className="text-end font-mono">{formatoMonto(s)}</td>
+                            <td className="text-end font-mono">{formatoMonto(u)}</td>
+                            <td className={`text-end font-mono ${!dentroDeTolerancia(dif) ? 'text-danger fw-bold' : 'text-success'}`}>
+                              {formatoMonto(dif)}
+                            </td>
+                            <td className="text-center font-mono fw-bold">{afectados}</td>
+                            <td className="text-center">
+                              <span className={`badge badge-status badge-status-${ok ? 'ok' : 'error'}`}>
+                                {ok ? 'CORRECTO' : codigo}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Jerarquía de Estados (Verde / Ámbar / Rojo) */}
+            <div className="col-lg-5">
+              <div className="card-premium h-100 p-3 d-flex flex-column justify-content-between">
+                <div>
+                  <h5 className="mb-2 fw-bold">Distribución por Estado General</h5>
+                  <p className="text-muted mb-3" style={{ fontSize: '0.8rem' }}>
+                    Prioridad de clasificación: <strong>ERROR</strong> sobre <strong>OBSERVACIÓN</strong> y <strong>OBSERVACIÓN</strong> sobre <strong>CORRECTO</strong>.
+                  </p>
+
+                  {[
+                    { estado: 'OK', label: 'CORRECTO', count: ind.correctos, clase: 'ok', bar: 'bg-success', desc: 'Cálculos, identidad, boletas > S/ 700 e importes dentro de S/ 0.05.' },
+                    { estado: 'OBSERVADO', label: 'OBSERVACIÓN', count: ind.conObservaciones, clase: 'observado', bar: 'bg-warning', desc: 'Diferencias de identidad, secuencia o existencia únicamente en un sistema.' },
+                    { estado: 'ERROR', label: 'ERROR', count: ind.conErrores, clase: 'error', bar: 'bg-danger', desc: 'Diferencias de importes > S/ 0.05 o boletas > S/ 700 sin DNI.' },
+                  ].map((e) => (
+                    <div
+                      key={e.estado}
+                      className="p-2 rounded-2 mb-2"
+                      style={{ backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)', cursor: 'pointer' }}
+                      onClick={() => irAConciliacion({ vista: 'tabla', filtros: { estado: e.estado } })}
+                    >
+                      <div className="d-flex justify-content-between align-items-center mb-1">
+                        <div className="d-flex align-items-center gap-2">
+                          <span className={`badge badge-status badge-status-${e.clase}`}>{e.label}</span>
+                          <small className="text-muted">{e.desc}</small>
+                        </div>
+                        <span className="font-mono fw-bold">{e.count.toLocaleString('es-PE')} ({pct(e.count)})</span>
+                      </div>
+                      <div className="progress" style={{ height: '6px' }}>
+                        <div className={`progress-bar ${e.bar}`} style={{ width: pct(e.count) }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Desglose por Grupo de Errores y Observaciones + Acceso a los 12 Reportes Específicos */}
+          <div className="row g-3">
+            <div className="col-lg-7">
+              <div className="card-premium h-100 p-3">
+                <h5 className="mb-2 fw-bold">Incidencias por Código (Clic para ver documentos afectados)</h5>
+                <div className="table-responsive">
+                  <table className="table table-hover table-dense align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Código</th>
+                        <th>Descripción</th>
+                        <th className="text-end">Documentos Afectados</th>
+                        <th className="text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {INCIDENCIAS.map((inc) => {
+                        const count = ind.porCodigo[inc.codigo] || 0;
+                        return (
+                          <tr
+                            key={inc.codigo}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => irAConciliacion({ vista: 'tabla', filtros: { codigos: [inc.codigo] } })}
+                          >
+                            <td>
+                              <span className={`badge badge-status badge-status-${inc.tipo === 'ERROR' ? 'error' : 'observado'}`}>
+                                {inc.codigo}
+                              </span>
+                            </td>
+                            <td className="fw-semibold">{inc.corto}</td>
+                            <td className="text-end font-mono fw-bold">{count.toLocaleString('es-PE')}</td>
+                            <td className="text-center">
+                              <span className="text-primary fw-semibold" style={{ fontSize: '0.76rem' }}>
+                                Ver detalle →
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="col-lg-5">
+              <div className="card-premium h-100 p-3">
+                <h5 className="mb-2 fw-bold">Reportes Específicos Independientes (12)</h5>
+                <p className="text-muted mb-2" style={{ fontSize: '0.8rem' }}>
+                  Seleccione un reporte para abrirlo directamente con sus columnas pertinentes:
+                </p>
+                <div className="d-flex flex-column gap-1.5" style={{ gap: '6px' }}>
+                  {REPORTES_ESPECIFICOS.map((rep) => (
+                    <button
+                      key={rep.id}
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary text-start d-flex justify-content-between align-items-center py-1.5 px-2.5 rounded-2"
+                      onClick={() => irAConciliacion({ vista: 'reportes', reporteId: rep.id })}
+                    >
+                      <span className="fw-semibold" style={{ fontSize: '0.8rem' }}>{rep.titulo}</span>
+                      <FiArrowRight />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Dashboard existente del módulo de Compras (sin modificaciones)
+// ============================================================================
+function DashboardCompras({ periodId, onNavigateToReconciliation, activeModule }) {
   const { data: stats = {
-    total: 0,
-    ok: 0,
-    errors: 0,
-    observed: 0,
-    baseSap: 0,
-    baseSunat: 0,
-    igvSap: 0,
-    igvSunat: 0,
-    totalSap: 0,
-    totalSunat: 0,
-    countObs1: 0,
-    countObs2: 0,
-    countSapOk: 0,
-    countSunatOk: 0,
+    total: 0, ok: 0, errors: 0, observed: 0,
+    baseSap: 0, baseSunat: 0, igvSap: 0, igvSunat: 0, totalSap: 0, totalSunat: 0,
+    countObs1: 0, countObs2: 0, countSapOk: 0, countSunatOk: 0,
   } } = useQuery({
     queryKey: ['dashboardStats', periodId, activeModule],
     queryFn: async () => {
-      const summaryView = activeModule === 'compras' ? 'v_resumen_compras' : 'v_resumen_ventas';
-      const detailTable = activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas';
-
       const [resumenRes, obs1Res, obs2Res, sapObsIdOkRes, sunatObsIdOkRes] = await Promise.all([
-        supabase
-          .from(summaryView)
-          .select('*')
-          .eq('periodo_id', periodId)
-          .single(),
-        supabase
-          .from(detailTable)
-          .select('*', { count: 'exact', head: true })
-          .eq('periodo_id', periodId)
-          .contains('errores_json', JSON.stringify([
-            activeModule === 'compras' 
-              ? 'OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)' 
-              : 'OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD'
-          ])),
-        supabase
-          .from(detailTable)
-          .select('*', { count: 'exact', head: true })
-          .eq('periodo_id', periodId)
-          .contains('errores_json', JSON.stringify([
-            activeModule === 'compras' 
-              ? 'OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)' 
-              : 'OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD'
-          ])),
-        supabase
-          .from(detailTable)
-          .select('*', { count: 'exact', head: true })
-          .eq('periodo_id', periodId)
-          .eq('estado_validacion', 'OBSERVADO')
-          .or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null')
-          .not('errores_json', 'cs', activeModule === 'compras' ? '["OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)"]' : '["OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO"]'),
-        supabase
-          .from(detailTable)
-          .select('*', { count: 'exact', head: true })
-          .eq('periodo_id', periodId)
-          .eq('estado_validacion', 'OBSERVADO')
-          .or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null')
-          .not('errores_json', 'cs', activeModule === 'compras' ? '["OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)"]' : '["OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO"]')
+        supabase.from('v_resumen_compras').select('*').eq('periodo_id', periodId).single(),
+        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+          .contains('errores_json', JSON.stringify(['OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)'])),
+        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+          .contains('errores_json', JSON.stringify(['OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)'])),
+        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+          .eq('estado_validacion', 'OBSERVADO').or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null')
+          .not('errores_json', 'cs', '["OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)"]'),
+        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+          .eq('estado_validacion', 'OBSERVADO').or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null')
+          .not('errores_json', 'cs', '["OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)"]'),
       ]);
 
-      if (resumenRes.error && resumenRes.error.code !== 'PGRST116') {
-        throw resumenRes.error;
-      }
-      if (sapObsIdOkRes.error) throw sapObsIdOkRes.error;
-      if (sunatObsIdOkRes.error) throw sunatObsIdOkRes.error;
-
+      if (resumenRes.error && resumenRes.error.code !== 'PGRST116') throw resumenRes.error;
       const summary = resumenRes.data || {};
-
       return {
         total: parseInt(summary.total_registros) || 0,
         ok: parseInt(summary.ok_registros) || 0,
@@ -93,10 +299,7 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
     enabled: !!periodId && !!activeModule,
   });
 
-  const getPercentage = (value) => {
-    if (stats.total === 0) return '0%';
-    return `${((value / stats.total) * 100).toFixed(1)}%`;
-  };
+  const getPercentage = (value) => (stats.total === 0 ? '0%' : `${((value / stats.total) * 100).toFixed(1)}%`);
 
   return (
     <div className="animate-fade-in w-100">
@@ -111,383 +314,52 @@ export default function Dashboard({ periodId, onNavigateToReconciliation, active
         </div>
       </div>
 
-      {/* KPI Cards Grid */}
       <div className="row g-3 mb-4">
-        {/* Total Comprobantes */}
         <div className="col-xl-3 col-sm-6">
-          <div 
-            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
-            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}
-            title="Ver todos los comprobantes"
-          >
-            <div 
-              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
-              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: '#4F46E5', fontSize: '1.4rem' }}
-            >
+          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}>
+            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: '#4F46E5', fontSize: '1.4rem' }}>
               <FiLayers />
             </div>
             <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                TOTAL COMPROBANTES
-              </div>
-              <h3 className="fw-bold mb-0 font-mono" style={{ color: 'var(--color-text)' }}>
-                {stats.total.toLocaleString('es-PE')}
-              </h3>
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>TOTAL COMPROBANTES</div>
+              <h3 className="fw-bold mb-0 font-mono">{stats.total.toLocaleString('es-PE')}</h3>
               <small className="text-muted" style={{ fontSize: '0.75rem' }}>100% de la carga procesada</small>
             </div>
           </div>
         </div>
-
-        {/* Registros Correctos */}
         <div className="col-xl-3 col-sm-6">
-          <div 
-            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
-            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OK')}
-            title="Ver comprobantes correctos (OK)"
-          >
-            <div 
-              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
-              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '1.4rem' }}
-            >
+          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OK')}>
+            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '1.4rem' }}>
               <FiCheckCircle />
             </div>
             <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                REGISTROS CORRECTOS
-              </div>
-              <h3 className="fw-bold mb-0 text-success font-mono">
-                {stats.ok.toLocaleString('es-PE')}
-              </h3>
-              <small className="text-success font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>
-                {getPercentage(stats.ok)} del total
-              </small>
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>REGISTROS CORRECTOS</div>
+              <h3 className="fw-bold mb-0 text-success font-mono">{stats.ok.toLocaleString('es-PE')}</h3>
+              <small className="text-success font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.ok)} del total</small>
             </div>
           </div>
         </div>
-
-        {/* Observaciones */}
         <div className="col-xl-3 col-sm-6">
-          <div 
-            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
-            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OBSERVADO')}
-            title="Ver comprobantes observados"
-          >
-            <div 
-              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
-              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#D97706', fontSize: '1.4rem' }}
-            >
+          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OBSERVADO')}>
+            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#D97706', fontSize: '1.4rem' }}>
               <FiAlertTriangle />
             </div>
             <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                OBSERVACIONES
-              </div>
-              <h3 className="fw-bold mb-0 text-warning font-mono">
-                {stats.observed.toLocaleString('es-PE')}
-              </h3>
-              <small className="text-warning font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>
-                {getPercentage(stats.observed)} de advertencia
-              </small>
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>OBSERVACIONES</div>
+              <h3 className="fw-bold mb-0 text-warning font-mono">{stats.observed.toLocaleString('es-PE')}</h3>
+              <small className="text-warning font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.observed)} de advertencia</small>
             </div>
           </div>
         </div>
-
-        {/* Errores / Discrepancias */}
         <div className="col-xl-3 col-sm-6">
-          <div 
-            className="card-premium card-clickable d-flex align-items-center p-3 h-100"
-            onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ERROR')}
-            title="Ver comprobantes con errores"
-          >
-            <div 
-              className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0"
-              style={{ width: '52px', height: '52px', backgroundColor: 'rgba(220, 38, 38, 0.1)', color: '#DC2626', fontSize: '1.4rem' }}
-            >
+          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ERROR')}>
+            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(220, 38, 38, 0.1)', color: '#DC2626', fontSize: '1.4rem' }}>
               <FiXCircle />
             </div>
             <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                CON DISCREPANCIAS / ERROR
-              </div>
-              <h3 className="fw-bold mb-0 text-danger font-mono">
-                {stats.errors.toLocaleString('es-PE')}
-              </h3>
-              <small className="text-danger font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>
-                {getPercentage(stats.errors)} críticos
-              </small>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="row g-4">
-        {/* Comparative Table */}
-        <div className="col-lg-8">
-          <div className="card-premium h-100 p-4">
-            <h5 className="mb-3 fw-bold" style={{ color: 'var(--color-text)' }}>
-              Comparativa Monetaria Lote (SAP vs. SUNAT)
-            </h5>
-            <div className="table-responsive">
-              <table className="table table-hover table-dense align-middle mb-0">
-                <thead>
-                  <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
-                    <th style={{ backgroundColor: 'var(--bg-surface)' }}>CONCEPTO</th>
-                    <th className="text-end" style={{ backgroundColor: 'var(--bg-surface)' }}>SAP (S/.)</th>
-                    <th className="text-end" style={{ backgroundColor: 'var(--bg-surface)' }}>SUNAT (S/.)</th>
-                    <th className="text-end" style={{ backgroundColor: 'var(--bg-surface)' }}>DIFERENCIA (S/.)</th>
-                    <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ESTADO</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="fw-semibold">Base Imponible</td>
-                    <td className="text-end font-mono">{stats.baseSap.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
-                    <td className="text-end font-mono">{stats.baseSunat.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
-                    <td className={`text-end font-mono ${(stats.baseSap - stats.baseSunat) !== 0 ? 'text-danger fw-bold' : 'text-success'}`}>
-                      {(stats.baseSap - stats.baseSunat).toLocaleString('es-PE', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="text-center">
-                      {Math.abs(stats.baseSap - stats.baseSunat) <= 0.05 ? (
-                        <span className="badge badge-status badge-status-ok">OK</span>
-                      ) : (
-                        <span className="badge badge-status badge-status-error">Discrepancia</span>
-                      )}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="fw-semibold">IGV / IPM</td>
-                    <td className="text-end font-mono">{stats.igvSap.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
-                    <td className="text-end font-mono">{stats.igvSunat.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
-                    <td className={`text-end font-mono ${(stats.igvSap - stats.igvSunat) !== 0 ? 'text-danger fw-bold' : 'text-success'}`}>
-                      {(stats.igvSap - stats.igvSunat).toLocaleString('es-PE', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="text-center">
-                      {Math.abs(stats.igvSap - stats.igvSunat) <= 0.05 ? (
-                        <span className="badge badge-status badge-status-ok">OK</span>
-                      ) : (
-                        <span className="badge badge-status badge-status-error">Discrepancia</span>
-                      )}
-                    </td>
-                  </tr>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <td className="fw-semibold">Total General</td>
-                    <td className="text-end font-mono fw-bold">{stats.totalSap.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
-                    <td className="text-end font-mono fw-bold">{stats.totalSunat.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</td>
-                    <td className={`text-end font-mono fw-bold ${(stats.totalSap - stats.totalSunat) !== 0 ? 'text-danger' : 'text-success'}`}>
-                      {(stats.totalSap - stats.totalSunat).toLocaleString('es-PE', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="text-center">
-                      {Math.abs(stats.totalSap - stats.totalSunat) <= 0.05 ? (
-                        <span className="badge badge-status badge-status-ok">OK</span>
-                      ) : (
-                        <span className="badge badge-status badge-status-error">Discrepancia</span>
-                      )}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* Informative Side Panel */}
-        <div className="col-lg-4">
-          <div className="card-premium h-100 p-4 d-flex flex-column justify-content-between">
-            <div>
-              <h5 className="mb-3 fw-bold" style={{ color: 'var(--color-text)' }}>Estado del Lote</h5>
-              <div className="text-center py-4">
-                {stats.total === 0 ? (
-                  <p className="text-muted mb-0">No hay datos procesados en este período.</p>
-                ) : stats.errors > 0 ? (
-                  <>
-                    <FiXCircle className="text-danger mb-3" style={{ fontSize: '3rem' }} />
-                    <h5 className="text-danger fw-bold">Requiere Corrección</h5>
-                    <p className="text-muted" style={{ fontSize: '0.85rem' }}>
-                      Se detectaron discrepancias de importes o infracciones a las reglas del DNI/RUC.
-                    </p>
-                  </>
-                ) : stats.observed > 0 ? (
-                  <>
-                    <FiAlertTriangle className="text-warning mb-3" style={{ fontSize: '3rem' }} />
-                    <h5 className="text-warning fw-bold">Con Observaciones</h5>
-                    <p className="text-muted" style={{ fontSize: '0.85rem' }}>
-                      El lote no tiene errores graves, pero cuenta con saltos de correlativos o advertencias.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <FiCheckCircle className="text-success mb-3" style={{ fontSize: '3rem' }} />
-                    <h5 className="text-success fw-bold">Conciliado Correctamente</h5>
-                    <p className="text-muted" style={{ fontSize: '0.85rem' }}>
-                      Todos los registros coinciden perfectamente entre SAP, SUNAT y SIRE.
-                    </p>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className="border-top pt-3" style={{ borderColor: 'var(--border-color)' }}>
-              <div className="d-flex justify-content-between align-items-center mb-1">
-                <span className="text-muted fw-semibold" style={{ fontSize: '0.8rem' }}>Tasa de Validación</span>
-                <span className="font-mono fw-bold" style={{ color: 'var(--color-text)' }}>{getPercentage(stats.ok)}</span>
-              </div>
-              <div className="progress" style={{ height: '7px', backgroundColor: 'var(--bg-primary)', borderRadius: '4px' }}>
-                <div 
-                  className="progress-bar bg-success" 
-                  role="progressbar" 
-                  style={{ width: getPercentage(stats.ok) }}
-                  aria-valuenow={stats.ok} 
-                  aria-valuemin="0" 
-                  aria-valuemax={stats.total}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Fila 2: Gráficos de Consistencia de Identidades */}
-      <div className="row g-4 mt-1">
-        {/* Gráfico de Barras de Comprobantes Correctos */}
-        <div className="col-lg-6">
-          <div className="card-premium h-100 p-4">
-            <h5 className="mb-2 fw-bold" style={{ color: 'var(--color-text)' }}>
-              Consistencia de Identidades en Observados
-            </h5>
-            <p className="text-muted mb-4" style={{ fontSize: '0.82rem' }}>
-              Cantidad de comprobantes <strong>Observados</strong> con formato de identidad válido por origen. Haz clic en las barras para filtrar.
-            </p>
-
-            <div className="d-flex align-items-end justify-content-around mt-4 mb-3" style={{ height: '170px', paddingBottom: '10px', borderBottom: '1px solid var(--border-color)' }}>
-              {/* Barra SAP */}
-              <div 
-                className="d-flex flex-column align-items-center justify-content-end h-100" 
-                style={{ width: '130px' }}
-              >
-                <div 
-                  className="bar-sap-glow animate-fade-in"
-                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SAP_OBS_ID_OK')}
-                  style={{
-                    width: '54px',
-                    height: `${stats.observed > 0 ? (stats.countSapOk / stats.observed * 100) : 0}%`,
-                    background: 'linear-gradient(to top, #4f46e5, #8b5cf6)',
-                    cursor: 'pointer',
-                    borderRadius: '8px 8px 0 0',
-                    transition: 'transform 0.2s ease',
-                    boxShadow: '0 4px 10px rgba(79, 70, 229, 0.2)'
-                  }}
-                  title="Ver detalle de documentos observados con ID SAP válido"
-                />
-                <span className="fw-semibold mt-2" style={{ fontSize: '0.84rem', color: 'var(--color-text)' }}>
-                  SAP (ID Válido)
-                </span>
-                <span className="font-mono text-muted" style={{ fontSize: '0.78rem' }}>
-                  {stats.countSapOk} docs
-                </span>
-              </div>
-
-              {/* Barra SUNAT */}
-              <div 
-                className="d-flex flex-column align-items-center justify-content-end h-100" 
-                style={{ width: '130px' }}
-              >
-                <div 
-                  className="bar-sunat-glow animate-fade-in"
-                  onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('SUNAT_OBS_ID_OK')}
-                  style={{
-                    width: '54px',
-                    height: `${stats.observed > 0 ? (stats.countSunatOk / stats.observed * 100) : 0}%`,
-                    background: 'linear-gradient(to top, #2563eb, #60a5fa)',
-                    cursor: 'pointer',
-                    borderRadius: '8px 8px 0 0',
-                    transition: 'transform 0.2s ease',
-                    boxShadow: '0 4px 10px rgba(37, 99, 235, 0.2)'
-                  }}
-                  title="Ver detalle de documentos observados con ID SUNAT válido"
-                />
-                <span className="fw-semibold mt-2" style={{ fontSize: '0.84rem', color: 'var(--color-text)' }}>
-                  SUNAT (ID Válido)
-                </span>
-                <span className="font-mono text-muted" style={{ fontSize: '0.78rem' }}>
-                  {stats.countSunatOk} docs
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Consistencia de Calidad de Datos de Identidades */}
-        <div className="col-lg-6">
-          <div className="card-premium h-100 p-4 d-flex flex-column justify-content-between">
-            <div>
-              <h5 className="mb-2 fw-bold" style={{ color: 'var(--color-text)' }}>
-                {activeModule === 'compras' 
-                  ? 'Calidad de Datos de Proveedores (RUC)' 
-                  : 'Calidad de Datos de Identidades (RUC/DNI)'}
-              </h5>
-              <p className="text-muted mb-4" style={{ fontSize: '0.82rem' }}>
-                {activeModule === 'compras'
-                  ? 'Resumen de comprobantes con RUC de proveedor válido en SAP y SUNAT.'
-                  : 'Resumen de comprobantes consistentes entre SAP y SUNAT para tipo y número de documento.'}
-              </p>
-
-              {/* Tipo de Identidad or SAP RUC Validity */}
-              <div className="mb-4">
-                <div className="d-flex justify-content-between align-items-center mb-1">
-                  <span className="fw-semibold" style={{ fontSize: '0.85rem', color: 'var(--color-text)' }}>
-                    {activeModule === 'compras' 
-                      ? 'RUC Proveedor SAP Válido (Sin OBS 6)' 
-                      : 'Tipo de Identidad Coincidente (Sin OBS 1)'}
-                  </span>
-                  <span className="badge font-mono" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', color: '#2563EB', border: '1px solid rgba(37, 99, 235, 0.2)' }}>
-                    {stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100).toFixed(1) : 0}%
-                  </span>
-                </div>
-                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)', borderRadius: '4px' }}>
-                  <div 
-                    className="progress-bar bg-primary" 
-                    role="progressbar" 
-                    style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs1) / stats.total) * 100) : 0}%` }}
-                  />
-                </div>
-                <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
-                  <span>Correctos: {stats.total - stats.countObs1} docs</span>
-                  {stats.countObs1 > 0 && (
-                    <span className="text-warning fw-semibold">
-                      • {stats.countObs1} con discrepancias ({activeModule === 'compras' ? 'OBS 6' : 'OBS 1'})
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Número de Identidad or SUNAT RUC Validity */}
-              <div className="mb-2">
-                <div className="d-flex justify-content-between align-items-center mb-1">
-                  <span className="fw-semibold" style={{ fontSize: '0.85rem', color: 'var(--color-text)' }}>
-                    {activeModule === 'compras' 
-                      ? 'RUC Proveedor SUNAT Válido (Sin OBS 7)' 
-                      : 'Número de Identidad Coincidente (Sin OBS 2)'}
-                  </span>
-                  <span className="badge font-mono" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', color: '#2563EB', border: '1px solid rgba(37, 99, 235, 0.2)' }}>
-                    {stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100).toFixed(1) : 0}%
-                  </span>
-                </div>
-                <div className="progress" style={{ height: '8px', backgroundColor: 'var(--bg-primary)', borderRadius: '4px' }}>
-                  <div 
-                    className="progress-bar bg-primary" 
-                    role="progressbar" 
-                    style={{ width: `${stats.total > 0 ? (((stats.total - stats.countObs2) / stats.total) * 100) : 0}%` }}
-                  />
-                </div>
-                <div className="d-flex justify-content-between mt-1 text-muted" style={{ fontSize: '0.78rem' }}>
-                  <span>Correctos: {stats.total - stats.countObs2} docs</span>
-                  {stats.countObs2 > 0 && (
-                    <span className="text-warning fw-semibold">
-                      • {stats.countObs2} con discrepancias ({activeModule === 'compras' ? 'OBS 7' : 'OBS 2'})
-                    </span>
-                  )}
-                </div>
-              </div>
+              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>CON DISCREPANCIAS / ERROR</div>
+              <h3 className="fw-bold mb-0 text-danger font-mono">{stats.errors.toLocaleString('es-PE')}</h3>
+              <small className="text-danger font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.errors)} críticos</small>
             </div>
           </div>
         </div>

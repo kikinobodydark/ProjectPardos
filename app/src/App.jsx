@@ -359,6 +359,7 @@ export default function App() {
           <Dashboard 
             activeCompany={activeCompany} 
             periodId={periodId} 
+            activePeriod={activePeriod}
             onNavigateToReconciliation={navigateToReconciliation}
             activeModule={activeModule}
           />
@@ -380,6 +381,9 @@ export default function App() {
             initialFilter={reconciliationFilter}
             onFilterReset={() => setReconciliationFilter(null)}
             activeModule={activeModule}
+            activeCompany={activeCompany}
+            userProfile={userProfile}
+            onProcessComplete={handleProcessComplete}
           />
         )}
 
