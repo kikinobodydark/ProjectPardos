@@ -210,7 +210,18 @@ const CargaArchivos = memo(function CargaArchivos({
 
     try {
       if (esVentas) {
-        setStatusText('Conciliando comprobantes y creando período en paralelo...');
+        const diaPadded = String(diaNum).padStart(2, '0');
+        setStatusText('Conciliando comprobantes y preparando período...');
+
+        // Limpiar cualquier intento previo incompleto o versión idéntica para evitar error de clave duplicada
+        await supabase
+          .from('periodos_carga')
+          .delete()
+          .eq('empresa_id', activeCompany.id)
+          .eq('periodo', periodoFinal)
+          .eq('dia', diaPadded)
+          .eq('version', versionNum)
+          .eq('modulo', activeModule);
 
         // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera del período en Supabase
         const [conciliacionRes, periodRes] = await Promise.all([
@@ -225,7 +236,7 @@ const CargaArchivos = memo(function CargaArchivos({
               empresa_id: activeCompany.id,
               usuario_id: userProfile.id,
               periodo: periodoFinal,
-              dia: String(diaNum).padStart(2, '0'),
+              dia: diaPadded,
               version: versionNum,
               estado: 'procesando',
               modulo: activeModule,
@@ -243,7 +254,7 @@ const CargaArchivos = memo(function CargaArchivos({
         setStatusText(`Preparando ${docs.length.toLocaleString('es-PE')} comprobantes en paralelo (Pool de Workers)...`);
         const serializedChunks = await serializeDocsInWorkerPool(
           docs,
-          { periodoId, empresaId: activeCompany.id, ruc: activeCompany.ruc },
+          { periodoId: periodId, empresaId: activeCompany.id, ruc: activeCompany.ruc },
           chunkSize
         );
         setProgressPct(40);
@@ -298,6 +309,16 @@ const CargaArchivos = memo(function CargaArchivos({
         onProcessComplete(periodId, `${periodoFinal} (Día: ${String(diaNum).padStart(2, '0')}, v${versionNum})`);
       } else {
         // Flujo de Compras:
+        // Limpiar cualquier intento previo incompleto o versión idéntica para evitar error de clave duplicada
+        await supabase
+          .from('periodos_carga')
+          .delete()
+          .eq('empresa_id', activeCompany.id)
+          .eq('periodo', periodoFinal)
+          .eq('dia', dia)
+          .eq('version', versionNum)
+          .eq('modulo', activeModule);
+
         // 1. Leer los 3 archivos y parsear CADA UNO en un Web Worker distinto en paralelo + crear período simultáneamente
         setStatusText('Leyendo y parseando los 3 archivos en Workers paralelos...');
         const [sunatBuffer, sapBuffer, sireBuffer] = await Promise.all([
@@ -494,9 +515,8 @@ const CargaArchivos = memo(function CargaArchivos({
                     <div className="d-flex justify-content-between align-items-center mb-1">
                       <span className="fw-semibold">Estado de carga:</span>
                       <span
-                        className={`badge badge-status badge-status-${
-                          lectura.estado === 'error' ? 'error' : lectura.estado === 'advertencia' ? 'observado' : 'ok'
-                        }`}
+                        className={`badge badge-status badge-status-${lectura.estado === 'error' ? 'error' : lectura.estado === 'advertencia' ? 'observado' : 'ok'
+                          }`}
                       >
                         {lectura.estado === 'error' ? 'ERROR DE LECTURA' : lectura.estado === 'advertencia' ? 'CARGADO CON OBSERVACIONES' : 'VÁLIDO'}
                       </span>
