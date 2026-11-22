@@ -4,13 +4,13 @@
 // - Todos los conteos se basan en documentos únicos.
 // - Cada tarjeta es clicable para abrir o filtrar el detalle correspondiente.
 // ============================================================================
-import React from 'react';
+import React, { memo } from 'react';
 import {
   FiDatabase, FiFileText, FiLink, FiCheckCircle, FiAlertTriangle,
   FiXCircle, FiArrowRightCircle, FiArrowLeftCircle, FiDollarSign, FiUserCheck,
 } from 'react-icons/fi';
 
-export default function TarjetasIndicadoresVentas({ indicadores, totalSinFiltro, onSelectKpi, kpiActivo }) {
+const TarjetasIndicadoresVentas = memo(function TarjetasIndicadoresVentas({ indicadores, totalSinFiltro, onSelectKpi, kpiActivo }) {
   const pct = (val, base = indicadores.totalUnicos) =>
     base > 0 ? `${((val / base) * 100).toFixed(1)}%` : '0.0%';
 
@@ -189,4 +189,6 @@ export default function TarjetasIndicadoresVentas({ indicadores, totalSinFiltro,
       </div>
     </div>
   );
-}
+});
+
+export default TarjetasIndicadoresVentas;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './utils/supabaseClient';
 import {
@@ -8,20 +8,31 @@ import {
   logSuspiciousActivity,
   SESSION_IDLE_TIMEOUT_MS,
 } from './utils/security';
-import Login from './components/Login';
+import { useNetworkProfile } from './utils/networkProfile';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
-import Dashboard from './components/Dashboard';
-import CargaArchivos from './components/CargaArchivos';
-import TablaUnificada from './components/TablaUnificada';
-import HistorialCargas from './components/HistorialCargas';
-import ConfiguracionEmpresas from './components/ConfiguracionEmpresas';
-import ConfiguracionUsuarios from './components/ConfiguracionUsuarios';
-import Hub from './components/Hub';
+import { SkeletonAppShell, SkeletonDashboard, SkeletonTable } from './components/SkeletonLoader';
 import 'bootstrap/dist/css/bootstrap.min.css';
+
+// División de JavaScript por página / módulo (Route-based Code Splitting)
+const Login = lazy(() => import('./components/Login'));
+const Hub = lazy(() => import('./components/Hub'));
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const CargaArchivos = lazy(() => import('./components/CargaArchivos'));
+const TablaUnificada = lazy(() => import('./components/TablaUnificada'));
+const HistorialCargas = lazy(() => import('./components/HistorialCargas'));
+const ConfiguracionEmpresas = lazy(() => import('./components/ConfiguracionEmpresas'));
+const ConfiguracionUsuarios = lazy(() => import('./components/ConfiguracionUsuarios'));
+
+// Columnas estrictamente necesarias por consulta (evita SELECT *)
+const COLS_USUARIO_PERFIL =
+  'id, nombre, rol, activo, empresa_id, estudio_id, empresas!usuarios_empresa_id_fkey(id, ruc, razon_social, activo, estudio_id)';
+const COLS_EMPRESA = 'id, ruc, razon_social, activo, estudio_id';
+const COLS_PERIODO = 'id, empresa_id, periodo, dia, version, fecha_carga, estado, modulo';
 
 export default function App() {
   const queryClient = useQueryClient();
+  const networkProfile = useNetworkProfile();
   const [session, setSession] = useState(null);
   const [securityBanner, setSecurityBanner] = useState('');
 
@@ -40,9 +51,16 @@ export default function App() {
 
   const [activeModule, setActiveModule] = useState(() => {
     return sessionStorage.getItem('activeModule') || null;
-  }); // null = Hub, 'ventas' = Ventas, 'compras' = Compras, 'configuracion' = Configuración
+  });
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Período activo actualmente seleccionado
+  const [periodId, setPeriodId] = useState(null);
+  const [activePeriod, setActivePeriod] = useState('');
+
+  // Filtro inicial para la tabla de conciliación
+  const [reconciliationFilter, setReconciliationFilter] = useState(null);
 
   // 1. Inicializar defensas de seguridad (HTTPS, CSRF token, expiración de enlaces de recuperación)
   useEffect(() => {
@@ -54,7 +72,7 @@ export default function App() {
     }
   }, []);
 
-  // Guardar estado de navegación en sessionStorage (no en localStorage persistente)
+  // Guardar estado de navegación en sessionStorage
   useEffect(() => {
     if (activeModule === null) {
       sessionStorage.removeItem('activeModule');
@@ -95,11 +113,10 @@ export default function App() {
     }
   }, [session?.user?.id]);
 
-  // 1. Query del perfil de usuario
+  // 1. Query del perfil de usuario (pide solo columnas requeridas)
   const { data: userProfile, isLoading: profileLoading } = useQuery({
     queryKey: ['userProfile', session?.user?.id],
     queryFn: async () => {
-      // Verificar criptográficamente el JWT con el servidor de Auth
       const { data: userCheck, error: userErr } = await supabase.auth.getUser();
       if (userErr || !userCheck?.user) {
         await supabase.auth.signOut();
@@ -108,12 +125,11 @@ export default function App() {
 
       const { data, error } = await supabase
         .from('usuarios')
-        .select('*, empresas!usuarios_empresa_id_fkey(*)')
+        .select(COLS_USUARIO_PERFIL)
         .eq('id', userCheck.user.id)
         .single();
       if (error) throw error;
 
-      // Bloquear inmediatamente si el usuario fue desactivado
       if (!data.activo) {
         await supabase.auth.signOut();
         throw new Error('Tu cuenta de colaborador se encuentra desactivada.');
@@ -121,12 +137,13 @@ export default function App() {
       return data;
     },
     enabled: !!session?.user?.id,
+    staleTime: 10 * 60 * 1000,
   });
 
   const isAdmin = userProfile?.rol === 'admin';
   const canUpload = userProfile?.rol === 'admin' || userProfile?.rol === 'operador';
 
-  // Blindaje de rutas en tiempo real: si un no-admin intenta forzar módulo o pestañas de administración
+  // Blindaje de rutas en tiempo real
   useEffect(() => {
     if (!userProfile) return;
     if (!isAdmin && (activeModule === 'configuracion' || activeTab === 'companies' || activeTab === 'users')) {
@@ -177,75 +194,83 @@ export default function App() {
     };
   }, [session?.user?.id, handleLogout]);
 
-  const changeTab = (tabId) => {
-    if ((tabId === 'companies' || tabId === 'users') && !isAdmin) {
-      logSuspiciousActivity('INTENTO_TAB_ADMIN_NO_AUTORIZADO', { tabId });
-      return;
-    }
-    if (tabId === 'upload' && !canUpload) {
-      logSuspiciousActivity('INTENTO_TAB_UPLOAD_NO_AUTORIZADO', { tabId });
-      return;
-    }
-    setActiveTab(tabId);
-    setSidebarOpen(false);
-  };
+  const changeTab = useCallback(
+    (tabId) => {
+      if ((tabId === 'companies' || tabId === 'users') && !isAdmin) {
+        logSuspiciousActivity('INTENTO_TAB_ADMIN_NO_AUTORIZADO', { tabId });
+        return;
+      }
+      if (tabId === 'upload' && !canUpload) {
+        logSuspiciousActivity('INTENTO_TAB_UPLOAD_NO_AUTORIZADO', { tabId });
+        return;
+      }
+      setActiveTab(tabId);
+      setSidebarOpen(false);
+    },
+    [isAdmin, canUpload]
+  );
 
-  const handleModuleChange = (newModule) => {
-    if (newModule === 'configuracion' && !isAdmin) {
-      logSuspiciousActivity('INTENTO_MODULO_CONFIG_NO_AUTORIZADO', { newModule });
-      return;
-    }
-    setActiveModule(newModule);
-    setPeriodId(null);
-    setActivePeriod('');
-    if (newModule === 'configuracion') {
-      setActiveTab('companies');
-    } else {
-      setActiveTab('dashboard');
-    }
-  };
+  const handleModuleChange = useCallback(
+    (newModule) => {
+      if (newModule === 'configuracion' && !isAdmin) {
+        logSuspiciousActivity('INTENTO_MODULO_CONFIG_NO_AUTORIZADO', { newModule });
+        return;
+      }
+      setActiveModule(newModule);
+      setPeriodId(null);
+      setActivePeriod('');
+      if (newModule === 'configuracion') {
+        setActiveTab('companies');
+      } else {
+        setActiveTab('dashboard');
+      }
+    },
+    [isAdmin]
+  );
 
-  // 2. Query de empresas (todas para administradores, o las asignadas para operadores/consulta)
+  // 2. Query de empresas (pide solo columnas requeridas y se comparte en caché)
   const { data: companies = [] } = useQuery({
     queryKey: ['companies', userProfile?.id, userProfile?.rol],
     queryFn: async () => {
       if (userProfile.rol === 'admin') {
         const { data, error } = await supabase
           .from('empresas')
-          .select('*')
+          .select(COLS_EMPRESA)
           .order('razon_social', { ascending: true });
         if (error) throw error;
         return data || [];
       } else {
         const { data, error } = await supabase
           .from('usuario_empresas')
-          .select('empresas(*)')
+          .select(`empresas(${COLS_EMPRESA})`)
           .eq('usuario_id', userProfile.id);
         if (error) throw error;
         return data?.map((d) => d.empresas).filter(Boolean) || [];
       }
     },
     enabled: !!userProfile,
+    staleTime: 5 * 60 * 1000,
   });
 
-  // 3. Query de periodos de la empresa activa y módulo activo
+  // 3. Query única de periodos (evita la llamada duplicada de loadLastPeriod)
   const { data: periods = [], refetch: refetchPeriods } = useQuery({
     queryKey: ['periods', activeCompany?.id, activeModule],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('periodos_carga')
-        .select('*')
+        .select(COLS_PERIODO)
         .eq('empresa_id', activeCompany.id)
         .eq('modulo', activeModule)
         .eq('estado', 'completado')
         .order('fecha_carga', { ascending: false });
       if (error) throw error;
-      return data;
+      return data || [];
     },
     enabled: !!activeCompany?.id && (activeModule === 'ventas' || activeModule === 'compras'),
+    staleTime: 2 * 60 * 1000,
   });
 
-  // Sincronizar activeCompany inicial y verificar que pertenezca a las empresas permitidas del usuario
+  // Sincronizar activeCompany inicial
   useEffect(() => {
     if (companies.length > 0) {
       if (!activeCompany || !companies.some((c) => c.id === activeCompany.id)) {
@@ -256,38 +281,76 @@ export default function App() {
     }
   }, [userProfile, companies, activeCompany]);
 
-  const handleCompanyChange = (companyId) => {
-    const selected = companies.find((c) => c.id === companyId);
-    if (selected) {
-      setActiveCompany(selected);
+  // Seleccionar automáticamente el último período a partir de `periods` (SIN llamada duplicada a red)
+  useEffect(() => {
+    if (!activeCompany?.id || (activeModule !== 'ventas' && activeModule !== 'compras')) {
+      setPeriodId(null);
+      setActivePeriod('');
+      return;
+    }
+    if (periods.length > 0) {
+      const currentExists = periodId && periods.some((p) => p.id === periodId);
+      if (!currentExists) {
+        const latest = periods[0];
+        setPeriodId(latest.id);
+        let label = latest.periodo;
+        if (latest.dia) {
+          label += ` (Día: ${latest.dia}, v${latest.version || 1})`;
+        }
+        setActivePeriod(label);
+      }
+    } else {
       setPeriodId(null);
       setActivePeriod('');
     }
-  };
+  }, [activeCompany?.id, activeModule, periods, periodId]);
 
-  const handlePeriodChange = (selectedPeriodId) => {
-    const p = periods.find((per) => per.id === selectedPeriodId);
-    if (p) {
-      setPeriodId(p.id);
-      let label = p.periodo;
-      if (p.dia) {
-        label += ` (Día: ${p.dia}, v${p.version || 1})`;
+  const handleCompanyChange = useCallback(
+    (companyId) => {
+      const selected = companies.find((c) => c.id === companyId);
+      if (selected) {
+        setActiveCompany(selected);
+        setPeriodId(null);
+        setActivePeriod('');
       }
-      setActivePeriod(label);
-    }
-  };
+    },
+    [companies]
+  );
 
-  // Filtro inicial para la tabla de conciliación
-  const [reconciliationFilter, setReconciliationFilter] = useState(null);
+  const handlePeriodChange = useCallback(
+    (selectedPeriodId) => {
+      const p = periods.find((per) => per.id === selectedPeriodId);
+      if (p) {
+        setPeriodId(p.id);
+        let label = p.periodo;
+        if (p.dia) {
+          label += ` (Día: ${p.dia}, v${p.version || 1})`;
+        }
+        setActivePeriod(label);
+      }
+    },
+    [periods]
+  );
 
-  const navigateToReconciliation = (filterType) => {
-    setReconciliationFilter(filterType);
-    changeTab('reconciliation');
-  };
+  const navigateToReconciliation = useCallback(
+    (filterType) => {
+      setReconciliationFilter(filterType);
+      changeTab('reconciliation');
+    },
+    [changeTab]
+  );
 
-  // Período activo actualmente seleccionado
-  const [periodId, setPeriodId] = useState(null);
-  const [activePeriod, setActivePeriod] = useState('');
+  const resetReconciliationFilter = useCallback(() => {
+    setReconciliationFilter(null);
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((prev) => !prev);
+  }, []);
+
+  const returnToHub = useCallback(() => {
+    handleModuleChange(null);
+  }, [handleModuleChange]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
@@ -310,106 +373,82 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Cargar automáticamente el último período al cambiar activeCompany o activeModule
-  useEffect(() => {
-    if (activeCompany?.id && (activeModule === 'ventas' || activeModule === 'compras')) {
-      const loadLastPeriod = async () => {
-        try {
-          const { data, error } = await supabase
-            .from('periodos_carga')
-            .select('*')
-            .eq('empresa_id', activeCompany.id)
-            .eq('modulo', activeModule)
-            .eq('estado', 'completado')
-            .order('fecha_carga', { ascending: false })
-            .limit(1);
+  // Pre-poblar caché del perfil al iniciar sesión para evitar consulta duplicada
+  const handleLoginSuccess = useCallback(
+    (user, profile) => {
+      setSecurityBanner('');
+      getOrCreateCsrfToken();
+      if (user?.id && profile) {
+        queryClient.setQueryData(['userProfile', user.id], profile);
+      }
+      setSession({ user });
+    },
+    [queryClient]
+  );
 
-          if (error) throw error;
+  const handleProcessComplete = useCallback(
+    (newPeriodId, newPeriod) => {
+      setPeriodId(newPeriodId);
+      setActivePeriod(newPeriod);
+      refetchPeriods();
+      changeTab('reconciliation');
+    },
+    [refetchPeriods, changeTab]
+  );
 
-          if (data && data.length > 0) {
-            setPeriodId(data[0].id);
-            let label = data[0].periodo;
-            if (data[0].dia) {
-              label += ` (Día: ${data[0].dia}, v${data[0].version || 1})`;
-            }
-            setActivePeriod(label);
-          } else {
-            setPeriodId(null);
-            setActivePeriod('');
-          }
-        } catch {
-          setPeriodId(null);
-          setActivePeriod('');
-        }
-      };
-      loadLastPeriod();
-    } else {
-      setPeriodId(null);
-      setActivePeriod('');
-    }
-  }, [activeCompany?.id, activeModule]);
+  const handleSelectPeriod = useCallback(
+    (histPeriodId, histPeriod, histDia, histVersion) => {
+      setPeriodId(histPeriodId);
+      let label = histPeriod;
+      if (histDia) {
+        label += ` (Día: ${histDia}, v${histVersion || 1})`;
+      }
+      setActivePeriod(label);
+      changeTab('dashboard');
+    },
+    [changeTab]
+  );
 
-  const handleLoginSuccess = (user) => {
-    setSecurityBanner('');
-    getOrCreateCsrfToken();
-    setSession({ user });
-  };
-
-  const handleProcessComplete = (newPeriodId, newPeriod) => {
-    setPeriodId(newPeriodId);
-    setActivePeriod(newPeriod);
-    refetchPeriods();
-    changeTab('reconciliation');
-  };
-
-  const handleSelectPeriod = (histPeriodId, histPeriod, histDia, histVersion) => {
-    setPeriodId(histPeriodId);
-    let label = histPeriod;
-    if (histDia) {
-      label += ` (Día: ${histDia}, v${histVersion || 1})`;
-    }
-    setActivePeriod(label);
-    changeTab('dashboard');
-  };
-
-  const handleDeletePeriod = (deletedPeriodId) => {
-    refetchPeriods();
-    if (periodId === deletedPeriodId) {
-      setPeriodId(null);
-      setActivePeriod('');
-    }
-  };
+  const handleDeletePeriod = useCallback(
+    (deletedPeriodId) => {
+      refetchPeriods();
+      if (deletedPeriodId === null || periodId === deletedPeriodId) {
+        setPeriodId(null);
+        setActivePeriod('');
+      }
+    },
+    [refetchPeriods, periodId]
+  );
 
   if (session && profileLoading) {
-    return (
-      <div
-        className="d-flex align-items-center justify-content-center min-vh-100"
-        style={{ backgroundColor: 'var(--bg-primary)' }}
-      >
-        <div className="spinner-border text-primary" role="status"></div>
-      </div>
-    );
+    return <SkeletonAppShell />;
   }
 
   if (!session || !userProfile) {
-    return <Login onLoginSuccess={handleLoginSuccess} initialBanner={securityBanner} />;
+    return (
+      <Suspense fallback={<SkeletonAppShell />}>
+        <Login onLoginSuccess={handleLoginSuccess} initialBanner={securityBanner} />
+      </Suspense>
+    );
   }
 
   if (!activeModule) {
     return (
-      <Hub
-        userProfile={userProfile}
-        activeCompany={activeCompany}
-        companies={companies}
-        onChangeCompany={handleCompanyChange}
-        onLogout={handleLogout}
-        onSelectModule={handleModuleChange}
-      />
+      <Suspense fallback={<SkeletonAppShell />}>
+        <Hub
+          userProfile={userProfile}
+          activeCompany={activeCompany}
+          companies={companies}
+          onChangeCompany={handleCompanyChange}
+          onLogout={handleLogout}
+          onSelectModule={handleModuleChange}
+        />
+      </Suspense>
     );
   }
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${networkProfile.isSlowNetwork ? 'slow-network-mode' : ''}`}>
       {sidebarOpen && (
         <div
           className="sidebar-backdrop d-lg-none"
@@ -436,14 +475,14 @@ export default function App() {
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
         activeModule={activeModule}
-        onReturnToHub={() => handleModuleChange(null)}
+        onReturnToHub={returnToHub}
       />
 
       <main className="main-content">
         <Navbar
           activeCompany={activeCompany}
           activePeriod={activePeriod}
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          onToggleSidebar={toggleSidebar}
           companies={companies}
           onChangeCompany={handleCompanyChange}
           userRole={userProfile?.rol}
@@ -453,62 +492,75 @@ export default function App() {
           activeModule={activeModule}
         />
 
-        {activeTab === 'dashboard' && (
-          <Dashboard
-            activeCompany={activeCompany}
-            periodId={periodId}
-            activePeriod={activePeriod}
-            onNavigateToReconciliation={navigateToReconciliation}
-            activeModule={activeModule}
-          />
-        )}
+        <Suspense
+          fallback={
+            activeTab === 'dashboard' ? (
+              <SkeletonDashboard kpiCount={activeModule === 'compras' ? 4 : 10} />
+            ) : (
+              <div className="card-premium p-4">
+                <SkeletonTable rows={10} columns={8} />
+              </div>
+            )
+          }
+        >
+          {activeTab === 'dashboard' && (
+            <Dashboard
+              activeCompany={activeCompany}
+              periodId={periodId}
+              activePeriod={activePeriod}
+              onNavigateToReconciliation={navigateToReconciliation}
+              activeModule={activeModule}
+            />
+          )}
 
-        {activeTab === 'upload' && canUpload && (
-          <CargaArchivos
-            activeCompany={activeCompany}
-            userProfile={userProfile}
-            onProcessComplete={handleProcessComplete}
-            activeModule={activeModule}
-          />
-        )}
+          {activeTab === 'upload' && canUpload && (
+            <CargaArchivos
+              activeCompany={activeCompany}
+              userProfile={userProfile}
+              onProcessComplete={handleProcessComplete}
+              activeModule={activeModule}
+              periods={periods}
+            />
+          )}
 
-        {activeTab === 'reconciliation' && (
-          <TablaUnificada
-            periodId={periodId}
-            activePeriod={activePeriod}
-            initialFilter={reconciliationFilter}
-            onFilterReset={() => setReconciliationFilter(null)}
-            activeModule={activeModule}
-            activeCompany={activeCompany}
-            userProfile={userProfile}
-            onProcessComplete={handleProcessComplete}
-          />
-        )}
+          {activeTab === 'reconciliation' && (
+            <TablaUnificada
+              periodId={periodId}
+              activePeriod={activePeriod}
+              initialFilter={reconciliationFilter}
+              onFilterReset={resetReconciliationFilter}
+              activeModule={activeModule}
+              activeCompany={activeCompany}
+              userProfile={userProfile}
+              onProcessComplete={handleProcessComplete}
+            />
+          )}
 
-        {activeTab === 'history' && (
-          <HistorialCargas
-            activeCompany={activeCompany}
-            onSelectPeriod={handleSelectPeriod}
-            onDeletePeriod={handleDeletePeriod}
-            activeModule={activeModule}
-            userProfile={userProfile}
-          />
-        )}
+          {activeTab === 'history' && (
+            <HistorialCargas
+              activeCompany={activeCompany}
+              onSelectPeriod={handleSelectPeriod}
+              onDeletePeriod={handleDeletePeriod}
+              activeModule={activeModule}
+              userProfile={userProfile}
+            />
+          )}
 
-        {activeTab === 'companies' && isAdmin && (
-          <ConfiguracionEmpresas
-            activeCompany={activeCompany}
-            activeModule={activeModule}
-            userProfile={userProfile}
-          />
-        )}
+          {activeTab === 'companies' && isAdmin && (
+            <ConfiguracionEmpresas
+              activeCompany={activeCompany}
+              activeModule={activeModule}
+              userProfile={userProfile}
+            />
+          )}
 
-        {activeTab === 'users' && isAdmin && (
-          <ConfiguracionUsuarios
-            activeCompany={activeCompany}
-            userProfile={userProfile}
-          />
-        )}
+          {activeTab === 'users' && isAdmin && (
+            <ConfiguracionUsuarios
+              activeCompany={activeCompany}
+              userProfile={userProfile}
+            />
+          )}
+        </Suspense>
       </main>
     </div>
   );

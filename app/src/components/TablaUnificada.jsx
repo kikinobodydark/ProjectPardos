@@ -1,27 +1,173 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { sanitizeExcelRow, checkRateLimit } from '../utils/security';
+import { executeParallelBatches } from '../utils/jobQueue';
+import { useVirtualList } from '../utils/useVirtualList';
+import { useNetworkProfile } from '../utils/networkProfile';
+import { SkeletonTable } from './SkeletonLoader';
 import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle, FiCheckCircle } from 'react-icons/fi';
-import * as XLSX from 'xlsx';
-import ConciliacionVentas from './ventas/ConciliacionVentas';
 
-export default function TablaUnificada({
+const ConciliacionVentas = lazy(() => import('./ventas/ConciliacionVentas'));
+
+// Columnas estrictamente requeridas para la tabla y exportación de Compras (evita SELECT *)
+const COLS_TABLA_COMPRAS = [
+  'id',
+  'serie',
+  'correlativo',
+  'fecha_emision',
+  'tipo_doc_pago',
+  'ruc_proveedor',
+  'tipo_identidad_sap',
+  'nro_identidad_sap',
+  'nombre_sap',
+  'base_sap',
+  'igv_sap',
+  'exonerado_sap',
+  'inafecto_sap',
+  'otros_sap',
+  'total_sap',
+  'tipo_identidad_sunat',
+  'nro_identidad_sunat',
+  'nombre_sunat',
+  'base_sunat',
+  'igv_sunat',
+  'exonerado_sunat',
+  'inafecto_sunat',
+  'otros_sunat',
+  'total_sunat',
+  'mensaje_sire',
+  'estado_validacion',
+  'errores_json',
+].join(',');
+
+const formatIdentityType = (type) => {
+  if (!type) return 'N/A';
+  const mapping = {
+    '1': 'DNI',
+    '6': 'RUC',
+    '4': 'CE',
+    '7': 'Pasaporte',
+    '0': 'Otros',
+  };
+  return mapping[type] ? `${mapping[type]} (${type})` : type;
+};
+
+const getDocDescription = (code) => {
+  if (code === '01') return 'Factura';
+  if (code === '03') return 'Boleta';
+  if (code === '07') return 'Nota de Crédito';
+  if (code === '08') return 'Nota de Débito';
+  if (code === '14') return 'Servicios Públicos';
+  if (code === '30') return 'Adquisición de No Domiciliados';
+  if (code === '42') return 'Honorario';
+  return `Otro (${code})`;
+};
+
+const FilaDocumentoCompra = memo(function FilaDocumentoCompra({
+  r,
+  activeModule,
+  isObs1,
+  isObs2,
+  onSelectRow,
+}) {
+  const diffBase = Math.abs(r.base_sap - r.base_sunat) > 0.05;
+  const diffIgv = Math.abs(r.igv_sap - r.igv_sunat) > 0.05;
+  const diffTotal = Math.abs(r.total_sap - r.total_sunat) > 0.05;
+
+  return (
+    <tr>
+      <td className="fw-semibold font-mono">{r.serie}-{r.correlativo}</td>
+      <td className="font-mono">{r.fecha_emision || 'N/A'}</td>
+      <td>{getDocDescription(r.tipo_doc_pago)}</td>
+      <td className="font-mono">
+        {activeModule === 'compras'
+          ? (r.ruc_proveedor || r.nro_identidad_sunat || r.nro_identidad_sap || 'No Registrado')
+          : (r.nro_identidad_sunat || 'No Registrado')}
+      </td>
+      <td className="text-truncate" style={{ maxWidth: '150px' }} title={r.nombre_sunat || r.nombre_sap}>
+        {activeModule === 'compras'
+          ? (r.nombre_sunat || r.nombre_sap || '(Falta en SUNAT)')
+          : (r.nombre_sunat || '(Falta en SUNAT)')}
+      </td>
+
+      {isObs1 ? (
+        <>
+          <td className="font-mono">{formatIdentityType(r.tipo_identidad_sap)}</td>
+          <td className="font-mono cell-mismatch">{formatIdentityType(r.tipo_identidad_sunat)}</td>
+        </>
+      ) : isObs2 ? (
+        <>
+          <td className="font-mono">{r.nro_identidad_sap || 'N/A'}</td>
+          <td className="font-mono cell-mismatch">{r.nro_identidad_sunat || 'N/A'}</td>
+        </>
+      ) : (
+        <>
+          <td className="text-end font-mono">{Number(r.base_sap || 0).toFixed(2)}</td>
+          <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
+            {Number(r.base_sunat || 0).toFixed(2)}
+          </td>
+
+          <td className="text-end font-mono">{Number(r.igv_sap || 0).toFixed(2)}</td>
+          <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
+            {Number(r.igv_sunat || 0).toFixed(2)}
+          </td>
+
+          <td className="text-end font-mono">{Number(r.total_sap || 0).toFixed(2)}</td>
+          <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
+            {Number(r.total_sunat || 0).toFixed(2)}
+          </td>
+        </>
+      )}
+
+      <td className="text-truncate" style={{ maxWidth: '180px' }} title={r.mensaje_sire}>
+        {r.mensaje_sire || <span className="text-muted font-mono">(Registro Huérfano)</span>}
+      </td>
+
+      <td className="text-center">
+        <span className={`badge badge-status badge-status-${r.estado_validacion.toLowerCase()}`}>
+          {r.estado_validacion}
+        </span>
+      </td>
+
+      <td className="text-center">
+        <button
+          onClick={() => onSelectRow(r)}
+          className="btn btn-sm btn-outline-secondary p-1 border-0"
+          style={{ cursor: 'pointer' }}
+          title="Ver detalle de auditoría"
+        >
+          <FiEye />
+        </button>
+      </td>
+    </tr>
+  );
+});
+
+const TablaUnificada = memo(function TablaUnificada({
   periodId, activePeriod, initialFilter, onFilterReset, activeModule,
   activeCompany, userProfile, onProcessComplete,
 }) {
   if (activeModule !== 'compras') {
     return (
-      <ConciliacionVentas
-        periodId={periodId}
-        activePeriod={activePeriod}
-        initialFilter={initialFilter}
-        onFilterReset={onFilterReset}
-        activeCompany={activeCompany}
-        userProfile={userProfile}
-        onProcessComplete={onProcessComplete}
-      />
+      <Suspense
+        fallback={
+          <div className="card-premium p-4">
+            <SkeletonTable rows={10} columns={10} title="Cargando módulo de conciliación de ventas..." />
+          </div>
+        }
+      >
+        <ConciliacionVentas
+          periodId={periodId}
+          activePeriod={activePeriod}
+          initialFilter={initialFilter}
+          onFilterReset={onFilterReset}
+          activeCompany={activeCompany}
+          userProfile={userProfile}
+          onProcessComplete={onProcessComplete}
+        />
+      </Suspense>
     );
   }
   return (
@@ -33,48 +179,51 @@ export default function TablaUnificada({
       activeModule={activeModule}
     />
   );
-}
+});
+
+export default TablaUnificada;
 
 function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilterReset, activeModule }) {
+  const networkProfile = useNetworkProfile();
   const [exportLoading, setExportLoading] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
   const getStaticErrors = () => {
     if (activeModule === 'compras') {
       return [
-        { value: "ERROR 1: DIFERENCIA EN BASE IMPONIBLE", label: "ERROR 1: DIFERENCIA BASE IMPONIBLE" },
-        { value: "ERROR 2: DIFERENCIA EN IGV", label: "ERROR 2: DIFERENCIA IGV" },
-        { value: "ERROR 3: DIFERENCIA EN EXONERADO", label: "ERROR 3: DIFERENCIA EXONERADO" },
-        { value: "ERROR 4: DIFERENCIA EN MONTOS TOTALES", label: "ERROR 4: DIFERENCIA MONTOS TOTALES" },
-        { value: "ERROR 5: NO EXISTE EN SUNAT", label: "ERROR 5: NO EXISTE EN SUNAT" }
+        { value: 'ERROR 1: DIFERENCIA EN BASE IMPONIBLE', label: 'ERROR 1: DIFERENCIA BASE IMPONIBLE' },
+        { value: 'ERROR 2: DIFERENCIA EN IGV', label: 'ERROR 2: DIFERENCIA IGV' },
+        { value: 'ERROR 3: DIFERENCIA EN EXONERADO', label: 'ERROR 3: DIFERENCIA EXONERADO' },
+        { value: 'ERROR 4: DIFERENCIA EN MONTOS TOTALES', label: 'ERROR 4: DIFERENCIA MONTOS TOTALES' },
+        { value: 'ERROR 5: NO EXISTE EN SUNAT', label: 'ERROR 5: NO EXISTE EN SUNAT' },
       ];
     }
     return [
-      { value: "ERROR 1: DIFERENCIA EN LA BI Gravada", label: "ERROR 1: DIFERENCIA BI Gravada" },
-      { value: "ERROR 2: DIFERENCIA EN EL IGV / IPM", label: "ERROR 2: DIFERENCIA IGV / IPM" },
-      { value: "ERROR 3: DIFERENCIA EN Mto Exonerado", label: "ERROR 3: DIFERENCIA Mto Exonerado" },
-      { value: "ERROR 4: DIFERENCIA EN Mto Inafecto", label: "ERROR 4: DIFERENCIA Mto Inafecto" },
-      { value: "ERROR 5: DIFERENCIA EN TOTALES", label: "ERROR 5: DIFERENCIA TOTALES" },
-      { value: "ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI", label: "ERROR 6: BOLETAS > 700 SIN DNI" }
+      { value: 'ERROR 1: DIFERENCIA EN LA BI Gravada', label: 'ERROR 1: DIFERENCIA BI Gravada' },
+      { value: 'ERROR 2: DIFERENCIA EN EL IGV / IPM', label: 'ERROR 2: DIFERENCIA IGV / IPM' },
+      { value: 'ERROR 3: DIFERENCIA EN Mto Exonerado', label: 'ERROR 3: DIFERENCIA Mto Exonerado' },
+      { value: 'ERROR 4: DIFERENCIA EN Mto Inafecto', label: 'ERROR 4: DIFERENCIA Mto Inafecto' },
+      { value: 'ERROR 5: DIFERENCIA EN TOTALES', label: 'ERROR 5: DIFERENCIA TOTALES' },
+      { value: 'ERROR 6: BOLETAS MAYOR A 700 SOLES SIN DNI', label: 'ERROR 6: BOLETAS > 700 SIN DNI' },
     ];
   };
 
   const getStaticObservations = () => {
     if (activeModule === 'compras') {
       return [
-        { value: "OBS 1: NO EXISTE EN SAP", label: "OBS 1: NO EXISTE EN SAP" },
-        { value: "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)", label: "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)" },
-        { value: "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)", label: "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)" }
+        { value: 'OBS 1: NO EXISTE EN SAP', label: 'OBS 1: NO EXISTE EN SAP' },
+        { value: 'OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)', label: 'OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)' },
+        { value: 'OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)', label: 'OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)' },
       ];
     }
     return [
-      { value: "OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD", label: "OBS 1: DIFERENCIA TIPO IDENTIDAD" },
-      { value: "OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD", label: "OBS 2: DIFERENCIA NUMERO IDENTIDAD" },
-      { value: "OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS", label: "OBS 3: DIFERENCIA SECUENCIA" },
-      { value: "OBS 4: NO EXISTE EN SAP", label: "OBS 4: NO EXISTE EN SAP" },
-      { value: "OBS 5: NO EXISTE EN SUNAT", label: "OBS 5: NO EXISTE EN SUNAT" },
-      { value: "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO", label: "OBS 6: LONGITUD IDENTIDAD SAP INCORRECTO" },
-      { value: "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO", label: "OBS 7: LONGITUD IDENTIDAD SUNAT INCORRECTO" }
+      { value: 'OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD', label: 'OBS 1: DIFERENCIA TIPO IDENTIDAD' },
+      { value: 'OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD', label: 'OBS 2: DIFERENCIA NUMERO IDENTIDAD' },
+      { value: 'OBS 3: DIFERENCIA EN SECUENCIA DE CORRELATIVOS', label: 'OBS 3: DIFERENCIA SECUENCIA' },
+      { value: 'OBS 4: NO EXISTE EN SAP', label: 'OBS 4: NO EXISTE EN SAP' },
+      { value: 'OBS 5: NO EXISTE EN SUNAT', label: 'OBS 5: NO EXISTE EN SUNAT' },
+      { value: 'OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO', label: 'OBS 6: LONGITUD IDENTIDAD SAP INCORRECTO' },
+      { value: 'OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO', label: 'OBS 7: LONGITUD IDENTIDAD SUNAT INCORRECTO' },
     ];
   };
 
@@ -85,15 +234,22 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
   const [subFilter, setSubFilter] = useState('ALL');
   const [docFilter, setDocFilter] = useState('ALL');
   const [sireFilter, setSireFilter] = useState('ALL');
-  const [filterObsIdOk, setFilterObsIdOk] = useState('ALL'); // 'ALL', 'SAP_OK', 'SUNAT_OK'
+  const [filterObsIdOk, setFilterObsIdOk] = useState('ALL');
 
-  // Filtros Avanzados (Fechas, Serie y Correlativos)
+  // Filtros Avanzados
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [filterSerie, setFilterSerie] = useState('');
   const [startCorr, setStartCorr] = useState('');
   const [endCorr, setEndCorr] = useState('');
   const [originFilter, setOriginFilter] = useState('ALL');
+
+  // Modal para ver errores
+  const [selectedRow, setSelectedRow] = useState(null);
+
+  // Paginación adaptativa
+  const [currentPage, setCurrentPage] = useState(1);
+  const [recordsPerPage, setRecordsPerPage] = useState(() => networkProfile.recommendedPageSize || 20);
 
   const handleClearAdvancedFilters = () => {
     setStartDate('');
@@ -122,13 +278,12 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
       const obsSet = new Set();
 
       if (data) {
-        data.forEach(row => {
+        data.forEach((row) => {
           if (row.errores_json) {
-            row.errores_json.forEach(err => {
-              if (err.startsWith('ERROR ')) {
-                errorsSet.add(err);
-              } else if (err.startsWith('OBS ')) {
-                obsSet.add(err);
+            row.errores_json.forEach((err) => {
+              if (typeof err === 'string') {
+                if (err.startsWith('ERROR ')) errorsSet.add(err);
+                else if (err.startsWith('OBS ')) obsSet.add(err);
               }
             });
           }
@@ -137,21 +292,20 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
 
       return {
         errors: Array.from(errorsSet),
-        obs: Array.from(obsSet)
+        obs: Array.from(obsSet),
       };
     },
-    enabled: !!periodId
+    enabled: !!periodId,
   });
 
-  const visibleErrors = getStaticErrors().filter(err =>
-    existingFilters.errors.some(dbErr => dbErr.startsWith(err.value.slice(0, 8)))
+  const visibleErrors = getStaticErrors().filter((err) =>
+    existingFilters.errors.some((dbErr) => dbErr.startsWith(err.value.slice(0, 8)))
   );
 
-  const visibleObservations = getStaticObservations().filter(obs =>
-    existingFilters.obs.some(dbObs => dbObs.startsWith(obs.value.slice(0, 6)))
+  const visibleObservations = getStaticObservations().filter((obs) =>
+    existingFilters.obs.some((dbObs) => dbObs.startsWith(obs.value.slice(0, 6)))
   );
 
-  // Control sincrónico de cambio de filtros para evitar race conditions
   const handleStateFilterChange = (newVal) => {
     setSubFilter('ALL');
     setStateFilter(newVal);
@@ -159,7 +313,6 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
     setCurrentPage(1);
   };
 
-  // Si hay un filtro inicial del dashboard, aplicarlo
   useEffect(() => {
     if (initialFilter) {
       if (initialFilter === 'SAP_OBS_ID_OK') {
@@ -195,30 +348,18 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
     }
   }, [initialFilter, onFilterReset]);
 
-  // Modal para ver errores
-  const [selectedRow, setSelectedRow] = useState(null);
-
-  // Paginación
-  const [currentPage, setCurrentPage] = useState(1);
-  const [recordsPerPage, setRecordsPerPage] = useState(20);
-
-  // Debounce search input
   useEffect(() => {
     const handler = setTimeout(() => {
       setSearchTerm(searchInputValue);
-      setCurrentPage(1); // Reiniciar a página 1 en búsquedas
-    }, 400);
+      setCurrentPage(1);
+    }, 350);
     return () => clearTimeout(handler);
   }, [searchInputValue]);
 
-  // TanStack Query para obtener registros filtrados y paginados
-  const { data: reconciliationData, isLoading } = useQuery({
-    queryKey: ['reconciliation', periodId, currentPage, searchTerm, stateFilter, subFilter, docFilter, sireFilter, recordsPerPage, startDate, endDate, filterSerie, startCorr, endCorr, originFilter, filterObsIdOk, activeModule],
-    queryFn: async () => {
-      let query = supabase
-        .from(activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas')
-        .select('*', { count: 'exact' })
-        .eq('periodo_id', periodId);
+  // Constructor reutilizable de filtros para query paginada y exportación paralela
+  const applyFiltersToQuery = useCallback(
+    (baseQuery) => {
+      let query = baseQuery.eq('periodo_id', periodId);
 
       if (originFilter === 'SAP') {
         query = query.or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null');
@@ -230,29 +371,23 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         const cleanSerie = filterSerie.trim().replace(/[^A-Za-z0-9-]/g, '').slice(0, 10);
         if (cleanSerie) query = query.ilike('serie', `%${cleanSerie}%`);
       }
-      if (startDate) {
-        query = query.gte('fecha_emision', startDate);
-      }
-      if (endDate) {
-        query = query.lte('fecha_emision', endDate);
-      }
+      if (startDate) query = query.gte('fecha_emision', startDate);
+      if (endDate) query = query.lte('fecha_emision', endDate);
       if (startCorr) {
         const startInt = parseInt(startCorr, 10);
-        if (!isNaN(startInt)) {
-          query = query.gte('correlativo_int', startInt);
-        }
+        if (!isNaN(startInt)) query = query.gte('correlativo_int', startInt);
       }
       if (endCorr) {
         const endInt = parseInt(endCorr, 10);
-        if (!isNaN(endInt)) {
-          query = query.lte('correlativo_int', endInt);
-        }
+        if (!isNaN(endInt)) query = query.lte('correlativo_int', endInt);
       }
 
       const cleanTerm = searchTerm.trim().replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s-]/g, '').slice(0, 80);
       if (cleanTerm !== '') {
         const term = `%${cleanTerm}%`;
-        query = query.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
+        query = query.or(
+          `buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`
+        );
       }
 
       if (stateFilter !== 'ALL') {
@@ -264,10 +399,16 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
             query = query.contains('errores_json', JSON.stringify([subFilter]));
           }
           if (filterObsIdOk === 'SAP_OK') {
-            const errorString = activeModule === 'compras' ? "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)" : "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO";
+            const errorString =
+              activeModule === 'compras'
+                ? 'OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)'
+                : 'OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO';
             query = query.not('errores_json', 'cs', JSON.stringify([errorString]));
           } else if (filterObsIdOk === 'SUNAT_OK') {
-            const errorString = activeModule === 'compras' ? "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)" : "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO";
+            const errorString =
+              activeModule === 'compras'
+                ? 'OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)'
+                : 'OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO';
             query = query.not('errores_json', 'cs', JSON.stringify([errorString]));
           }
         }
@@ -278,19 +419,59 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
       }
 
       if (sireFilter !== 'ALL') {
-        if (sireFilter === 'OK') {
-          query = query.ilike('mensaje_sire', '%registro ok%');
-        } else if (sireFilter === 'DIF') {
-          query = query.ilike('mensaje_sire', '%diferencia%');
-        } else if (sireFilter === 'EMPTY') {
-          query = query.is('mensaje_sire', null);
-        }
+        if (sireFilter === 'OK') query = query.ilike('mensaje_sire', '%registro ok%');
+        else if (sireFilter === 'DIF') query = query.ilike('mensaje_sire', '%diferencia%');
+        else if (sireFilter === 'EMPTY') query = query.is('mensaje_sire', null);
       }
 
-      query = query
+      return query
         .order('fecha_emision', { ascending: true })
         .order('serie', { ascending: true })
         .order('correlativo', { ascending: true });
+    },
+    [
+      periodId,
+      originFilter,
+      filterSerie,
+      startDate,
+      endDate,
+      startCorr,
+      endCorr,
+      searchTerm,
+      stateFilter,
+      subFilter,
+      filterObsIdOk,
+      activeModule,
+      docFilter,
+      sireFilter,
+    ]
+  );
+
+  // TanStack Query pidiendo solo las columnas necesarias
+  const { data: reconciliationData, isLoading } = useQuery({
+    queryKey: [
+      'reconciliation',
+      periodId,
+      currentPage,
+      searchTerm,
+      stateFilter,
+      subFilter,
+      docFilter,
+      sireFilter,
+      recordsPerPage,
+      startDate,
+      endDate,
+      filterSerie,
+      startCorr,
+      endCorr,
+      originFilter,
+      filterObsIdOk,
+      activeModule,
+    ],
+    queryFn: async () => {
+      const tableName = activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas';
+      const base = supabase.from(tableName).select(COLS_TABLA_COMPRAS, { count: 'exact' });
+      const query = applyFiltersToQuery(base);
 
       const from = (currentPage - 1) * recordsPerPage;
       const to = from + recordsPerPage - 1;
@@ -308,33 +489,21 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
   const totalRecords = reconciliationData?.count || 0;
   const loading = isLoading || exportLoading;
 
-  const isObs1 = subFilter === "OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD";
-  const isObs2 = subFilter === "OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD";
+  const isObs1 = subFilter === 'OBS 1: DIFERENCIA EN TIPO DE IDENTIDAD';
+  const isObs2 = subFilter === 'OBS 2: DIFERENCIA EN NUMERO DE IDENTIDAD';
 
-  const formatIdentityType = (type) => {
-    if (!type) return 'N/A';
-    const mapping = {
-      '1': 'DNI',
-      '6': 'RUC',
-      '4': 'CE',
-      '7': 'Pasaporte',
-      '0': 'Otros'
-    };
-    return mapping[type] ? `${mapping[type]} (${type})` : type;
-  };
+  // Virtualización de listas largas (> 40 filas)
+  const {
+    containerRef,
+    onScroll,
+    visibleItems: filasVirtualizadas,
+    isVirtualized,
+    topPaddingHeight,
+    bottomPaddingHeight,
+    maxHeight,
+  } = useVirtualList(data, { rowHeight: 36, viewportHeight: 560, overscan: 8, threshold: 40 });
 
-  const getDocDescription = (code) => {
-    if (code === '01') return 'Factura';
-    if (code === '03') return 'Boleta';
-    if (code === '07') return 'Nota de Crédito';
-    if (code === '08') return 'Nota de Débito';
-    if (code === '14') return 'Servicios Públicos';
-    if (code === '30') return 'Adquisición de No Domiciliados';
-    if (code === '42') return 'Honorario';
-    return `Otro (${code})`;
-  };
-
-  // Exportar a Excel (consulta completa de registros filtrados para descarga)
+  // Exportar a Excel cargando XLSX bajo demanda y descargando páginas en paralelo
   const handleExport = async () => {
     const rl = checkRateLimit('excel_export', { maxAttempts: 10, windowMs: 60000, lockoutMs: 60000 });
     if (!rl.allowed) {
@@ -344,109 +513,33 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
     setExportLoading(true);
     setExportProgress(0);
     try {
-      let allRows = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      const tableName = activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas';
+      const pageSize = networkProfile.recommendedBatchSize || 1000;
+      const totalPagesToFetch = Math.max(1, Math.ceil((totalRecords || pageSize) / pageSize));
+      const pageIndices = Array.from({ length: totalPagesToFetch }, (_, i) => i);
 
-      while (hasMore) {
-        let currentQuery = supabase
-          .from(activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas')
-          .select('*')
-          .eq('periodo_id', periodId);
+      // Descarga paralela controlada por la cola de trabajo
+      const pagesResults = await executeParallelBatches(
+        pageIndices,
+        1,
+        async ([pageIdx]) => {
+          const base = supabase.from(tableName).select(COLS_TABLA_COMPRAS);
+          const q = applyFiltersToQuery(base).range(pageIdx * pageSize, (pageIdx + 1) * pageSize - 1);
+          const { data: chunk, error } = await q;
+          if (error) throw error;
+          return chunk || [];
+        },
+        {
+          concurrency: networkProfile.recommendedConcurrency || 4,
+          label: 'ExportComprasPage',
+          onProgress: (donePages) => setExportProgress(Math.min(totalRecords, donePages * pageSize)),
+        }
+      );
 
-        if (originFilter === 'SAP') {
-          currentQuery = currentQuery.or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null');
-        } else if (originFilter === 'SUNAT') {
-          currentQuery = currentQuery.or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null');
-        }
-
-        if (filterSerie) {
-          const cleanSerie = filterSerie.trim().replace(/[^A-Za-z0-9-]/g, '').slice(0, 10);
-          if (cleanSerie) currentQuery = currentQuery.ilike('serie', `%${cleanSerie}%`);
-        }
-        if (startDate) {
-          currentQuery = currentQuery.gte('fecha_emision', startDate);
-        }
-        if (endDate) {
-          currentQuery = currentQuery.lte('fecha_emision', endDate);
-        }
-        if (startCorr) {
-          const startInt = parseInt(startCorr, 10);
-          if (!isNaN(startInt)) {
-            currentQuery = currentQuery.gte('correlativo_int', startInt);
-          }
-        }
-        if (endCorr) {
-          const endInt = parseInt(endCorr, 10);
-          if (!isNaN(endInt)) {
-            currentQuery = currentQuery.lte('correlativo_int', endInt);
-          }
-        }
-
-        const cleanTerm = searchTerm.trim().replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s-]/g, '').slice(0, 80);
-        if (cleanTerm !== '') {
-          const term = `%${cleanTerm}%`;
-          currentQuery = currentQuery.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
-        }
-
-        if (stateFilter !== 'ALL') {
-          currentQuery = currentQuery.eq('estado_validacion', stateFilter);
-          if (stateFilter === 'ERROR' && subFilter !== 'ALL') {
-            currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
-          } else if (stateFilter === 'OBSERVADO') {
-            if (subFilter !== 'ALL') {
-              currentQuery = currentQuery.contains('errores_json', JSON.stringify([subFilter]));
-            }
-            if (filterObsIdOk === 'SAP_OK') {
-              const errorString = activeModule === 'compras' ? "OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)" : "OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO";
-              currentQuery = currentQuery.not('errores_json', 'cs', JSON.stringify([errorString]));
-            } else if (filterObsIdOk === 'SUNAT_OK') {
-              const errorString = activeModule === 'compras' ? "OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)" : "OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO";
-              currentQuery = currentQuery.not('errores_json', 'cs', JSON.stringify([errorString]));
-            }
-          }
-        }
-
-        if (docFilter !== 'ALL') {
-          currentQuery = currentQuery.eq('tipo_doc_pago', docFilter);
-        }
-
-        if (sireFilter !== 'ALL') {
-          if (sireFilter === 'OK') {
-            currentQuery = currentQuery.ilike('mensaje_sire', '%registro ok%');
-          } else if (sireFilter === 'DIF') {
-            currentQuery = currentQuery.ilike('mensaje_sire', '%diferencia%');
-          } else if (sireFilter === 'EMPTY') {
-            currentQuery = currentQuery.is('mensaje_sire', null);
-          }
-        }
-
-        currentQuery = currentQuery
-          .order('fecha_emision', { ascending: true })
-          .order('serie', { ascending: true })
-          .order('correlativo', { ascending: true })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
-
-        const { data, error } = await currentQuery;
-        if (error) throw error;
-
-        if (!data || data.length === 0) {
-          hasMore = false;
-        } else {
-          allRows = allRows.concat(data);
-          setExportProgress(allRows.length);
-          if (data.length < pageSize) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        }
-      }
-
+      const allRows = pagesResults.flat();
       if (!allRows || allRows.length === 0) return;
 
-      const wsData = allRows.map(r => {
+      const wsData = allRows.map((r) => {
         const rowObj = {
           'Mensaje SIRE': r.mensaje_sire || 'Registro OK.',
           'Tipo Doc': getDocDescription(r.tipo_doc_pago),
@@ -499,12 +592,13 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         return sanitizeExcelRow(rowObj);
       });
 
+      const XLSX = await import('xlsx');
       const ws = XLSX.utils.json_to_sheet(wsData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Conciliacion');
       XLSX.writeFile(wb, `Reporte_Conciliacion_${activePeriod || 'periodo'}.xlsx`);
     } catch (e) {
-      console.error("Error al exportar a Excel:", e);
+      console.error('Error al exportar a Excel:', e);
     } finally {
       setExportLoading(false);
     }
@@ -512,7 +606,6 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
 
   const totalPages = Math.ceil(totalRecords / recordsPerPage);
 
-  // Ventana de navegación inteligente de páginas
   const getPageNumbers = () => {
     const pages = [];
     const maxVisible = 5;
@@ -537,18 +630,20 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
 
   return (
     <div className="card-premium animate-fade-in mb-4">
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <div className="d-flex align-items-center gap-3">
+      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <div className="d-flex align-items-center gap-3 flex-wrap">
           <h4 className="mb-0 fw-bold">Resultados Unificados de Conciliación</h4>
           <select
-            className="form-select form-control-premium py-1 px-2"
-            style={{ width: 'auto', fontSize: '0.85rem' }}
+            className="form-select form-control-premium"
+            style={{ width: 'auto', minWidth: '155px', fontSize: '0.85rem' }}
             value={recordsPerPage}
             onChange={(e) => { setRecordsPerPage(parseInt(e.target.value, 10)); setCurrentPage(1); }}
           >
+            <option value={15}>Mostrar 15 filas</option>
             <option value={20}>Mostrar 20 filas</option>
             <option value={50}>Mostrar 50 filas</option>
             <option value={100}>Mostrar 100 filas</option>
+            <option value={250}>Mostrar 250 filas</option>
           </select>
         </div>
         <button
@@ -618,7 +713,6 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
           </select>
         </div>
 
-        {/* Filtro Dinámico por Grupo de Errores y Observaciones */}
         {stateFilter === 'ERROR' && (
           <div className="col-lg-2 animate-fade-in">
             <select
@@ -627,7 +721,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
               onChange={(e) => { setSubFilter(e.target.value); setCurrentPage(1); }}
             >
               <option value="ALL">Todos los Errores</option>
-              {visibleErrors.map(err => (
+              {visibleErrors.map((err) => (
                 <option key={err.value} value={err.value}>
                   {err.label}
                 </option>
@@ -644,7 +738,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
               onChange={(e) => { setSubFilter(e.target.value); setCurrentPage(1); }}
             >
               <option value="ALL">Todas las Obs.</option>
-              {visibleObservations.map(obs => (
+              {visibleObservations.map((obs) => (
                 <option key={obs.value} value={obs.value}>
                   {obs.label}
                 </option>
@@ -668,7 +762,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         )}
       </div>
 
-      {/* Segunda Fila de Filtros (Rango de Fechas, Serie y Correlativos) */}
+      {/* Segunda Fila de Filtros */}
       <div className="row g-2 mb-4 animate-fade-in">
         <div className="col-lg-2">
           <div className="input-group">
@@ -741,10 +835,9 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         </div>
       </div>
 
-      {/* Alerta del filtro de consistencia de identidad */}
       {filterObsIdOk !== 'ALL' && (
-        <div 
-          className="alert alert-info py-2.5 px-3 mb-3 border-0 rounded-3 d-flex align-items-center justify-content-between animate-fade-in" 
+        <div
+          className="alert alert-info py-2.5 px-3 mb-3 border-0 rounded-3 d-flex align-items-center justify-content-between animate-fade-in"
           style={{ backgroundColor: 'rgba(14, 165, 233, 0.1)', color: '#0369A1', border: '1px solid rgba(14, 165, 233, 0.25)', fontSize: '0.85rem' }}
         >
           <div>
@@ -762,14 +855,11 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         </div>
       )}
 
-      {/* Tabla Unificada */}
+      {/* Tabla Unificada con Esqueleto de Carga y Virtualización */}
       {loading ? (
-        <div className="text-center py-5">
-          <div className="spinner-border text-primary" role="status"></div>
-          <p className="text-muted mt-2">Cargando registros conciliados...</p>
-        </div>
+        <SkeletonTable rows={10} columns={11} title="Cargando registros conciliados..." />
       ) : totalRecords === 0 ? (
-        <div 
+        <div
           className="text-center py-5 rounded-3"
           style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
         >
@@ -777,7 +867,12 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
           <p className="text-muted mb-0 fw-semibold">No se encontraron registros que coincidan con la búsqueda.</p>
         </div>
       ) : (
-        <div className="table-responsive">
+        <div
+          ref={containerRef}
+          onScroll={onScroll}
+          className="table-responsive"
+          style={maxHeight ? { maxHeight, overflowY: 'auto' } : undefined}
+        >
           <table className="table table-hover table-dense align-middle text-nowrap mb-0">
             <thead>
               <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
@@ -812,85 +907,26 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
               </tr>
             </thead>
             <tbody>
-              {data.map(r => {
-                const diffBase = Math.abs(r.base_sap - r.base_sunat) > 0.05;
-                const diffIgv = Math.abs(r.igv_sap - r.igv_sunat) > 0.05;
-                const diffTotal = Math.abs(r.total_sap - r.total_sunat) > 0.05;
-
-                return (
-                  <tr key={r.id}>
-                    <td className="fw-semibold font-mono">{r.serie}-{r.correlativo}</td>
-                    <td className="font-mono">{r.fecha_emision || 'N/A'}</td>
-                    <td>{getDocDescription(r.tipo_doc_pago)}</td>
-                    <td className="font-mono">
-                      {activeModule === 'compras'
-                        ? (r.ruc_proveedor || r.nro_identidad_sunat || r.nro_identidad_sap || 'No Registrado')
-                        : (r.nro_identidad_sunat || 'No Registrado')
-                      }
-                    </td>
-                    <td className="text-truncate" style={{ maxWidth: '150px' }} title={r.nombre_sunat || r.nombre_sap}>
-                      {activeModule === 'compras'
-                        ? (r.nombre_sunat || r.nombre_sap || '(Falta en SUNAT)')
-                        : (r.nombre_sunat || '(Falta en SUNAT)')
-                      }
-                    </td>
-
-                    {isObs1 ? (
-                      <>
-                        <td className="font-mono">{formatIdentityType(r.tipo_identidad_sap)}</td>
-                        <td className="font-mono cell-mismatch">{formatIdentityType(r.tipo_identidad_sunat)}</td>
-                      </>
-                    ) : isObs2 ? (
-                      <>
-                        <td className="font-mono">{r.nro_identidad_sap || 'N/A'}</td>
-                        <td className="font-mono cell-mismatch">{r.nro_identidad_sunat || 'N/A'}</td>
-                      </>
-                    ) : (
-                      <>
-                        {/* Montos */}
-                        <td className="text-end font-mono">{r.base_sap.toFixed(2)}</td>
-                        <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
-                          {r.base_sunat.toFixed(2)}
-                        </td>
-
-                        <td className="text-end font-mono">{r.igv_sap.toFixed(2)}</td>
-                        <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
-                          {r.igv_sunat.toFixed(2)}
-                        </td>
-
-                        <td className="text-end font-mono">{r.total_sap.toFixed(2)}</td>
-                        <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
-                          {r.total_sunat.toFixed(2)}
-                        </td>
-                      </>
-                    )}
-
-                    {/* Mensaje SIRE */}
-                    <td className="text-truncate" style={{ maxWidth: '180px' }} title={r.mensaje_sire}>
-                      {r.mensaje_sire || <span className="text-muted font-mono">(Registro Huérfano)</span>}
-                    </td>
-
-                    {/* Badge Estado */}
-                    <td className="text-center">
-                      <span className={`badge badge-status badge-status-${r.estado_validacion.toLowerCase()}`}>
-                        {r.estado_validacion}
-                      </span>
-                    </td>
-
-                    {/* Ver Errores */}
-                    <td className="text-center">
-                      <button
-                        onClick={() => setSelectedRow(r)}
-                        className="btn btn-sm btn-outline-secondary p-1 border-0"
-                        style={{ cursor: 'pointer' }}
-                        title="Ver detalle de auditoría"
-                      >
-                        <FiEye />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+              {isVirtualized && topPaddingHeight > 0 && (
+                <tr aria-hidden="true">
+                  <td colSpan={14} style={{ height: `${topPaddingHeight}px`, padding: 0, border: 0 }} />
+                </tr>
+              )}
+              {filasVirtualizadas.map((r) => (
+                <FilaDocumentoCompra
+                  key={r.id}
+                  r={r}
+                  activeModule={activeModule}
+                  isObs1={isObs1}
+                  isObs2={isObs2}
+                  onSelectRow={setSelectedRow}
+                />
+              ))}
+              {isVirtualized && bottomPaddingHeight > 0 && (
+                <tr aria-hidden="true">
+                  <td colSpan={14} style={{ height: `${bottomPaddingHeight}px`, padding: 0, border: 0 }} />
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -898,9 +934,9 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
 
       {/* Paginación */}
       {totalPages > 1 && (
-        <div className="d-flex justify-content-between align-items-center mt-3 pt-3" style={{ borderTop: '1px solid var(--border-color)' }}>
+        <div className="d-flex justify-content-between align-items-center mt-3 pt-3 flex-wrap gap-2" style={{ borderTop: '1px solid var(--border-color)' }}>
           <span className="text-muted" style={{ fontSize: '0.85rem' }}>
-            Mostrando {((currentPage - 1) * recordsPerPage) + 1} - {Math.min(currentPage * recordsPerPage, totalRecords)} de {totalRecords} registros.
+            Mostrando {(currentPage - 1) * recordsPerPage + 1} - {Math.min(currentPage * recordsPerPage, totalRecords)} de {totalRecords.toLocaleString('es-PE')} registros.
           </span>
           <nav>
             <ul className="pagination pagination-premium mb-0">
@@ -919,10 +955,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
                 }
                 return (
                   <li key={`page-${num}`} className={`page-item ${currentPage === num ? 'active' : ''}`}>
-                    <button
-                      className="page-link"
-                      onClick={() => setCurrentPage(num)}
-                    >
+                    <button className="page-link" onClick={() => setCurrentPage(num)}>
                       {num}
                     </button>
                   </li>

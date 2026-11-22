@@ -1,5 +1,29 @@
 {
+  "regions": ["gru1", "iad1"],
   "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" },
+        { "key": "CDN-Cache-Control", "value": "public, max-age=31536000, immutable" },
+        { "key": "Vercel-CDN-Cache-Control", "value": "public, max-age=31536000, immutable" },
+        { "key": "Vary", "value": "Accept-Encoding" }
+      ]
+    },
+    {
+      "source": "/(.*)\\.(webp|avif|svg|png|woff2)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" },
+        { "key": "CDN-Cache-Control", "value": "public, max-age=31536000, immutable" },
+        { "key": "Vary", "value": "Accept, Accept-Encoding" }
+      ]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [
@@ -10,9 +34,10 @@
         { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
         { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
         { "key": "Cross-Origin-Resource-Policy", "value": "same-origin" },
+        { "key": "Vary", "value": "Accept-Encoding" },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; upgrade-insecure-requests;"
+          "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; upgrade-insecure-requests;"
         }
       ]
     }

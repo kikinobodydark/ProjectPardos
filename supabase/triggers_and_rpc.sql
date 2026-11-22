@@ -4,12 +4,12 @@
 CREATE OR REPLACE FUNCTION public.get_user_estudio()
 RETURNS UUID AS $$
     SELECT estudio_id FROM public.usuarios WHERE id = (SELECT auth.uid()) AND activo = true;
-$$ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public;
 
 CREATE OR REPLACE FUNCTION public.get_user_rol()
 RETURNS TEXT AS $$
     SELECT rol FROM public.usuarios WHERE id = (SELECT auth.uid()) AND activo = true;
-$$ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public;
 
 CREATE OR REPLACE FUNCTION public.user_has_empresa_access(p_empresa_id UUID)
 RETURNS BOOLEAN AS $$
@@ -28,7 +28,7 @@ RETURNS BOOLEAN AS $$
               )
           )
     );
-$$ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public;
 
 -- ==========================================
 -- 2. TRIGGER DE ASIGNACIÓN AUTOMÁTICA DE ESTUDIO EN EMPRESAS (Hardened)

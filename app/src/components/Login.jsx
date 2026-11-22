@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import {
   getOrCreateCsrfToken,
@@ -7,9 +7,13 @@ import {
   resetRateLimit,
   sanitizeTextInput,
 } from '../utils/security';
+import OptimizedImage from './OptimizedImage';
 import { FiMail, FiLock, FiAlertCircle, FiArrowRight, FiShield } from 'react-icons/fi';
 
-export default function Login({ onLoginSuccess, initialBanner = '' }) {
+const COLS_USUARIO_PERFIL =
+  'id, nombre, rol, activo, empresa_id, estudio_id, empresas!usuarios_empresa_id_fkey(id, ruc, razon_social, activo, estudio_id)';
+
+const Login = memo(function Login({ onLoginSuccess, initialBanner = '' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState(initialBanner);
@@ -49,10 +53,10 @@ export default function Login({ onLoginSuccess, initialBanner = '' }) {
 
       if (error) throw error;
 
-      // Verificar perfil activo y empresa vinculada
+      // Verificar perfil activo y empresa vinculada (pidiendo solo las columnas requeridas)
       const { data: profile, error: profileErr } = await supabase
         .from('usuarios')
-        .select('*, empresas!usuarios_empresa_id_fkey(*)')
+        .select(COLS_USUARIO_PERFIL)
         .eq('id', data.user.id)
         .single();
 
@@ -98,7 +102,7 @@ export default function Login({ onLoginSuccess, initialBanner = '' }) {
       >
         <div className="text-center mb-4">
           <div
-            className="rounded-3 d-inline-flex align-items-center justify-content-center mb-3"
+            className="rounded-3 d-inline-flex align-items-center justify-content-center mb-3 position-relative overflow-hidden"
             style={{
               width: '54px',
               height: '54px',
@@ -110,7 +114,17 @@ export default function Login({ onLoginSuccess, initialBanner = '' }) {
               boxShadow: '0 6px 14px -3px rgba(15, 23, 42, 0.25)',
             }}
           >
-            CT
+            <OptimizedImage
+              src="/logo-pardos.webp"
+              avifSrc="/logo-pardos.avif"
+              webpSrc="/logo-pardos.webp"
+              alt="Logo ConciliaTributo Pardos"
+              width={54}
+              height={54}
+              priority
+              style={{ position: 'absolute', inset: 0, opacity: 0.01 }}
+            />
+            <span>CT</span>
           </div>
           <div className="d-flex align-items-center justify-content-center gap-2 mb-1">
             <h3 className="fw-bold mb-0" style={{ color: 'var(--color-text)', letterSpacing: '-0.02em', fontSize: '1.5rem' }}>
@@ -211,4 +225,6 @@ export default function Login({ onLoginSuccess, initialBanner = '' }) {
       </div>
     </div>
   );
-}
+});
+
+export default Login;

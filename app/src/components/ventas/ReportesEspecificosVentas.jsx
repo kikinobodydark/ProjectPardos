@@ -3,7 +3,7 @@
 // Cada reporte muestra las columnas pertinentes a su validación, permite
 // filtrar por resultado (Correctos / Incorrectos) y exportar a Excel.
 // ============================================================================
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { FiDownload, FiEye, FiCheckCircle, FiAlertTriangle, FiXCircle } from 'react-icons/fi';
 import {
   REPORTES_ESPECIFICOS, calcularIndicadores, calcularSecuencias,
@@ -13,7 +13,7 @@ import { INCIDENCIAS, ESTADOS, descripcionTipoCP, descripcionTipoIdentidad } fro
 import { formatoMonto, dentroDeTolerancia } from '../../utils/ventas/montos';
 import { validarImportes } from '../../utils/ventas/reglas';
 
-export default function ReportesEspecificosVentas({
+const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
   docs, todosDocs, activePeriod, onSelectDoc, onFiltrarCodigo, reporteInicial = 'resumen',
 }) {
   const [reporteId, setReporteId] = useState(reporteInicial);
@@ -708,4 +708,6 @@ export default function ReportesEspecificosVentas({
       )}
     </div>
   );
-}
+});
+
+export default ReportesEspecificosVentas;

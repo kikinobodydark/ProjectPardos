@@ -153,3 +153,151 @@ if (fs.existsSync(sapPath) && fs.existsSync(sunatPath)) {
 
   console.log('\n✓ Todos los invariantes contables y pruebas funcionales con datos reales se cumplieron.');
 }
+
+
+// ============================================================================
+// 3. VERIFICACIÓN DE RENDIMIENTO, TELEMETRÍA, POOL, WORKERS Y REDES LENTAS
+// ============================================================================
+import {
+  startSpan,
+  getTelemetrySummary,
+  clearTelemetry,
+  createInstrumentedFetch,
+} from './src/utils/telemetry.js';
+import { getNetworkProfile, simulateNetworkProfile } from './src/utils/networkProfile.js';
+import { executeParallelBatches, runCpuTaskInWorker } from './src/utils/jobQueue.js';
+import { calculateVirtualRange } from './src/utils/useVirtualList.js';
+
+console.log('\n=== 3. PRUEBAS DE OPTIMIZACIÓN DE RENDIMIENTO Y REDES LENTAS ===');
+
+// 3.1 OpenTelemetry Tracing + Detección de peticiones lentas
+{
+  clearTelemetry();
+  const fastSpan = startSpan('DB:fast_query');
+  fastSpan.end({ thresholdMs: 500 });
+
+  const slowSpan = startSpan('DB:slow_query');
+  slowSpan.end({ thresholdMs: 0 }); // forzar detección como petición lenta
+
+  const summary = getTelemetrySummary();
+  assert.strictEqual(summary.totalSpans, 2, 'Debe registrar 2 spans de OpenTelemetry');
+  assert.strictEqual(summary.slowCount, 1, 'Debe detectar 1 petición lenta');
+  assert.ok(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/.test(fastSpan.traceparent), 'Formato W3C traceparent válido');
+}
+
+// 3.2 Deduplicación de llamadas concurrentes idénticas + Pool de Conexiones + Balanceo Multi-Instancia
+{
+  clearTelemetry();
+  let underlyingNetworkCalls = 0;
+  const seenTraceparents = [];
+  const hitHosts = [];
+
+  const mockFetch = async (url, init) => {
+    underlyingNetworkCalls += 1;
+    hitHosts.push(new URL(url).origin);
+    seenTraceparents.push(init?.headers?.get('traceparent'));
+    await new Promise((r) => setTimeout(r, 25));
+    return new Response(JSON.stringify({ ok: true, url }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  const instrumented = createInstrumentedFetch({
+    baseFetch: mockFetch,
+    maxConcurrent: 2,
+    primaryUrl: 'https://primary.supabase.co',
+    readUrls: ['https://replica-1.supabase.co', 'https://replica-2.supabase.co'],
+  });
+
+  // Lanzar 3 llamadas GET idénticas en paralelo -> deben deduplicarse en 1 sola llamada real
+  const [r1, r2, r3] = await Promise.all([
+    instrumented('https://primary.supabase.co/rest/v1/empresas?select=id,ruc', { method: 'GET' }),
+    instrumented('https://primary.supabase.co/rest/v1/empresas?select=id,ruc', { method: 'GET' }),
+    instrumented('https://primary.supabase.co/rest/v1/empresas?select=id,ruc', { method: 'GET' }),
+  ]);
+
+  assert.strictEqual(underlyingNetworkCalls, 1, 'Las 3 peticiones GET idénticas concurrentes deben deduplicarse en 1 llamada HTTP');
+  assert.strictEqual((await r1.json()).ok, true);
+  assert.strictEqual((await r2.json()).ok, true);
+  assert.strictEqual((await r3.json()).ok, true);
+
+  // Segunda consulta distinta debe balancearse a la siguiente réplica (Round-Robin)
+  await instrumented('https://primary.supabase.co/rest/v1/periodos_carga?select=id', { method: 'GET' });
+  assert.deepStrictEqual(
+    hitHosts,
+    ['https://replica-1.supabase.co', 'https://replica-2.supabase.co'],
+    'El tráfico de lectura debe repartirse en Round-Robin entre las instancias'
+  );
+  assert.ok(seenTraceparents.every((tp) => /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/.test(tp)), 'Todas las llamadas incluyen traceparent');
+}
+
+// 3.3 Cola de Trabajo Paralela (JobQueue) y Worker Fallback
+{
+  const items = Array.from({ length: 25 }, (_, i) => i + 1);
+  const batchesProcessed = [];
+  await executeParallelBatches(
+    items,
+    10,
+    async (chunk, idx) => {
+      batchesProcessed.push({ idx, len: chunk.length });
+    },
+    { concurrency: 3, label: 'TestParallelBatch' }
+  );
+  assert.strictEqual(batchesProcessed.length, 3, '25 elementos en bloques de 10 deben generar 3 lotes paralelos');
+
+  const workerRes = await runCpuTaskInWorker('CONCILIAR_VENTAS', {
+    sap: [
+      { linea: 1, clave: '03|B805|99', tipo_doc_pago: '03', serie: 'B805', correlativo: '99', fecha_emision: '2026-06-01', tipo_identidad: '1', nro_identidad: '45401715', nombre: 'TEST WORKER', base: 10000, igv: 1800, exonerado: 0, inafecto: 0, otros: 0, total: 11800, estado: '1' },
+    ],
+    sunat: [
+      { linea: 1, clave: '03|B805|99', tipo_doc_pago: '03', serie: 'B805', correlativo: '99', fecha_emision: '2026-06-01', tipo_identidad: '1', nro_identidad: '45401715', nombre: 'TEST WORKER', base: 10000, igv: 1800, exonerado: 0, inafecto: 0, otros: 0, total: 11800, estado: '1' },
+    ],
+  });
+  assert.strictEqual(workerRes.docs.length, 1);
+  assert.strictEqual(workerRes.docs[0].estado, 'OK');
+}
+
+// 3.4 Virtualización de Listas Largas
+{
+  const v = calculateVirtualRange({
+    totalCount: 500,
+    scrollTop: 1800,
+    viewportHeight: 560,
+    rowHeight: 36,
+    overscan: 8,
+    enabled: true,
+  });
+  assert.strictEqual(v.isVirtualized, true);
+  assert.ok(v.endIndex - v.startIndex < 40, 'En una lista de 500 filas solo debe renderizar ~32 nodos DOM en el viewport');
+  assert.strictEqual(v.topPaddingHeight + (v.endIndex - v.startIndex) * 36 + v.bottomPaddingHeight, 500 * 36);
+}
+
+// 3.5 Simulación y Prueba en Móviles y Redes Lentas (3G / Save-Data)
+{
+  simulateNetworkProfile({
+    isMobile: true,
+    isSlowNetwork: true,
+    saveData: true,
+    effectiveType: '3g',
+    rtt: 480,
+    downlink: 0.9,
+  });
+  const slowProfile = getNetworkProfile();
+  assert.strictEqual(slowProfile.isMobile, true);
+  assert.strictEqual(slowProfile.isSlowNetwork, true);
+  assert.strictEqual(slowProfile.recommendedPageSize, 15, 'En móvil/red lenta debe reducir la paginación a 15 filas');
+  assert.strictEqual(slowProfile.recommendedBatchSize, 400, 'En red lenta debe reducir los lotes a 400 registros');
+  assert.strictEqual(slowProfile.recommendedConcurrency, 2, 'En red lenta debe limitar la concurrencia a 2');
+  simulateNetworkProfile(null);
+}
+
+// 3.6 Verificación de Imágenes WebP / AVIF y Vista SQL sin N+1
+{
+  assert.ok(fs.existsSync(path.resolve('./public/logo-pardos.webp')), 'Debe existir logo-pardos.webp');
+  assert.ok(fs.existsSync(path.resolve('./public/logo-pardos.avif')), 'Debe existir logo-pardos.avif');
+  const viewsSql = fs.readFileSync(path.resolve('../supabase/views.sql'), 'utf-8');
+  assert.ok(viewsSql.includes('LEFT JOIN public.v_resumen_ventas'), 'v_historial_cargas debe usar LEFT JOIN pre-agregado sin subconsultas N+1');
+}
+
+console.log('✓ Todas las pruebas de rendimiento, telemetría, pool, workers, virtualización y redes lentas pasaron con éxito.');

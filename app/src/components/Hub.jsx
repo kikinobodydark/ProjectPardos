@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, memo } from 'react';
 import { 
   FiTrendingUp, 
   FiTruck, 
@@ -12,9 +12,10 @@ import {
   FiCalendar,
   FiLock
 } from 'react-icons/fi';
+import OptimizedImage from './OptimizedImage';
 import './Hub.css';
 
-export default function Hub({ 
+const Hub = memo(function Hub({ 
   userProfile, 
   activeCompany, 
   companies = [], 
@@ -127,8 +128,18 @@ export default function Hub({
         {/* Cabecera Principal / Header */}
         <header className="hub-header">
           <div className="hub-brand-group">
-            <div className="hub-brand-logo" title="ConciliaTributo - Pardos Chicken">
-              CT
+            <div className="hub-brand-logo position-relative overflow-hidden" title="ConciliaTributo - Pardos Chicken">
+              <OptimizedImage
+                src="/logo-pardos.webp"
+                avifSrc="/logo-pardos.avif"
+                webpSrc="/logo-pardos.webp"
+                alt="ConciliaTributo Pardos Chicken"
+                width={44}
+                height={44}
+                priority
+                style={{ position: 'absolute', inset: 0, opacity: 0.01 }}
+              />
+              <span>CT</span>
             </div>
             <div>
               <h1 className="hub-brand-title">
@@ -363,4 +374,6 @@ export default function Hub({
       </div>
     </div>
   );
-}
+});
+
+export default Hub;

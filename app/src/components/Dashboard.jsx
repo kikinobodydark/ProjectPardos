@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, memo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import {
@@ -6,11 +6,15 @@ import {
 } from 'react-icons/fi';
 import { useDocumentosVentas } from './ventas/useDocumentosVentas';
 import TarjetasIndicadoresVentas from './ventas/TarjetasIndicadoresVentas';
+import { SkeletonDashboard, SkeletonKpiGrid } from './SkeletonLoader';
 import { INCIDENCIAS } from '../utils/ventas/catalogos';
 import { REPORTES_ESPECIFICOS, calcularIndicadores, exportarExcelVentas } from '../utils/ventas/reportes';
 import { formatoMonto, dentroDeTolerancia } from '../utils/ventas/montos';
 
-export default function Dashboard({ periodId, activePeriod, onNavigateToReconciliation, activeModule }) {
+const COLS_RESUMEN_COMPRAS =
+  'total_registros, ok_registros, error_registros, observado_registros, sum_base_sap, sum_base_sunat, sum_igv_sap, sum_igv_sunat, sum_total_sap, sum_total_sunat';
+
+const Dashboard = memo(function Dashboard({ periodId, activePeriod, onNavigateToReconciliation, activeModule }) {
   if (activeModule !== 'compras') {
     return (
       <DashboardVentas
@@ -27,12 +31,14 @@ export default function Dashboard({ periodId, activePeriod, onNavigateToReconcil
       activeModule={activeModule}
     />
   );
-}
+});
+
+export default Dashboard;
 
 // ============================================================================
 // Dashboard del módulo de Ventas (Secciones 3.B, 8, 9, 11 y 13)
 // ============================================================================
-function DashboardVentas({ periodId, activePeriod, onNavigateToReconciliation }) {
+const DashboardVentas = memo(function DashboardVentas({ periodId, activePeriod, onNavigateToReconciliation }) {
   const { data: docs = [], isLoading } = useDocumentosVentas(periodId, true);
   const ind = useMemo(() => calcularIndicadores(docs), [docs]);
 
@@ -72,20 +78,17 @@ function DashboardVentas({ periodId, activePeriod, onNavigateToReconciliation })
         </div>
       </div>
 
-      {/* 10 Indicadores Generales (Sección 3.B) */}
-      <TarjetasIndicadoresVentas
-        indicadores={ind}
-        totalSinFiltro={docs.length}
-        onSelectKpi={(id, filtro) => irAConciliacion({ vista: 'tabla', kpi: id, filtros: filtro })}
-      />
-
       {isLoading ? (
-        <div className="card-premium text-center py-5">
-          <div className="spinner-border text-primary" role="status" />
-          <p className="text-muted mt-2 mb-0">Calculando indicadores del período...</p>
-        </div>
+        <SkeletonDashboard kpiCount={10} />
       ) : (
         <>
+          {/* 10 Indicadores Generales (Sección 3.B) */}
+          <TarjetasIndicadoresVentas
+            indicadores={ind}
+            totalSinFiltro={docs.length}
+            onSelectKpi={(id, filtro) => irAConciliacion({ vista: 'tabla', kpi: id, filtros: filtro })}
+          />
+
           <div className="row g-3 mb-3">
             {/* Comparativa monetaria por los conceptos verificados */}
             <div className="col-lg-7">
@@ -250,29 +253,29 @@ function DashboardVentas({ periodId, activePeriod, onNavigateToReconciliation })
       )}
     </div>
   );
-}
+});
 
 // ============================================================================
-// Dashboard existente del módulo de Compras (sin modificaciones)
+// Dashboard del módulo de Compras (consultas en paralelo + columnas explícitas + skeleton)
 // ============================================================================
-function DashboardCompras({ periodId, onNavigateToReconciliation, activeModule }) {
+const DashboardCompras = memo(function DashboardCompras({ periodId, onNavigateToReconciliation, activeModule }) {
   const { data: stats = {
     total: 0, ok: 0, errors: 0, observed: 0,
     baseSap: 0, baseSunat: 0, igvSap: 0, igvSunat: 0, totalSap: 0, totalSunat: 0,
     countObs1: 0, countObs2: 0, countSapOk: 0, countSunatOk: 0,
-  } } = useQuery({
+  }, isLoading } = useQuery({
     queryKey: ['dashboardStats', periodId, activeModule],
     queryFn: async () => {
       const [resumenRes, obs1Res, obs2Res, sapObsIdOkRes, sunatObsIdOkRes] = await Promise.all([
-        supabase.from('v_resumen_compras').select('*').eq('periodo_id', periodId).single(),
-        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+        supabase.from('v_resumen_compras').select(COLS_RESUMEN_COMPRAS).eq('periodo_id', periodId).single(),
+        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
           .contains('errores_json', JSON.stringify(['OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)'])),
-        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
           .contains('errores_json', JSON.stringify(['OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)'])),
-        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
           .eq('estado_validacion', 'OBSERVADO').or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null')
           .not('errores_json', 'cs', '["OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)"]'),
-        supabase.from('detalle_compras').select('*', { count: 'exact', head: true }).eq('periodo_id', periodId)
+        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
           .eq('estado_validacion', 'OBSERVADO').or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null')
           .not('errores_json', 'cs', '["OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)"]'),
       ]);
@@ -280,10 +283,10 @@ function DashboardCompras({ periodId, onNavigateToReconciliation, activeModule }
       if (resumenRes.error && resumenRes.error.code !== 'PGRST116') throw resumenRes.error;
       const summary = resumenRes.data || {};
       return {
-        total: parseInt(summary.total_registros) || 0,
-        ok: parseInt(summary.ok_registros) || 0,
-        errors: parseInt(summary.error_registros) || 0,
-        observed: parseInt(summary.observado_registros) || 0,
+        total: parseInt(summary.total_registros, 10) || 0,
+        ok: parseInt(summary.ok_registros, 10) || 0,
+        errors: parseInt(summary.error_registros, 10) || 0,
+        observed: parseInt(summary.observado_registros, 10) || 0,
         baseSap: parseFloat(summary.sum_base_sap) || 0,
         baseSunat: parseFloat(summary.sum_base_sunat) || 0,
         igvSap: parseFloat(summary.sum_igv_sap) || 0,
@@ -314,56 +317,60 @@ function DashboardCompras({ periodId, onNavigateToReconciliation, activeModule }
         </div>
       </div>
 
-      <div className="row g-3 mb-4">
-        <div className="col-xl-3 col-sm-6">
-          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}>
-            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: '#4F46E5', fontSize: '1.4rem' }}>
-              <FiLayers />
+      {isLoading ? (
+        <SkeletonKpiGrid count={4} />
+      ) : (
+        <div className="row g-3 mb-4">
+          <div className="col-xl-3 col-sm-6">
+            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}>
+              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: '#4F46E5', fontSize: '1.4rem' }}>
+                <FiLayers />
+              </div>
+              <div className="text-truncate">
+                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>TOTAL COMPROBANTES</div>
+                <h3 className="fw-bold mb-0 font-mono">{stats.total.toLocaleString('es-PE')}</h3>
+                <small className="text-muted" style={{ fontSize: '0.75rem' }}>100% de la carga procesada</small>
+              </div>
             </div>
-            <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>TOTAL COMPROBANTES</div>
-              <h3 className="fw-bold mb-0 font-mono">{stats.total.toLocaleString('es-PE')}</h3>
-              <small className="text-muted" style={{ fontSize: '0.75rem' }}>100% de la carga procesada</small>
+          </div>
+          <div className="col-xl-3 col-sm-6">
+            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OK')}>
+              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '1.4rem' }}>
+                <FiCheckCircle />
+              </div>
+              <div className="text-truncate">
+                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>REGISTROS CORRECTOS</div>
+                <h3 className="fw-bold mb-0 text-success font-mono">{stats.ok.toLocaleString('es-PE')}</h3>
+                <small className="text-success font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.ok)} del total</small>
+              </div>
+            </div>
+          </div>
+          <div className="col-xl-3 col-sm-6">
+            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OBSERVADO')}>
+              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#D97706', fontSize: '1.4rem' }}>
+                <FiAlertTriangle />
+              </div>
+              <div className="text-truncate">
+                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>OBSERVACIONES</div>
+                <h3 className="fw-bold mb-0 text-warning font-mono">{stats.observed.toLocaleString('es-PE')}</h3>
+                <small className="text-warning font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.observed)} de advertencia</small>
+              </div>
+            </div>
+          </div>
+          <div className="col-xl-3 col-sm-6">
+            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ERROR')}>
+              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(220, 38, 38, 0.1)', color: '#DC2626', fontSize: '1.4rem' }}>
+                <FiXCircle />
+              </div>
+              <div className="text-truncate">
+                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>CON DISCREPANCIAS / ERROR</div>
+                <h3 className="fw-bold mb-0 text-danger font-mono">{stats.errors.toLocaleString('es-PE')}</h3>
+                <small className="text-danger font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.errors)} críticos</small>
+              </div>
             </div>
           </div>
         </div>
-        <div className="col-xl-3 col-sm-6">
-          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OK')}>
-            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '1.4rem' }}>
-              <FiCheckCircle />
-            </div>
-            <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>REGISTROS CORRECTOS</div>
-              <h3 className="fw-bold mb-0 text-success font-mono">{stats.ok.toLocaleString('es-PE')}</h3>
-              <small className="text-success font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.ok)} del total</small>
-            </div>
-          </div>
-        </div>
-        <div className="col-xl-3 col-sm-6">
-          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OBSERVADO')}>
-            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#D97706', fontSize: '1.4rem' }}>
-              <FiAlertTriangle />
-            </div>
-            <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>OBSERVACIONES</div>
-              <h3 className="fw-bold mb-0 text-warning font-mono">{stats.observed.toLocaleString('es-PE')}</h3>
-              <small className="text-warning font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.observed)} de advertencia</small>
-            </div>
-          </div>
-        </div>
-        <div className="col-xl-3 col-sm-6">
-          <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ERROR')}>
-            <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(220, 38, 38, 0.1)', color: '#DC2626', fontSize: '1.4rem' }}>
-              <FiXCircle />
-            </div>
-            <div className="text-truncate">
-              <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>CON DISCREPANCIAS / ERROR</div>
-              <h3 className="fw-bold mb-0 text-danger font-mono">{stats.errors.toLocaleString('es-PE')}</h3>
-              <small className="text-danger font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.errors)} críticos</small>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
-}
+});

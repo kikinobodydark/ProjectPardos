@@ -177,7 +177,8 @@ WITH (security_invoker = true) AS
      JOIN public.empresas e ON pc.empresa_id = e.id
   WHERE dv.estado_validacion::text = ANY (ARRAY['ERROR'::character varying, 'OBSERVADO'::character varying]::text[]);
 
--- Vista 5: Historial detallado de cargas
+-- Vista 5: Historial detallado de cargas (OPTIMIZADA SIN CONSULTAS N+1 CORRELACIONADAS)
+-- Reemplaza las 4 subconsultas correlacionadas por fila con LEFT JOIN agregados en una sola pasada.
 CREATE OR REPLACE VIEW public.v_historial_cargas 
 WITH (security_invoker = true) AS
  SELECT pc.id AS periodo_id,
@@ -190,39 +191,25 @@ WITH (security_invoker = true) AS
     e.razon_social AS empresa_nombre,
     pc.empresa_id,
     u.nombre AS usuario_nombre,
-        CASE
-            WHEN pc.modulo::text = 'compras'::text THEN ( SELECT count(*) AS count
-               FROM public.detalle_compras dv
-              WHERE dv.periodo_id = pc.id)
-            ELSE ( SELECT count(*) AS count
-               FROM public.detalle_ventas dv
-              WHERE dv.periodo_id = pc.id)
-        END AS total_registros,
-        CASE
-            WHEN pc.modulo::text = 'compras'::text THEN ( SELECT count(*) AS count
-               FROM public.detalle_compras dv
-              WHERE dv.periodo_id = pc.id AND dv.estado_validacion::text = 'OK'::text)
-            ELSE ( SELECT count(*) AS count
-               FROM public.detalle_ventas dv
-              WHERE dv.periodo_id = pc.id AND dv.estado_validacion::text = 'OK'::text)
-        END AS ok_registros,
-        CASE
-            WHEN pc.modulo::text = 'compras'::text THEN ( SELECT count(*) AS count
-               FROM public.detalle_compras dv
-              WHERE dv.periodo_id = pc.id AND dv.estado_validacion::text = 'ERROR'::text)
-            ELSE ( SELECT count(*) AS count
-               FROM public.detalle_ventas dv
-              WHERE dv.periodo_id = pc.id AND dv.estado_validacion::text = 'ERROR'::text)
-        END AS error_registros,
-        CASE
-            WHEN pc.modulo::text = 'compras'::text THEN ( SELECT count(*) AS count
-               FROM public.detalle_compras dv
-              WHERE dv.periodo_id = pc.id AND dv.estado_validacion::text = 'OBSERVADO'::text)
-            ELSE ( SELECT count(*) AS count
-               FROM public.detalle_ventas dv
-              WHERE dv.periodo_id = pc.id AND dv.estado_validacion::text = 'OBSERVADO'::text)
-        END AS observado_registros
+    CASE
+        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.total_registros, 0::bigint)
+        ELSE COALESCE(rv.total_registros, 0::bigint)
+    END AS total_registros,
+    CASE
+        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.ok_registros, 0::bigint)
+        ELSE COALESCE(rv.ok_registros, 0::bigint)
+    END AS ok_registros,
+    CASE
+        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.error_registros, 0::bigint)
+        ELSE COALESCE(rv.error_registros, 0::bigint)
+    END AS error_registros,
+    CASE
+        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.observado_registros, 0::bigint)
+        ELSE COALESCE(rv.observado_registros, 0::bigint)
+    END AS observado_registros
    FROM public.periodos_carga pc
      JOIN public.empresas e ON pc.empresa_id = e.id
      LEFT JOIN public.usuarios u ON pc.usuario_id = u.id
+     LEFT JOIN public.v_resumen_ventas rv ON pc.modulo::text <> 'compras'::text AND rv.periodo_id = pc.id
+     LEFT JOIN public.v_resumen_compras rc ON pc.modulo::text = 'compras'::text AND rc.periodo_id = pc.id
   ORDER BY pc.fecha_carga DESC, pc.version DESC;

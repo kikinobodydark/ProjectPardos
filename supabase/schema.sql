@@ -178,3 +178,21 @@ CREATE INDEX IF NOT EXISTS idx_usuarios_estudio_id ON public.usuarios (estudio_i
 CREATE INDEX IF NOT EXISTS idx_empresas_estudio_id ON public.empresas (estudio_id);
 CREATE INDEX IF NOT EXISTS idx_usuario_empresas_empresa_id ON public.usuario_empresas (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_auditoria_estudio_id ON public.auditoria (estudio_id);
+
+-- 10. Índices Compuestos para Paginación, Ordenamiento y Consultas sin N+1
+CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_orden
+  ON public.detalle_ventas (periodo_id, fecha_emision, serie, correlativo);
+CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_estado
+  ON public.detalle_ventas (periodo_id, estado_validacion);
+CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_orden
+  ON public.detalle_compras (periodo_id, fecha_emision, serie, correlativo);
+CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_estado
+  ON public.detalle_compras (periodo_id, estado_validacion);
+CREATE INDEX IF NOT EXISTS idx_detalle_compras_errores_json_gin
+  ON public.detalle_compras USING gin (errores_json);
+CREATE INDEX IF NOT EXISTS idx_periodos_carga_empresa_modulo_estado
+  ON public.periodos_carga (empresa_id, modulo, estado, fecha_carga DESC);
+
+-- 11. Configuración de Pool de Conexiones (Supavisor / PgBouncer Transaction Mode)
+ALTER ROLE authenticated SET statement_timeout = '15s';
+ALTER ROLE authenticated SET idle_in_transaction_session_timeout = '10s';
