@@ -3,7 +3,7 @@
 // Muestra los valores de ambos sistemas, las diferencias por concepto, la
 // evaluación de identidad, cortesías y la trazabilidad de cada regla aplicada.
 // ============================================================================
-import React from 'react';
+import React, { memo } from 'react';
 import { createPortal } from 'react-dom';
 import { FiX, FiCheckCircle, FiAlertTriangle, FiGift } from 'react-icons/fi';
 import { ESTADOS, REGLAS, descripcionTipoCP, descripcionTipoIdentidad } from '../../utils/ventas/catalogos';
@@ -11,7 +11,7 @@ import { formatoMonto, dentroDeTolerancia } from '../../utils/ventas/montos';
 import { CONCEPTOS_IMPORTE } from '../../utils/ventas/reglas';
 import { obtenerEvaluacionIdentidad } from '../../utils/ventas/reportes';
 
-export default function ModalDetalleDocumentoVentas({ doc, onClose, onFiltrarCodigo }) {
+const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ doc, onClose, onFiltrarCodigo }) {
   if (!doc) return null;
   const est = ESTADOS[doc.estado] || ESTADOS.OK;
   const evId = obtenerEvaluacionIdentidad(doc);
@@ -327,4 +327,6 @@ export default function ModalDetalleDocumentoVentas({ doc, onClose, onFiltrarCod
     </div>,
     document.body
   );
-}
+});
+
+export default ModalDetalleDocumentoVentas;

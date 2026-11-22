@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* Tipografía cargada de forma asíncrona no bloqueante desde index.html / thirdPartyLoader */
 
 :root {
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -552,3 +552,293 @@ h6, .h6 { font-size: 0.9rem !important; }
   box-shadow: 0 0 25px rgba(16, 185, 129, 0.7) !important;
 }
 
+
+/* ==========================================================================
+   Esqueletos de Carga (Skeleton Shimmer) & Optimización para Redes Lentas
+   ========================================================================== */
+@keyframes skeletonShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #E2E8F0 25%, #F1F5F9 50%, #E2E8F0 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+  display: inline-block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer,
+  .animate-fade-in {
+    animation: none !important;
+  }
+}
+
+.slow-network-mode .animate-fade-in,
+.slow-network-mode .card-premium {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* ==========================================================================
+   Corrección de Selectores (.form-select) y Utilidades de Espaciado
+   ========================================================================== */
+.form-select.form-control-premium {
+  padding-top: 0.42rem;
+  padding-bottom: 0.42rem;
+  padding-left: 0.75rem;
+  padding-right: 2.25rem !important;
+  background-position: right 0.65rem center;
+  background-size: 12px 10px;
+  line-height: 1.4;
+}
+
+/* Utilidades fraccionales usadas en botones, chips e iconos */
+.me-1\.5 { margin-right: 0.4rem !important; }
+.ms-1\.5 { margin-left: 0.4rem !important; }
+.gap-1\.5 { gap: 0.4rem !important; }
+.py-1\.5 { padding-top: 0.4rem !important; padding-bottom: 0.4rem !important; }
+.py-2\.5 { padding-top: 0.625rem !important; padding-bottom: 0.625rem !important; }
+.px-2\.5 { padding-left: 0.65rem !important; padding-right: 0.65rem !important; }
+.p-2\.5 { padding: 0.65rem !important; }
+.me-2\.5 { margin-right: 0.65rem !important; }
+
+/* ==========================================================================
+   Diseño UI/UX Pro Max (Data-Dense Financial Dashboard)
+   1. Panel de Filtros de Incidencias (Grid uniforme, neutro, sin ruido visual)
+   2. Agrupación ejecutiva por Pares de Columnas Monetarias (SAP vs. SUNAT)
+   ========================================================================== */
+
+/* Panel de filtros por código de incidencia */
+.incidence-filter-panel {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 0.9rem 1.1rem;
+  box-shadow: 0 2px 6px -1px rgba(15, 23, 42, 0.03);
+}
+
+.incidence-section-box {
+  background-color: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  height: 100%;
+}
+
+.incidence-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid #E2E8F0;
+}
+
+.incidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 6px;
+}
+
+.incidence-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.35rem 0.55rem;
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 7px;
+  font-size: 0.75rem;
+  color: #334155;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.incidence-chip:hover {
+  border-color: #94A3B8;
+  background-color: #F8FAFC;
+}
+
+.incidence-chip.is-empty {
+  background-color: rgba(255, 255, 255, 0.6);
+  border-color: #E2E8F0;
+  color: #94A3B8;
+}
+
+.incidence-chip.is-empty:hover {
+  background-color: #FFFFFF;
+  color: #64748B;
+}
+
+/* Estado con hallazgos (count > 0) pero no seleccionado: limpio, borde izquierdo semántico */
+.incidence-chip.has-items-error {
+  border-left: 3px solid #DC2626;
+}
+
+.incidence-chip.has-items-obs {
+  border-left: 3px solid #D97706;
+}
+
+/* Estado seleccionado activo */
+.incidence-chip.is-active-error {
+  background-color: #FEF2F2;
+  border-color: #DC2626;
+  border-left: 3px solid #DC2626;
+  color: #991B1B;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.12);
+}
+
+.incidence-chip.is-active-obs {
+  background-color: #FFFBEB;
+  border-color: #D97706;
+  border-left: 3px solid #D97706;
+  color: #92400E;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.14);
+}
+
+.incidence-code-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.14rem 0.38rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.incidence-code-badge.tone-error {
+  background-color: rgba(220, 38, 38, 0.1);
+  color: #B91C1C;
+}
+
+.incidence-code-badge.tone-obs {
+  background-color: rgba(217, 119, 6, 0.12);
+  color: #B45309;
+}
+
+.incidence-code-badge.tone-muted {
+  background-color: #F1F5F9;
+  color: #64748B;
+}
+
+.incidence-chip.is-active-error .incidence-code-badge {
+  background-color: #DC2626;
+  color: #FFFFFF;
+}
+
+.incidence-chip.is-active-obs .incidence-code-badge {
+  background-color: #D97706;
+  color: #FFFFFF;
+}
+
+.incidence-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.incidence-count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.incidence-count.count-error {
+  background-color: rgba(220, 38, 38, 0.12);
+  color: #B91C1C;
+}
+
+.incidence-count.count-obs {
+  background-color: rgba(217, 119, 6, 0.14);
+  color: #B45309;
+}
+
+.incidence-count.count-zero {
+  background-color: #F1F5F9;
+  color: #94A3B8;
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   Agrupación Ejecutiva por Pares de Columnas Monetarias (Ledger Style)
+   Alterna bandas neutras limpias con divisores verticales nítidos
+   ========================================================================== */
+.table-dense th.col-pair-start,
+.table-dense td.col-pair-start {
+  border-left: 1.5px solid #CBD5E1 !important;
+}
+
+.table-dense th.col-pair-end,
+.table-dense td.col-pair-end {
+  border-right: 1.5px solid #CBD5E1 !important;
+}
+
+/* Par 1: BI SAP / BI SUNAT (Banda Pizarra Suave) */
+.table-dense th.col-group-bi {
+  background-color: #F1F5F9 !important;
+  color: #1E293B !important;
+  border-top: 2px solid #475569 !important;
+}
+.table-dense td.col-group-bi {
+  background-color: #F8FAFC !important;
+}
+
+/* Par 2: IGV SAP / IGV SUNAT (Banda Blanca Limpia) */
+.table-dense th.col-group-igv {
+  background-color: #FFFFFF !important;
+  color: #1E293B !important;
+  border-top: 2px solid #64748B !important;
+}
+.table-dense td.col-group-igv {
+  background-color: #FFFFFF !important;
+}
+
+/* Par 3: OTROS SAP / OTROS SUNAT (Banda Pizarra Suave) */
+.table-dense th.col-group-otros {
+  background-color: #F1F5F9 !important;
+  color: #1E293B !important;
+  border-top: 2px solid #475569 !important;
+}
+.table-dense td.col-group-otros {
+  background-color: #F8FAFC !important;
+}
+
+/* Par 4: TOTAL SAP / TOTAL SUNAT (Banda Destacada Ejecutiva) */
+.table-dense th.col-group-total {
+  background-color: #EFF6FF !important;
+  color: #1E3A8A !important;
+  border-top: 2px solid #2563EB !important;
+}
+.table-dense td.col-group-total {
+  background-color: rgba(239, 246, 255, 0.55) !important;
+}
+
+/* Hover de fila uniforme */
+.table-dense tbody tr:hover td.col-group-bi,
+.table-dense tbody tr:hover td.col-group-igv,
+.table-dense tbody tr:hover td.col-group-otros,
+.table-dense tbody tr:hover td.col-group-total {
+  background-color: #E2E8F0 !important;
+}
+
+/* Si hay discrepancia (cell-mismatch), el rojo semántico tiene prioridad */
+.table-dense td.cell-mismatch {
+  background-color: rgba(220, 38, 38, 0.12) !important;
+  color: var(--color-error) !important;
+  font-weight: 700 !important;
+}

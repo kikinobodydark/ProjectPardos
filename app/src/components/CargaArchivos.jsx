@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, memo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import {
@@ -7,23 +7,26 @@ import {
   checkRateLimit,
   validateUploadedFile,
 } from '../utils/security';
-import { parseSIRE, stripBOM, parseSAPCompras, parseSUNATCompras } from '../utils/parsers';
-import { reconcileData } from '../utils/validations';
-import { decodificarTexto, parsearSapVentas, parsearSunatVentas, parsearCortesias } from '../utils/ventas/lectores';
-import { conciliarVentas } from '../utils/ventas/motor';
-import { aFilaBD } from '../utils/ventas/persistencia';
+import { runCpuTaskInWorker, serializeDocsInWorkerPool, executeParallelBatches } from '../utils/jobQueue';
+import { useNetworkProfile } from '../utils/networkProfile';
 import {
   FiUpload, FiCheck, FiPlay, FiAlertTriangle, FiXCircle,
   FiRefreshCw, FiTrash2, FiChevronDown, FiChevronUp, FiFileText,
 } from 'react-icons/fi';
-import * as XLSX from 'xlsx';
 
-export default function CargaArchivos({ activeCompany, userProfile, onProcessComplete, activeModule }) {
+const CargaArchivos = memo(function CargaArchivos({
+  activeCompany,
+  userProfile,
+  onProcessComplete,
+  activeModule,
+  periods = [],
+}) {
   const queryClient = useQueryClient();
+  const networkProfile = useNetworkProfile();
   const [csrfToken] = useState(() => getOrCreateCsrfToken());
   const esVentas = activeModule !== 'compras';
 
-  const [periodo, setPeriodo] = useState(''); // Formato YYYYMM, ej. 202606
+  const [periodo, setPeriodo] = useState('');
   const [dia, setDia] = useState(() => String(new Date().getDate()).padStart(2, '0'));
   const [version, setVersion] = useState('1');
 
@@ -32,7 +35,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
   const [sireFile, setSireFile] = useState(null);
   const [cortesiasFile, setCortesiasFile] = useState(null);
 
-  // Resultados de validación de lectura previa (Ventas - Sección 2)
+  // Resultados de validación de lectura previa (Ventas - procesados en Pool de Web Workers)
   const [lecturaSap, setLecturaSap] = useState(null);
   const [lecturaSunat, setLecturaSunat] = useState(null);
   const [lecturaCortesias, setLecturaCortesias] = useState(null);
@@ -40,36 +43,14 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
 
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
+  const [progressPct, setProgressPct] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [recentLoads, setRecentLoads] = useState([]);
   const [showPeriodSuggestions, setShowPeriodSuggestions] = useState(false);
   const [showDiaSuggestions, setShowDiaSuggestions] = useState(false);
   const [showVersionSuggestions, setShowVersionSuggestions] = useState(false);
 
-  const fetchRecentLoads = useCallback(async () => {
-    if (!activeCompany?.id) return;
-    try {
-      const { data, error } = await supabase
-        .from('periodos_carga')
-        .select('periodo, dia, version, fecha_carga')
-        .eq('empresa_id', activeCompany.id)
-        .eq('modulo', activeModule)
-        .eq('estado', 'completado')
-        .order('fecha_carga', { ascending: false })
-        .limit(10);
-
-      if (!error && data) {
-        setRecentLoads(data);
-      }
-    } catch (err) {
-      console.error('Error fetching recent loads:', err);
-    }
-  }, [activeCompany?.id, activeModule]);
-
-  useEffect(() => {
-    fetchRecentLoads();
-  }, [fetchRecentLoads]);
+  const recentLoads = periods.slice(0, 10);
 
   const readFileAsArrayBuffer = (file) =>
     new Promise((resolve, reject) => {
@@ -79,44 +60,23 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       reader.readAsArrayBuffer(file);
     });
 
-  const readFileAsText = (file, encoding = 'utf-8') =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const decoder = new TextDecoder(encoding);
-        resolve(decoder.decode(event.target.result));
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsArrayBuffer(file);
-    });
+  const readExcelFile = async (file) => {
+    const buffer = await readFileAsArrayBuffer(file);
+    const XLSX = await import('xlsx');
+    const data = new Uint8Array(buffer);
+    const workbook = XLSX.read(data, { type: 'array' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    return XLSX.utils.sheet_to_json(sheet, { raw: false, defval: '' });
+  };
 
-  const readExcelFile = (file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const sheetName = workbook.SheetNames[0];
-          const sheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(sheet, { raw: false, defval: '' });
-          resolve(json);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsArrayBuffer(file);
-    });
-
-  // Lectura y validación inmediata al seleccionar archivo en Ventas (sin modificar el archivo original)
+  // Lectura y validación inmediata en Web Worker con Transferable ArrayBuffer (zero-copy)
   const handleFileChange = async (e, type) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setErrorMsg('');
     setSuccessMsg('');
 
-    // Validar tamaño máximo (15 MB TXT / 5 MB Excel), extensión y tipo MIME antes de cargar en memoria
     const check = validateUploadedFile(file, type === 'cortesias' ? 'excel' : 'txt');
     if (!check.valid) {
       setErrorMsg(check.error);
@@ -134,18 +94,14 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
     try {
       if (type === 'sap') {
         setSapFile(file);
-        const buf = await readFileAsArrayBuffer(file);
-        const { texto, codificacion } = decodificarTexto(buf);
-        const res = parsearSapVentas(texto);
-        res.codificacion = codificacion;
+        const buffer = await readFileAsArrayBuffer(file);
+        const res = await runCpuTaskInWorker('PARSE_SAP_VENTAS', { buffer }, [buffer]);
         setLecturaSap(res);
         if (res.periodoDetectado && !periodo) setPeriodo(res.periodoDetectado);
       } else if (type === 'sunat') {
         setSunatFile(file);
-        const buf = await readFileAsArrayBuffer(file);
-        const { texto, codificacion } = decodificarTexto(buf);
-        const res = parsearSunatVentas(texto);
-        res.codificacion = codificacion;
+        const buffer = await readFileAsArrayBuffer(file);
+        const res = await runCpuTaskInWorker('PARSE_SUNAT_VENTAS', { buffer }, [buffer]);
         if (activeCompany?.ruc && res.rucDetectado && res.rucDetectado !== activeCompany.ruc) {
           res.advertencias.push(
             `El RUC del archivo (${res.rucDetectado}) difiere de la empresa activa (${activeCompany.ruc}).`
@@ -157,7 +113,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       } else if (type === 'cortesias') {
         setCortesiasFile(file);
         const filas = await readExcelFile(file);
-        const res = parsearCortesias(filas);
+        const res = await runCpuTaskInWorker('PARSE_CORTESIAS', { filas });
         setLecturaCortesias(res);
       }
     } catch (err) {
@@ -248,55 +204,86 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
     }
 
     setLoading(true);
+    setProgressPct(5);
+    const chunkSize = networkProfile.recommendedBatchSize || 1500;
+    const concurrency = networkProfile.recommendedConcurrency || 4;
 
     try {
-      let filasParaInsertar = [];
-
       if (esVentas) {
-        setStatusText('Ejecutando motor de validación y conciliación SAP vs. SUNAT...');
-        const { docs } = conciliarVentas({
-          sap: lecturaSap.registros,
-          sunat: lecturaSunat.registros,
-          cortesias: lecturaCortesias?.registros || null,
-        });
+        setStatusText('Conciliando comprobantes y creando período en paralelo...');
 
-        setStatusText(`Creando período de validación (${docs.length} documentos únicos)...`);
-        const { data: periodData, error: periodErr } = await supabase
-          .from('periodos_carga')
-          .insert({
-            empresa_id: activeCompany.id,
-            usuario_id: userProfile.id,
-            periodo: periodoFinal,
-            dia: String(diaNum).padStart(2, '0'),
-            version: versionNum,
-            estado: 'procesando',
-            modulo: activeModule,
-          })
-          .select()
-          .single();
+        // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera del período en Supabase
+        const [conciliacionRes, periodRes] = await Promise.all([
+          runCpuTaskInWorker('CONCILIAR_VENTAS', {
+            sap: lecturaSap.registros,
+            sunat: lecturaSunat.registros,
+            cortesias: lecturaCortesias?.registros || null,
+          }),
+          supabase
+            .from('periodos_carga')
+            .insert({
+              empresa_id: activeCompany.id,
+              usuario_id: userProfile.id,
+              periodo: periodoFinal,
+              dia: String(diaNum).padStart(2, '0'),
+              version: versionNum,
+              estado: 'procesando',
+              modulo: activeModule,
+            })
+            .select('id')
+            .single(),
+        ]);
 
-        if (periodErr) throw periodErr;
-        const periodId = periodData.id;
+        if (periodRes.error) throw periodRes.error;
+        const periodId = periodRes.data.id;
+        const { docs } = conciliacionRes;
+        setProgressPct(25);
 
-        filasParaInsertar = docs.map((d) =>
-          aFilaBD(d, { periodoId: periodId, empresaId: activeCompany.id, ruc: activeCompany.ruc })
+        // 2. Dividir la serialización de las filas (`aFilaBD`) entre el Pool de Web Workers en paralelo
+        setStatusText(`Preparando ${docs.length.toLocaleString('es-PE')} comprobantes en paralelo (Pool de Workers)...`);
+        const serializedChunks = await serializeDocsInWorkerPool(
+          docs,
+          { periodoId, empresaId: activeCompany.id, ruc: activeCompany.ruc },
+          chunkSize
         );
+        setProgressPct(40);
 
-        setStatusText('Guardando resultados de validación en Supabase...');
-        const chunkSize = 1000;
-        for (let i = 0; i < filasParaInsertar.length; i += chunkSize) {
-          const chunk = filasParaInsertar.slice(i, i + chunkSize);
-          const { error: insertErr } = await supabase.from('detalle_ventas').insert(chunk);
-          if (insertErr) {
-            await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
-            throw insertErr;
-          }
+        // 3. Insertar todos los lotes en paralelo usando la RPC masiva `insertar_lote_ventas`
+        let insertedCount = 0;
+        setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase...`);
+        try {
+          await executeParallelBatches(
+            serializedChunks,
+            1,
+            async ([chunk]) => {
+              const { error: rpcErr } = await supabase.rpc('insertar_lote_ventas', {
+                p_periodo_id: periodId,
+                p_empresa_id: activeCompany.id,
+                p_filas: chunk,
+              });
+              if (rpcErr) {
+                // Fallback a insert directo si la RPC no estuviera disponible
+                const { error: insertErr } = await supabase.from('detalle_ventas').insert(chunk);
+                if (insertErr) throw insertErr;
+              }
+              insertedCount += chunk.length;
+              const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
+              setProgressPct(pct);
+              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
+            },
+            {
+              concurrency,
+              label: 'BulkRpcVentas',
+            }
+          );
+        } catch (insertErr) {
+          await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
+          throw insertErr;
         }
 
         await supabase.from('periodos_carga').update({ estado: 'completado' }).eq('id', periodId);
-        // Pre-poblar caché de React Query con los documentos ya conciliados para evitar re-lectura inmediata
+        setProgressPct(100);
         queryClient.setQueryData(['ventasDocumentos', periodId], docs);
-        fetchRecentLoads();
 
         setSuccessMsg(
           `¡Validación completada! Se conciliaron ${docs.length.toLocaleString('es-PE')} comprobantes únicos del período ${periodoFinal}.`
@@ -310,86 +297,90 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
 
         onProcessComplete(periodId, `${periodoFinal} (Día: ${String(diaNum).padStart(2, '0')}, v${versionNum})`);
       } else {
-        // Flujo existente de Compras (sin cambios)
-        setStatusText('Leyendo y decodificando archivos...');
-        const sunatText = stripBOM(await readFileAsText(sunatFile, 'utf-8'));
-        const sapText = await readFileAsText(sapFile, 'windows-1252');
-        const sireText = await readFileAsText(sireFile, 'windows-1252');
+        // Flujo de Compras:
+        // 1. Leer los 3 archivos y parsear CADA UNO en un Web Worker distinto en paralelo + crear período simultáneamente
+        setStatusText('Leyendo y parseando los 3 archivos en Workers paralelos...');
+        const [sunatBuffer, sapBuffer, sireBuffer] = await Promise.all([
+          readFileAsArrayBuffer(sunatFile),
+          readFileAsArrayBuffer(sapFile),
+          readFileAsArrayBuffer(sireFile),
+        ]);
+        setProgressPct(15);
 
-        setStatusText('Parseando registros...');
-        const sunatData = parseSUNATCompras(sunatText);
-        const sapData = parseSAPCompras(sapText);
-        const sireData = parseSIRE(sireText);
+        const [sunatData, sapData, sireData, periodRes] = await Promise.all([
+          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sunat', buffer: sunatBuffer }, [sunatBuffer]),
+          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sap', buffer: sapBuffer }, [sapBuffer]),
+          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sire', buffer: sireBuffer }, [sireBuffer]),
+          supabase
+            .from('periodos_carga')
+            .insert({
+              empresa_id: activeCompany.id,
+              usuario_id: userProfile.id,
+              periodo: periodoFinal,
+              dia: dia,
+              version: versionNum,
+              estado: 'procesando',
+              modulo: activeModule,
+            })
+            .select('id')
+            .single(),
+        ]);
 
-        if (sunatData.length === 0) throw new Error('El archivo de SUNAT está vacío o no coincide con el formato.');
-        if (sapData.length === 0) throw new Error('El archivo de SAP está vacío o no coincide con el formato.');
-        if (sireData.length === 0) throw new Error('El archivo de SIRE está vacío o no coincide con el formato.');
+        if (periodRes.error) throw periodRes.error;
+        const periodId = periodRes.data.id;
 
-        setStatusText('Conciliando y aplicando reglas tributarias...');
-        const reconciledList = reconcileData(sapData, sunatData, sireData, activeCompany.ruc, [], activeModule);
+        if (!sunatData.length || !sapData.length || !sireData.length) {
+          await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
+          throw new Error('Uno de los archivos (SAP, SUNAT o SIRE) está vacío o no coincide con el formato.');
+        }
+        setProgressPct(30);
 
-        const { data: periodData, error: periodErr } = await supabase
-          .from('periodos_carga')
-          .insert({
-            empresa_id: activeCompany.id,
-            usuario_id: userProfile.id,
-            periodo: periodoFinal,
-            dia: dia,
-            version: versionNum,
-            estado: 'procesando',
-            modulo: activeModule,
-          })
-          .select()
-          .single();
+        setStatusText('Conciliando y preparando lotes en Web Worker...');
+        const { totalCount, mappedRows } = await runCpuTaskInWorker('CONCILIAR_COMPRAS_PARSED', {
+          sapData,
+          sunatData,
+          sireData,
+          rucEmpresa: activeCompany.ruc,
+          modulo: activeModule,
+          periodId,
+          empresaId: activeCompany.id,
+        });
+        setProgressPct(45);
 
-        if (periodErr) throw periodErr;
-        const periodId = periodData.id;
-
-        setStatusText('Cargando registros unificados a Supabase...');
-        const chunkSize = 1000;
-        for (let i = 0; i < reconciledList.length; i += chunkSize) {
-          const chunk = reconciledList.slice(i, i + chunkSize).map((r) => ({
-            periodo_id: periodId,
-            empresa_id: activeCompany.id,
-            car_sunat: r.car_sunat,
-            ruc_proveedor: r.ruc_proveedor,
-            serie: r.serie,
-            correlativo: r.correlativo,
-            fecha_emision: r.fecha_emision,
-            tipo_doc_pago: r.tipo_doc_pago,
-            tipo_identidad_sap: r.tipo_identidad_sap,
-            nro_identidad_sap: r.nro_identidad_sap,
-            nombre_sap: r.nombre_sap,
-            base_sap: r.base_sap,
-            igv_sap: r.igv_sap,
-            exonerado_sap: r.exonerado_sap || 0,
-            inafecto_sap: r.inafecto_sap || 0,
-            otros_sap: r.otros_sap,
-            total_sap: r.total_sap,
-            tipo_identidad_sunat: r.tipo_identidad_sunat,
-            nro_identidad_sunat: r.nro_identidad_sunat,
-            nombre_sunat: r.nombre_sunat,
-            base_sunat: r.base_sunat,
-            igv_sunat: r.igv_sunat,
-            exonerado_sunat: r.exonerado_sunat || 0,
-            inafecto_sunat: r.inafecto_sunat || 0,
-            otros_sunat: r.otros_sunat,
-            total_sunat: r.total_sunat,
-            mensaje_sire: r.mensaje_sire,
-            estado_validacion: r.estado_validacion,
-            errores_json: r.errores_json,
-          }));
-
-          const { error: insertErr } = await supabase.from('detalle_compras').insert(chunk);
-          if (insertErr) {
-            await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
-            throw insertErr;
-          }
+        let insertedCount = 0;
+        setStatusText(`Guardando ${totalCount.toLocaleString('es-PE')} registros en lotes paralelos...`);
+        try {
+          await executeParallelBatches(
+            mappedRows,
+            chunkSize,
+            async (chunk) => {
+              const { error: rpcErr } = await supabase.rpc('insertar_lote_compras', {
+                p_periodo_id: periodId,
+                p_empresa_id: activeCompany.id,
+                p_filas: chunk,
+              });
+              if (rpcErr) {
+                const { error: insertErr } = await supabase.from('detalle_compras').insert(chunk);
+                if (insertErr) throw insertErr;
+              }
+              insertedCount += chunk.length;
+              const pct = Math.min(95, 45 + Math.round((insertedCount / Math.max(1, totalCount)) * 50));
+              setProgressPct(pct);
+              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${totalCount.toLocaleString('es-PE')})...`);
+            },
+            {
+              concurrency,
+              label: 'BulkRpcCompras',
+            }
+          );
+        } catch (insertErr) {
+          await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
+          throw insertErr;
         }
 
         await supabase.from('periodos_carga').update({ estado: 'completado' }).eq('id', periodId);
-        fetchRecentLoads();
-        setSuccessMsg(`¡Proceso exitoso! Se cargaron y conciliaron ${reconciledList.length} registros del período ${periodoFinal}.`);
+        setProgressPct(100);
+        setSuccessMsg(`¡Proceso exitoso! Se cargaron y conciliaron ${totalCount} registros del período ${periodoFinal}.`);
         setSapFile(null);
         setSunatFile(null);
         setSireFile(null);
@@ -401,10 +392,10 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
     } finally {
       setLoading(false);
       setStatusText('');
+      setProgressPct(0);
     }
   };
 
-  // Renderizado de tarjeta de carga con validaciones de lectura (Ventas)
   const renderTarjetaArchivoVentas = ({ tipo, inputId, accept, titulo, subtitulo, obligatorio, file, lectura }) => {
     const abierto = detalleAbierto[tipo];
     const tieneHallazgos =
@@ -475,7 +466,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               </div>
             ) : (
               <div>
-                {/* Nombre, formato y estado */}
                 <div className="d-flex align-items-center gap-2 mb-2">
                   {lectura?.estado === 'error' ? (
                     <FiXCircle className="text-danger fs-4 flex-shrink-0" />
@@ -495,7 +485,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
                   </div>
                 </div>
 
-                {/* Resultado de lectura */}
                 {lectura && (
                   <div
                     className="p-2 rounded-2 mb-2"
@@ -574,7 +563,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
             )}
           </div>
 
-          {/* Acciones para reemplazar o quitar archivo sin interrumpir el flujo */}
           {file && (
             <div className="d-flex justify-content-end gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
               <button
@@ -635,7 +623,7 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
               const formattedPeriod = load.periodo.slice(0, 4) + '-' + load.periodo.slice(4);
               return (
                 <button
-                  key={index}
+                  key={load.id || index}
                   type="button"
                   className="btn btn-sm btn-outline-secondary py-1 px-2.5 rounded-3 font-mono text-xs d-flex align-items-center gap-1 hover-scale"
                   style={{ fontSize: '0.78rem', borderStyle: 'dashed' }}
@@ -653,7 +641,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
         )}
 
         <div className="row g-2 mb-4">
-          {/* Período Contable */}
           <div className="col-md-4">
             <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Período Contable (Año/Mes)</label>
             <div className="position-relative">
@@ -701,7 +688,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
             </small>
           </div>
 
-          {/* Día de Carga */}
           <div className="col-md-4">
             <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Día de Carga</label>
             <div className="position-relative">
@@ -747,7 +733,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
             <small className="text-muted d-block mt-1" style={{ fontSize: '0.72rem' }}>Día del mes (1-31)</small>
           </div>
 
-          {/* Versión */}
           <div className="col-md-4">
             <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Versión</label>
             <div className="position-relative">
@@ -794,7 +779,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           </div>
         </div>
 
-        {/* Zonas de carga de archivos */}
         {esVentas ? (
           <div className="row g-3 mb-4">
             {renderTarjetaArchivoVentas({
@@ -887,16 +871,32 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
           </div>
         )}
 
+        {loading && (
+          <div className="mb-3 animate-fade-in">
+            <div className="d-flex justify-content-between align-items-center mb-1" style={{ fontSize: '0.82rem' }}>
+              <span className="text-primary fw-semibold">{statusText}</span>
+              <span className="font-mono fw-bold text-primary">{progressPct}%</span>
+            </div>
+            <div className="progress" style={{ height: '7px' }}>
+              <div
+                className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                role="progressbar"
+                style={{ width: `${progressPct}%`, transition: 'width 0.2s ease' }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
           <span className="text-muted" style={{ fontSize: '0.85rem' }}>
-            {loading ? (
-              <span className="text-primary fw-semibold">{statusText}</span>
-            ) : esVentas ? (
-              <span className="d-flex align-items-center gap-1">
-                <FiFileText /> Los archivos originales no se modifican. El botón se habilita al cargar los dos TXT obligatorios.
-              </span>
-            ) : (
-              'Los archivos son procesados en el navegador de manera segura.'
+            {!loading && (
+              esVentas ? (
+                <span className="d-flex align-items-center gap-1">
+                  <FiFileText /> Los archivos originales no se modifican. El botón se habilita al cargar los dos TXT obligatorios.
+                </span>
+              ) : (
+                'Los archivos son procesados en el navegador de manera segura.'
+              )
             )}
           </span>
           <button
@@ -911,4 +911,6 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
       </form>
     </div>
   );
-}
+});
+
+export default CargaArchivos;

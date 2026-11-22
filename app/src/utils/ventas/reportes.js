@@ -2,8 +2,8 @@
 // Filtros, indicadores generales, 12 reportes específicos y exportación Excel
 // para el módulo de Ventas. Opera sobre los documentos ya conciliados en
 // memoria para evitar re-ejecutar validaciones al cambiar filtros visuales.
+// La librería XLSX se carga bajo demanda (code-splitting) solo al exportar.
 // ============================================================================
-import * as XLSX from 'xlsx';
 import {
   INCIDENCIAS, CODIGOS_IMPORTES, CODIGOS_IDENTIDAD, ESTADOS,
   descripcionTipoCP, descripcionTipoIdentidad,
@@ -344,7 +344,8 @@ function filaExcelIdentidad(ev) {
   };
 }
 
-export function exportarExcelVentas({ tipo, docs, todosDocs, periodo = 'periodo' }) {
+export async function exportarExcelVentas({ tipo, docs, todosDocs, periodo = 'periodo' }) {
+  const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
   const ind = calcularIndicadores(docs);
   const agregarHoja = (nombre, filas) => {

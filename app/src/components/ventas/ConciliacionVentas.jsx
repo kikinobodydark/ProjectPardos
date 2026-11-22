@@ -1,14 +1,11 @@
 // ============================================================================
 // Vista principal de Validación y Conciliación del módulo de Ventas.
-// Implementa las secciones 3, 8, 9, 10, 11, 12 y 13 de las especificaciones:
-//  - Panel superior desplegable de carga (Sección 3.A)
-//  - Panel de 10 indicadores generales reactivos a los filtros (Sección 3.B)
-//  - Panel de filtros multi-selección por grupo de ERROR y OBS (Sección 9)
-//  - Tabla principal de 20 columnas con clic a detalle comparativo (Sección 10)
-//  - 12 reportes específicos independientes (Sección 11)
-//  - Exportación a Excel respetando filtros y datos originales (Sección 13)
+// - Esqueleto de carga (SkeletonTable)
+// - Virtualización de listas largas (useVirtualList) para 50, 100, 250, 500 filas
+// - Filas memoizadas (React.memo) para evitar renderizados innecesarios
+// - Tamaño de página adaptativo para móviles y redes lentas
 // ============================================================================
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   FiDownload, FiSearch, FiEye, FiFilter,
   FiList, FiBarChart2, FiChevronDown, FiAlertCircle, FiRefreshCw,
@@ -16,6 +13,9 @@ import {
 import { useDocumentosVentas } from './useDocumentosVentas';
 import ModalDetalleDocumentoVentas from './ModalDetalleDocumentoVentas';
 import ReportesEspecificosVentas from './ReportesEspecificosVentas';
+import { SkeletonTable } from '../SkeletonLoader';
+import { useVirtualList } from '../../utils/useVirtualList';
+import { useNetworkProfile } from '../../utils/networkProfile';
 import {
   INCIDENCIAS, ESTADOS, descripcionTipoCP,
 } from '../../utils/ventas/catalogos';
@@ -24,20 +24,160 @@ import {
 } from '../../utils/ventas/reportes';
 import { formatoMonto, dentroDeTolerancia } from '../../utils/ventas/montos';
 
-export default function ConciliacionVentas({
+const FilaDocumentoVenta = memo(function FilaDocumentoVenta({
+  d,
+  onSelectDoc,
+  onFilterEstado,
+  onFilterCodigo,
+}) {
+  const est = ESTADOS[d.estado] || ESTADOS.OK;
+  const ambos = d.en_sap && d.en_sunat;
+  const diffTipoId = ambos && d.sap.tipo_identidad !== d.sunat.tipo_identidad;
+  const diffNroId = ambos && d.sap.nro_identidad !== d.sunat.nro_identidad;
+  const diffBase = ambos && !dentroDeTolerancia(d.sap.base - d.sunat.base);
+  const diffIgv = ambos && !dentroDeTolerancia(d.sap.igv - d.sunat.igv);
+  const diffOtros = ambos && !dentroDeTolerancia(d.sap.otros - d.sunat.otros);
+  const diffTotal = ambos && !dentroDeTolerancia(d.sap.total - d.sunat.total);
+  const difTotalVal = ambos ? d.sap.total - d.sunat.total : null;
+
+  return (
+    <tr
+      style={{ cursor: 'pointer' }}
+      onClick={() => onSelectDoc(d)}
+      title="Haga clic para ver el detalle comparativo SAP vs. SUNAT"
+    >
+      <td className="font-mono fw-bold">
+        {d.serie}-{d.correlativo}
+      </td>
+      <td className="font-mono">{d.fecha_emision || '—'}</td>
+      <td>{descripcionTipoCP(d.tipo_doc_pago)}</td>
+
+      {/* Identidad SAP (4, 5, 6) */}
+      <td className={`font-mono ${!d.en_sap || diffTipoId ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? (d.sap.tipo_identidad || '—') : 'NO EXISTE'}
+      </td>
+      <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? (d.sap.nro_identidad || '—') : '—'}
+      </td>
+      <td className="text-truncate" style={{ maxWidth: '150px' }} title={d.sap?.nombre}>
+        {d.en_sap ? (d.sap.nombre || '—') : <span className="text-muted">(Sin registro SAP)</span>}
+      </td>
+
+      {/* Identidad SUNAT (7, 8, 9) */}
+      <td className={`font-mono ${!d.en_sunat || diffTipoId ? 'cell-mismatch' : ''}`}>
+        {d.en_sunat ? (d.sunat.tipo_identidad || '—') : 'NO EXISTE'}
+      </td>
+      <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
+        {d.en_sunat ? (d.sunat.nro_identidad || '—') : '—'}
+      </td>
+      <td className="text-truncate" style={{ maxWidth: '150px' }} title={d.sunat?.nombre}>
+        {d.en_sunat ? (d.sunat.nombre || '—') : <span className="text-muted">(Sin registro SUNAT)</span>}
+      </td>
+
+      {/* Importes (10 - 18) con marcado visual por par SAP vs SUNAT */}
+      <td className={`text-end font-mono col-group-bi col-pair-start ${diffBase ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.base) : '—'}
+      </td>
+      <td className={`text-end font-mono col-group-bi col-pair-end ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
+        {d.en_sunat ? formatoMonto(d.sunat.base) : '—'}
+      </td>
+
+      <td className={`text-end font-mono col-group-igv col-pair-start ${diffIgv ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.igv) : '—'}
+      </td>
+      <td className={`text-end font-mono col-group-igv col-pair-end ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
+        {d.en_sunat ? formatoMonto(d.sunat.igv) : '—'}
+      </td>
+
+      <td className={`text-end font-mono col-group-otros col-pair-start ${diffOtros ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.otros) : '—'}
+      </td>
+      <td className={`text-end font-mono col-group-otros col-pair-end ${diffOtros ? 'cell-mismatch' : 'cell-match'}`}>
+        {d.en_sunat ? formatoMonto(d.sunat.otros) : '—'}
+      </td>
+
+      <td className={`text-end font-mono fw-semibold col-group-total col-pair-start ${diffTotal ? 'cell-mismatch' : ''}`}>
+        {d.en_sap ? formatoMonto(d.sap.total) : '—'}
+      </td>
+      <td className={`text-end font-mono fw-semibold col-group-total col-pair-end ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
+        {d.en_sunat ? formatoMonto(d.sunat.total) : '—'}
+      </td>
+
+      <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'text-muted'}`}>
+        {difTotalVal === null ? '—' : formatoMonto(difTotalVal)}
+      </td>
+
+      {/* 19. Estado */}
+      <td
+        className="text-center"
+        onClick={(e) => {
+          e.stopPropagation();
+          onFilterEstado(d.estado);
+        }}
+      >
+        <span className={`badge badge-status badge-status-${est.clase}`}>
+          {est.etiqueta}
+        </span>
+      </td>
+
+      {/* 20. Incidencias */}
+      <td>
+        <div className="d-flex align-items-center justify-content-between gap-1">
+          <div className="d-flex flex-wrap gap-1">
+            {d.codigos.length === 0 ? (
+              <span className="text-success" style={{ fontSize: '0.73rem' }}>
+                {d.anulado ? 'Anulado' : 'Sin incidencias'}
+              </span>
+            ) : (
+              d.codigos.map((cod) => (
+                <span
+                  key={cod}
+                  className={`badge badge-status badge-status-${cod.startsWith('ERROR') ? 'error' : 'observado'}`}
+                  style={{ cursor: 'pointer', fontSize: '0.67rem' }}
+                  title="Clic para filtrar por esta incidencia"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFilterCodigo(cod);
+                  }}
+                >
+                  {cod}
+                </span>
+              ))
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary p-1 border-0 flex-shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectDoc(d);
+            }}
+            title="Ver detalle comparativo SAP vs. SUNAT"
+          >
+            <FiEye />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
+const ConciliacionVentas = memo(function ConciliacionVentas({
   periodId, activePeriod, initialFilter, onFilterReset,
 }) {
   const { data: todosDocs = [], isLoading } = useDocumentosVentas(periodId, true);
+  const networkProfile = useNetworkProfile();
 
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
   const [busquedaInput, setBusquedaInput] = useState('');
-  const [vistaActiva, setVistaActiva] = useState('tabla'); // 'tabla' | 'reportes'
+  const [vistaActiva, setVistaActiva] = useState('tabla');
   const [reporteInicial, setReporteInicial] = useState('resumen');
   const [mostrarMenuExportar, setMostrarMenuExportar] = useState(false);
   const [docSeleccionado, setDocSeleccionado] = useState(null);
+  const [ocultarSinIncidencias, setOcultarSinIncidencias] = useState(false);
 
   const [pagina, setPagina] = useState(1);
-  const [porPagina, setPorPagina] = useState(20);
+  const [porPagina, setPorPagina] = useState(() => networkProfile.recommendedPageSize || 20);
 
   // Debounce de búsqueda textual
   useEffect(() => {
@@ -48,7 +188,7 @@ export default function ConciliacionVentas({
     return () => clearTimeout(t);
   }, [busquedaInput]);
 
-  // Recibir filtro inicial desde el Dashboard (tarjetas KPI, estados, grupos, reportes)
+  // Recibir filtro inicial desde el Dashboard
   useEffect(() => {
     if (!initialFilter) return;
     if (typeof initialFilter === 'object') {
@@ -73,13 +213,11 @@ export default function ConciliacionVentas({
     if (onFilterReset) onFilterReset();
   }, [initialFilter, onFilterReset]);
 
-  // Documentos filtrados (sin re-ejecutar validaciones)
   const docsFiltrados = useMemo(
     () => filtrarDocumentos(todosDocs, filtros),
     [todosDocs, filtros]
   );
 
-  // Para el panel de chips de ERROR/OBS mostramos el conteo sobre el filtro base (sin el filtro de códigos)
   const conteoPorCodigoBase = useMemo(() => {
     const sinCodigos = filtrarDocumentos(todosDocs, { ...filtros, codigos: [] });
     return calcularIndicadores(sinCodigos).porCodigo;
@@ -93,13 +231,30 @@ export default function ConciliacionVentas({
     [docsFiltrados, pagina, porPagina]
   );
 
-  const actualizarFiltro = (parcial) => {
+  // Virtualización de listas largas (> 40 filas en página)
+  const {
+    containerRef,
+    onScroll,
+    visibleItems: filasVirtualizadas,
+    isVirtualized,
+    topPaddingHeight,
+    bottomPaddingHeight,
+    maxHeight,
+  } = useVirtualList(filasPagina, { rowHeight: 36, viewportHeight: 560, overscan: 10, threshold: 40 });
+
+  const actualizarFiltro = useCallback((parcial) => {
     setFiltros((prev) => ({ ...prev, ...parcial }));
     setPagina(1);
-  };
+  }, []);
 
-  // Selección/deselección múltiple de grupos de errores y observaciones (Sección 9)
-  const toggleCodigoIncidencia = (codigo) => {
+  const filtrarPorEstado = useCallback(
+    (est) => {
+      actualizarFiltro({ estado: est });
+    },
+    [actualizarFiltro]
+  );
+
+  const toggleCodigoIncidencia = useCallback((codigo) => {
     setVistaActiva('tabla');
     setFiltros((prev) => {
       const existe = prev.codigos.includes(codigo);
@@ -107,19 +262,23 @@ export default function ConciliacionVentas({
       return { ...prev, codigos: nuevos };
     });
     setPagina(1);
-  };
+  }, []);
 
-  const seleccionarSoloCodigo = (codigo) => {
+  const seleccionarSoloCodigo = useCallback((codigo) => {
     setVistaActiva('tabla');
     setFiltros((prev) => ({ ...prev, estado: 'ALL', codigos: [codigo] }));
     setPagina(1);
-  };
+  }, []);
 
-  const limpiarTodosLosFiltros = () => {
+  const limpiarTodosLosFiltros = useCallback(() => {
     setBusquedaInput('');
     setFiltros(FILTROS_INICIALES);
     setPagina(1);
-  };
+  }, []);
+
+  const cerrarModal = useCallback(() => {
+    setDocSeleccionado(null);
+  }, []);
 
   const hayFiltrosActivos =
     filtros.busqueda !== '' ||
@@ -165,150 +324,185 @@ export default function ConciliacionVentas({
 
   return (
     <div className="animate-fade-in">
-      {/* SECCIÓN 9: Panel de Filtros por Grupo de Errores y Observaciones (multi-selección) */}
-      <div className="card-premium mb-3 p-3">
+      {/* SECCIÓN 9: Panel de Filtros por Grupo de Errores y Observaciones (Diseño UI/UX Pro Max) */}
+      <div className="incidence-filter-panel mb-3">
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
           <div className="d-flex align-items-center gap-2">
             <FiFilter className="text-primary" />
-            <span className="fw-bold" style={{ fontSize: '0.88rem' }}>
-              Filtro por Grupo de Errores y Observaciones (selección individual o múltiple)
+            <span className="fw-bold" style={{ fontSize: '0.88rem', color: 'var(--color-text)' }}>
+              Filtro Rápido por Código de Incidencia
+            </span>
+            <span className="text-muted" style={{ fontSize: '0.76rem' }}>
+              (selección individual o múltiple)
             </span>
           </div>
-          {filtros.codigos.length > 0 && (
-            <button
-              type="button"
-              className="btn btn-sm btn-link p-0 text-decoration-none fw-semibold"
-              style={{ fontSize: '0.78rem' }}
-              onClick={() => actualizarFiltro({ codigos: [] })}
-            >
-              Limpiar selección ({filtros.codigos.length})
-            </button>
-          )}
+          <div className="d-flex align-items-center gap-3">
+            <div className="form-check form-switch mb-0 d-flex align-items-center gap-1.5">
+              <input
+                id="switch-ocultar-ceros"
+                type="checkbox"
+                className="form-check-input m-0"
+                style={{ cursor: 'pointer' }}
+                checked={ocultarSinIncidencias}
+                onChange={(e) => setOcultarSinIncidencias(e.target.checked)}
+              />
+              <label
+                htmlFor="switch-ocultar-ceros"
+                className="form-check-label text-muted fw-semibold"
+                style={{ fontSize: '0.76rem', cursor: 'pointer', userSelect: 'none' }}
+              >
+                Solo con hallazgos (&gt; 0)
+              </label>
+            </div>
+            {filtros.codigos.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-sm btn-link p-0 text-decoration-none fw-semibold"
+                style={{ fontSize: '0.78rem' }}
+                onClick={() => actualizarFiltro({ codigos: [] })}
+              >
+                Limpiar selección ({filtros.codigos.length})
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="row g-2">
           {/* Columna Errores */}
           <div className="col-lg-6">
-            <div className="small fw-bold text-danger mb-1" style={{ fontSize: '0.73rem', letterSpacing: '0.04em' }}>
-              GRUPOS DE ERROR (INCUMPLIMIENTOS PRINCIPALES)
-            </div>
-            <div className="d-flex flex-wrap gap-1.5" style={{ gap: '6px' }}>
-              {INCIDENCIAS.filter((i) => i.tipo === 'ERROR').map((inc) => {
-                const count = conteoPorCodigoBase[inc.codigo] || 0;
-                const activo = filtros.codigos.includes(inc.codigo);
-                return (
-                  <button
-                    key={inc.codigo}
-                    type="button"
-                    onClick={() => toggleCodigoIncidencia(inc.codigo)}
-                    className="btn btn-sm d-flex align-items-center gap-1.5 rounded-2"
-                    style={{
-                      fontSize: '0.75rem',
-                      padding: '0.28rem 0.55rem',
-                      backgroundColor: activo ? '#DC2626' : 'rgba(220, 38, 38, 0.06)',
-                      color: activo ? '#FFFFFF' : '#B91C1C',
-                      border: `1px solid ${activo ? '#DC2626' : 'rgba(220, 38, 38, 0.22)'}`,
-                      opacity: count === 0 && !activo ? 0.6 : 1,
-                    }}
-                    title={`${inc.codigo}: ${inc.descripcion} (${count} documentos)`}
-                  >
-                    <strong className="font-mono">{inc.codigo}</strong>
-                    <span>{inc.corto}</span>
-                    <span
-                      className="badge rounded-pill font-mono ms-1"
-                      style={{
-                        backgroundColor: activo ? 'rgba(255,255,255,0.22)' : 'rgba(220, 38, 38, 0.14)',
-                        color: activo ? '#FFFFFF' : '#991B1B',
-                      }}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="incidence-section-box">
+              <div className="incidence-section-header">
+                <span className="fw-bold text-danger" style={{ fontSize: '0.72rem', letterSpacing: '0.04em' }}>
+                  GRUPOS DE ERROR (INCUMPLIMIENTOS PRINCIPALES)
+                </span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.7rem' }}>
+                  {INCIDENCIAS.filter((i) => i.tipo === 'ERROR').reduce((acc, i) => acc + (conteoPorCodigoBase[i.codigo] || 0), 0).toLocaleString('es-PE')} hallazgos
+                </span>
+              </div>
+              <div className="incidence-grid">
+                {INCIDENCIAS.filter((i) => i.tipo === 'ERROR')
+                  .filter((inc) => !ocultarSinIncidencias || (conteoPorCodigoBase[inc.codigo] || 0) > 0 || filtros.codigos.includes(inc.codigo))
+                  .map((inc) => {
+                    const count = conteoPorCodigoBase[inc.codigo] || 0;
+                    const activo = filtros.codigos.includes(inc.codigo);
+                    const hasItems = count > 0;
+                    const chipClass = [
+                      'incidence-chip',
+                      activo ? 'is-active-error' : hasItems ? 'has-items-error' : 'is-empty',
+                    ].join(' ');
+                    return (
+                      <button
+                        key={inc.codigo}
+                        type="button"
+                        onClick={() => toggleCodigoIncidencia(inc.codigo)}
+                        className={chipClass}
+                        aria-pressed={activo}
+                        title={`${inc.codigo}: ${inc.descripcion} (${count.toLocaleString('es-PE')} documentos)`}
+                      >
+                        <span className={`incidence-code-badge ${hasItems || activo ? 'tone-error' : 'tone-muted'}`}>
+                          {inc.codigo}
+                        </span>
+                        <span className="incidence-label">{inc.corto}</span>
+                        <span className={`incidence-count ${hasItems || activo ? 'count-error' : 'count-zero'}`}>
+                          {count.toLocaleString('es-PE')}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
           </div>
 
           {/* Columna Observaciones */}
           <div className="col-lg-6">
-            <div className="small fw-bold text-warning mb-1" style={{ fontSize: '0.73rem', letterSpacing: '0.04em' }}>
-              GRUPOS DE OBSERVACIÓN (DIFERENCIAS PARA REVISIÓN)
-            </div>
-            <div className="d-flex flex-wrap gap-1.5" style={{ gap: '6px' }}>
-              {INCIDENCIAS.filter((i) => i.tipo === 'OBS').map((inc) => {
-                const count = conteoPorCodigoBase[inc.codigo] || 0;
-                const activo = filtros.codigos.includes(inc.codigo);
-                return (
-                  <button
-                    key={inc.codigo}
-                    type="button"
-                    onClick={() => toggleCodigoIncidencia(inc.codigo)}
-                    className="btn btn-sm d-flex align-items-center gap-1.5 rounded-2"
-                    style={{
-                      fontSize: '0.75rem',
-                      padding: '0.28rem 0.55rem',
-                      backgroundColor: activo ? '#D97706' : 'rgba(217, 119, 6, 0.07)',
-                      color: activo ? '#FFFFFF' : '#B45309',
-                      border: `1px solid ${activo ? '#D97706' : 'rgba(217, 119, 6, 0.25)'}`,
-                      opacity: count === 0 && !activo ? 0.6 : 1,
-                    }}
-                    title={`${inc.codigo}: ${inc.descripcion} (${count} documentos)`}
-                  >
-                    <strong className="font-mono">{inc.codigo}</strong>
-                    <span>{inc.corto}</span>
-                    <span
-                      className="badge rounded-pill font-mono ms-1"
-                      style={{
-                        backgroundColor: activo ? 'rgba(255,255,255,0.22)' : 'rgba(217, 119, 6, 0.16)',
-                        color: activo ? '#FFFFFF' : '#92400E',
-                      }}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="incidence-section-box">
+              <div className="incidence-section-header">
+                <span className="fw-bold text-warning" style={{ fontSize: '0.72rem', letterSpacing: '0.04em' }}>
+                  GRUPOS DE OBSERVACIÓN (DIFERENCIAS PARA REVISIÓN)
+                </span>
+                <span className="font-mono text-muted" style={{ fontSize: '0.7rem' }}>
+                  {INCIDENCIAS.filter((i) => i.tipo === 'OBS').reduce((acc, i) => acc + (conteoPorCodigoBase[i.codigo] || 0), 0).toLocaleString('es-PE')} hallazgos
+                </span>
+              </div>
+              <div className="incidence-grid">
+                {INCIDENCIAS.filter((i) => i.tipo === 'OBS')
+                  .filter((inc) => !ocultarSinIncidencias || (conteoPorCodigoBase[inc.codigo] || 0) > 0 || filtros.codigos.includes(inc.codigo))
+                  .map((inc) => {
+                    const count = conteoPorCodigoBase[inc.codigo] || 0;
+                    const activo = filtros.codigos.includes(inc.codigo);
+                    const hasItems = count > 0;
+                    const chipClass = [
+                      'incidence-chip',
+                      activo ? 'is-active-obs' : hasItems ? 'has-items-obs' : 'is-empty',
+                    ].join(' ');
+                    return (
+                      <button
+                        key={inc.codigo}
+                        type="button"
+                        onClick={() => toggleCodigoIncidencia(inc.codigo)}
+                        className={chipClass}
+                        aria-pressed={activo}
+                        title={`${inc.codigo}: ${inc.descripcion} (${count.toLocaleString('es-PE')} documentos)`}
+                      >
+                        <span className={`incidence-code-badge ${hasItems || activo ? 'tone-obs' : 'tone-muted'}`}>
+                          {inc.codigo}
+                        </span>
+                        <span className="incidence-label">{inc.corto}</span>
+                        <span className={`incidence-count ${hasItems || activo ? 'count-obs' : 'count-zero'}`}>
+                          {count.toLocaleString('es-PE')}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* CONTENEDOR PRINCIPAL: Selector de vista (Tabla 20 columnas / 12 Reportes Específicos) + Filtros + Exportación */}
+      {/* CONTENEDOR PRINCIPAL */}
       <div className="card-premium mb-4">
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
           <div className="d-flex align-items-center gap-2 flex-wrap">
-            <div className="btn-group">
+            <div className="btn-group" role="group">
               <button
                 type="button"
-                className={`btn btn-sm fw-bold d-flex align-items-center px-3 py-1.5 ${vistaActiva === 'tabla' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                className={`btn btn-sm fw-bold d-inline-flex align-items-center px-3 py-2 ${vistaActiva === 'tabla' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                style={{ gap: '0.45rem' }}
                 onClick={() => setVistaActiva('tabla')}
               >
-                <FiList className="me-1.5" /> Tabla Principal de Documentos ({docsFiltrados.length.toLocaleString('es-PE')})
+                <FiList />
+                <span>Tabla Principal de Documentos ({docsFiltrados.length.toLocaleString('es-PE')})</span>
               </button>
               <button
                 type="button"
-                className={`btn btn-sm fw-bold d-flex align-items-center px-3 py-1.5 ${vistaActiva === 'reportes' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                className={`btn btn-sm fw-bold d-inline-flex align-items-center px-3 py-2 ${vistaActiva === 'reportes' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                style={{ gap: '0.45rem' }}
                 onClick={() => setVistaActiva('reportes')}
               >
-                <FiBarChart2 className="me-1.5" /> Reportes Específicos (12)
+                <FiBarChart2 />
+                <span>Reportes Específicos (12)</span>
               </button>
             </div>
 
             {vistaActiva === 'tabla' && (
               <select
-                className="form-select form-control-premium py-1 px-2"
-                style={{ width: 'auto', fontSize: '0.82rem' }}
+                className="form-select form-control-premium"
+                style={{ width: 'auto', minWidth: '108px', fontSize: '0.84rem' }}
                 value={porPagina}
                 onChange={(e) => { setPorPagina(parseInt(e.target.value, 10)); setPagina(1); }}
               >
+                <option value={15}>15 filas</option>
                 <option value={20}>20 filas</option>
                 <option value={50}>50 filas</option>
                 <option value={100}>100 filas</option>
+                <option value={250}>250 filas</option>
+                <option value={500}>500 filas</option>
               </select>
             )}
           </div>
 
-          {/* Menú de exportación de resultados (Sección 13) */}
+          {/* Menú de exportación de resultados */}
           <div className="position-relative">
             <button
               type="button"
@@ -495,12 +689,9 @@ export default function ConciliacionVentas({
           </div>
         </div>
 
-        {/* Contenido principal: Tabla de 20 columnas o los 12 Reportes Específicos */}
+        {/* Contenido principal: Skeleton de carga, Tabla de 20 columnas o los 12 Reportes Específicos */}
         {isLoading ? (
-          <div className="text-center py-5">
-            <div className="spinner-border text-primary" role="status" />
-            <p className="text-muted mt-2 mb-0">Cargando comprobantes conciliados...</p>
-          </div>
+          <SkeletonTable rows={10} columns={10} title="Cargando comprobantes conciliados..." />
         ) : vistaActiva === 'reportes' ? (
           <ReportesEspecificosVentas
             docs={docsFiltrados}
@@ -524,8 +715,13 @@ export default function ConciliacionVentas({
           </div>
         ) : (
           <>
-            {/* SECCIÓN 10: Tabla Principal con las 20 columnas requeridas */}
-            <div className="table-responsive">
+            {/* SECCIÓN 10: Tabla Principal con las 20 columnas requeridas + Virtualización */}
+            <div
+              ref={containerRef}
+              onScroll={onScroll}
+              className="table-responsive"
+              style={maxHeight ? { maxHeight, overflowY: 'auto' } : undefined}
+            >
               <table className="table table-hover table-dense align-middle text-nowrap mb-0">
                 <thead>
                   <tr>
@@ -538,146 +734,46 @@ export default function ConciliacionVentas({
                     <th>7. Tipo ID SUNAT</th>
                     <th>8. N° ID SUNAT</th>
                     <th>9. Nombre SUNAT</th>
-                    <th className="text-end">10. BI SAP</th>
-                    <th className="text-end">11. BI SUNAT</th>
-                    <th className="text-end">12. IGV SAP</th>
-                    <th className="text-end">13. IGV SUNAT</th>
-                    <th className="text-end">14. Otros SAP</th>
-                    <th className="text-end">15. Otros SUNAT</th>
-                    <th className="text-end">16. Total SAP</th>
-                    <th className="text-end">17. Total SUNAT</th>
+                    <th className="text-end col-group-bi col-pair-start">10. BI SAP</th>
+                    <th className="text-end col-group-bi col-pair-end">11. BI SUNAT</th>
+                    <th className="text-end col-group-igv col-pair-start">12. IGV SAP</th>
+                    <th className="text-end col-group-igv col-pair-end">13. IGV SUNAT</th>
+                    <th className="text-end col-group-otros col-pair-start">14. Otros SAP</th>
+                    <th className="text-end col-group-otros col-pair-end">15. Otros SUNAT</th>
+                    <th className="text-end col-group-total col-pair-start">16. Total SAP</th>
+                    <th className="text-end col-group-total col-pair-end">17. Total SUNAT</th>
                     <th className="text-end">18. Diferencia</th>
                     <th className="text-center">19. Estado</th>
                     <th>20. Incidencias</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filasPagina.map((d) => {
-                    const est = ESTADOS[d.estado] || ESTADOS.OK;
-                    const ambos = d.en_sap && d.en_sunat;
-                    const diffTipoId = ambos && d.sap.tipo_identidad !== d.sunat.tipo_identidad;
-                    const diffNroId = ambos && d.sap.nro_identidad !== d.sunat.nro_identidad;
-                    const diffBase = ambos && !dentroDeTolerancia(d.sap.base - d.sunat.base);
-                    const diffIgv = ambos && !dentroDeTolerancia(d.sap.igv - d.sunat.igv);
-                    const diffOtros = ambos && !dentroDeTolerancia(d.sap.otros - d.sunat.otros);
-                    const diffTotal = ambos && !dentroDeTolerancia(d.sap.total - d.sunat.total);
-                    const difTotalVal = ambos ? d.sap.total - d.sunat.total : null;
-
-                    return (
-                      <tr
-                        key={d.key}
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => setDocSeleccionado(d)}
-                        title="Haga clic para ver el detalle comparativo SAP vs. SUNAT"
-                      >
-                        <td className="font-mono fw-bold">
-                          {d.serie}-{d.correlativo}
-                        </td>
-                        <td className="font-mono">{d.fecha_emision || '—'}</td>
-                        <td>{descripcionTipoCP(d.tipo_doc_pago)}</td>
-
-                        {/* Identidad SAP (4, 5, 6) */}
-                        <td className={`font-mono ${!d.en_sap || diffTipoId ? 'cell-mismatch' : ''}`}>
-                          {d.en_sap ? (d.sap.tipo_identidad || '—') : 'NO EXISTE'}
-                        </td>
-                        <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
-                          {d.en_sap ? (d.sap.nro_identidad || '—') : '—'}
-                        </td>
-                        <td className="text-truncate" style={{ maxWidth: '150px' }} title={d.sap?.nombre}>
-                          {d.en_sap ? (d.sap.nombre || '—') : <span className="text-muted">(Sin registro SAP)</span>}
-                        </td>
-
-                        {/* Identidad SUNAT (7, 8, 9) */}
-                        <td className={`font-mono ${!d.en_sunat || diffTipoId ? 'cell-mismatch' : ''}`}>
-                          {d.en_sunat ? (d.sunat.tipo_identidad || '—') : 'NO EXISTE'}
-                        </td>
-                        <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
-                          {d.en_sunat ? (d.sunat.nro_identidad || '—') : '—'}
-                        </td>
-                        <td className="text-truncate" style={{ maxWidth: '150px' }} title={d.sunat?.nombre}>
-                          {d.en_sunat ? (d.sunat.nombre || '—') : <span className="text-muted">(Sin registro SUNAT)</span>}
-                        </td>
-
-                        {/* Importes (10 - 18) */}
-                        <td className="text-end font-mono">{d.en_sap ? formatoMonto(d.sap.base) : '—'}</td>
-                        <td className={`text-end font-mono ${diffBase ? 'cell-mismatch' : 'cell-match'}`}>
-                          {d.en_sunat ? formatoMonto(d.sunat.base) : '—'}
-                        </td>
-
-                        <td className="text-end font-mono">{d.en_sap ? formatoMonto(d.sap.igv) : '—'}</td>
-                        <td className={`text-end font-mono ${diffIgv ? 'cell-mismatch' : 'cell-match'}`}>
-                          {d.en_sunat ? formatoMonto(d.sunat.igv) : '—'}
-                        </td>
-
-                        <td className="text-end font-mono">{d.en_sap ? formatoMonto(d.sap.otros) : '—'}</td>
-                        <td className={`text-end font-mono ${diffOtros ? 'cell-mismatch' : ''}`}>
-                          {d.en_sunat ? formatoMonto(d.sunat.otros) : '—'}
-                        </td>
-
-                        <td className="text-end font-mono fw-semibold">{d.en_sap ? formatoMonto(d.sap.total) : '—'}</td>
-                        <td className={`text-end font-mono fw-semibold ${diffTotal ? 'cell-mismatch' : 'cell-match'}`}>
-                          {d.en_sunat ? formatoMonto(d.sunat.total) : '—'}
-                        </td>
-
-                        <td className={`text-end font-mono ${diffTotal ? 'cell-mismatch' : 'text-muted'}`}>
-                          {difTotalVal === null ? '—' : formatoMonto(difTotalVal)}
-                        </td>
-
-                        {/* 19. Estado (clic filtra por ese estado) */}
-                        <td className="text-center" onClick={(e) => { e.stopPropagation(); actualizarFiltro({ estado: d.estado }); }}>
-                          <span className={`badge badge-status badge-status-${est.clase}`}>
-                            {est.etiqueta}
-                          </span>
-                        </td>
-
-                        {/* 20. Incidencias (clic en un badge filtra por ese código; botón ojo abre modal) */}
-                        <td>
-                          <div className="d-flex align-items-center justify-content-between gap-1">
-                            <div className="d-flex flex-wrap gap-1">
-                              {d.codigos.length === 0 ? (
-                                <span className="text-success" style={{ fontSize: '0.73rem' }}>
-                                  {d.anulado ? 'Anulado' : 'Sin incidencias'}
-                                </span>
-                              ) : (
-                                d.codigos.map((cod) => (
-                                  <span
-                                    key={cod}
-                                    className={`badge badge-status badge-status-${cod.startsWith('ERROR') ? 'error' : 'observado'}`}
-                                    style={{ cursor: 'pointer', fontSize: '0.67rem' }}
-                                    title="Clic para filtrar por esta incidencia"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      seleccionarSoloCodigo(cod);
-                                    }}
-                                  >
-                                    {cod}
-                                  </span>
-                                ))
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-outline-secondary p-1 border-0 flex-shrink-0"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDocSeleccionado(d);
-                              }}
-                              title="Ver detalle comparativo SAP vs. SUNAT"
-                            >
-                              <FiEye />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {isVirtualized && topPaddingHeight > 0 && (
+                    <tr aria-hidden="true">
+                      <td colSpan={20} style={{ height: `${topPaddingHeight}px`, padding: 0, border: 0 }} />
+                    </tr>
+                  )}
+                  {filasVirtualizadas.map((d) => (
+                    <FilaDocumentoVenta
+                      key={d.key}
+                      d={d}
+                      onSelectDoc={setDocSeleccionado}
+                      onFilterEstado={filtrarPorEstado}
+                      onFilterCodigo={seleccionarSoloCodigo}
+                    />
+                  ))}
+                  {isVirtualized && bottomPaddingHeight > 0 && (
+                    <tr aria-hidden="true">
+                      <td colSpan={20} style={{ height: `${bottomPaddingHeight}px`, padding: 0, border: 0 }} />
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
 
             {/* Paginación */}
             {totalPaginas > 1 && (
-              <div className="d-flex justify-content-between align-items-center mt-3 pt-3" style={{ borderTop: '1px solid var(--border-color)' }}>
+              <div className="d-flex justify-content-between align-items-center mt-3 pt-3 flex-wrap gap-2" style={{ borderTop: '1px solid var(--border-color)' }}>
                 <span className="text-muted" style={{ fontSize: '0.85rem' }}>
                   Mostrando {(pagina - 1) * porPagina + 1} - {Math.min(pagina * porPagina, totalRegistros)} de {totalRegistros.toLocaleString('es-PE')} comprobantes.
                 </span>
@@ -717,9 +813,11 @@ export default function ConciliacionVentas({
       {/* Modal de detalle comparativo SAP vs SUNAT */}
       <ModalDetalleDocumentoVentas
         doc={docSeleccionado}
-        onClose={() => setDocSeleccionado(null)}
+        onClose={cerrarModal}
         onFiltrarCodigo={seleccionarSoloCodigo}
       />
     </div>
   );
-}
+});
+
+export default ConciliacionVentas;

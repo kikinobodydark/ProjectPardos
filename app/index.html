@@ -6,11 +6,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; upgrade-insecure-requests;" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; upgrade-insecure-requests;" />
+    <!-- Preconnect & DNS-Prefetch para acercar la conexión a Supabase y CDN de fuentes -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+    <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+    <!-- Carga diferida (no bloqueante) de tipografía externa después del renderizado inicial -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      media="existing"
+    />
     <title>ConciliaTributo - Pardos Chicken</title>
+    <!-- Estilos críticos inline para el App Shell pre-renderizado en compilación (FCP instantáneo) -->
+    <style>
+      .prerender-shell{display:flex;align-items:center;justify-content:center;min-height:100vh;background:#F8FAFC;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#0F172A}
+      .prerender-card{background:#FFF;border:1px solid #E2E8F0;border-radius:16px;padding:2rem 2.5rem;max-width:420px;width:90%;text-align:center;box-shadow:0 12px 24px -4px rgba(15,23,42,.06)}
+      .prerender-logo{width:48px;height:48px;border-radius:12px;background:#0F172A;color:#FFF;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:1.25rem;margin-bottom:0.75rem}
+      .prerender-bar{height:8px;border-radius:4px;background:linear-gradient(90deg,#E2E8F0 25%,#F1F5F9 50%,#E2E8F0 75%);background-size:200% 100%;margin:0.5rem auto}
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- App Shell pre-renderizado en tiempo de compilación (SSG Shell) -->
+    <div id="root">
+      <div class="prerender-shell" role="status" aria-label="Iniciando ConciliaTributo">
+        <div class="prerender-card">
+          <div class="prerender-logo">CT</div>
+          <div style="font-weight:700;font-size:1.1rem;margin-bottom:0.25rem">ConciliaTributo · Pardos Chicken</div>
+          <div style="color:#64748B;font-size:0.82rem;margin-bottom:1rem">Preparando motor de conciliación SAP vs. SUNAT...</div>
+          <div class="prerender-bar" style="width:75%"></div>
+          <div class="prerender-bar" style="width:55%"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

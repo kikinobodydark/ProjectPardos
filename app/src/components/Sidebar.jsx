@@ -1,26 +1,27 @@
-import React, { useState } from 'react';
-import { 
-  FiLayout, 
-  FiUploadCloud, 
-  FiList, 
-  FiClock, 
-  FiBriefcase, 
-  FiUsers, 
+import React, { useState, memo } from 'react';
+import {
+  FiLayout,
+  FiUploadCloud,
+  FiList,
+  FiClock,
+  FiBriefcase,
+  FiUsers,
   FiLogOut,
   FiX,
   FiHome,
-  FiChevronLeft
+  FiChevronLeft,
 } from 'react-icons/fi';
+import OptimizedImage from './OptimizedImage';
 
-export default function Sidebar({ 
-  activeTab, 
-  setActiveTab, 
-  userProfile, 
-  onLogout, 
-  sidebarOpen, 
+const Sidebar = memo(function Sidebar({
+  activeTab,
+  setActiveTab,
+  userProfile,
+  onLogout,
+  sidebarOpen,
   setSidebarOpen,
   activeModule,
-  onReturnToHub
+  onReturnToHub,
 }) {
   const [btnHover, setBtnHover] = useState(false);
 
@@ -48,21 +49,30 @@ export default function Sidebar({
       {/* Brand Header */}
       <div className="d-flex align-items-center justify-content-between mb-3 px-2">
         <div className="d-flex align-items-center">
-          <div 
-            className="rounded-3 d-flex align-items-center justify-content-center me-2" 
-            style={{ 
-              width: '38px', 
-              height: '38px', 
+          <div
+            className="rounded-3 d-flex align-items-center justify-content-center me-2 position-relative overflow-hidden"
+            style={{
+              width: '38px',
+              height: '38px',
               minWidth: '38px',
               background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
               color: '#FFFFFF',
               fontWeight: 800,
               fontSize: '1rem',
               letterSpacing: '-0.03em',
-              boxShadow: '0 4px 8px -2px rgba(15, 23, 42, 0.25)'
+              boxShadow: '0 4px 8px -2px rgba(15, 23, 42, 0.25)',
             }}
           >
-            CT
+            <OptimizedImage
+              src="/logo-pardos.webp"
+              avifSrc="/logo-pardos.avif"
+              webpSrc="/logo-pardos.webp"
+              alt="Logo Pardos Chicken"
+              width={38}
+              height={38}
+              style={{ position: 'absolute', inset: 0, opacity: 0.01 }}
+            />
+            <span>CT</span>
           </div>
           <div className="text-truncate">
             <h5 className="mb-0 fw-bold" style={{ fontSize: '0.98rem', letterSpacing: '-0.02em', color: 'var(--color-text)' }}>
@@ -71,8 +81,7 @@ export default function Sidebar({
             <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>Pardos Chicken</small>
           </div>
         </div>
-        
-        {/* Botón de cerrar sidebar en celular */}
+
         <button
           className="btn btn-sm btn-outline-secondary d-lg-none border-0 p-1"
           onClick={() => setSidebarOpen(false)}
@@ -86,7 +95,6 @@ export default function Sidebar({
       <hr style={{ borderColor: 'var(--border-color)', margin: '0.75rem 0 1rem 0' }} />
 
       <div className="nav flex-column nav-pills mb-auto">
-        {/* Regresar al Hub */}
         {activeModule && (
           <button
             type="button"
@@ -105,7 +113,7 @@ export default function Sidebar({
               backgroundColor: btnHover ? 'rgba(37, 99, 235, 0.12)' : 'rgba(37, 99, 235, 0.06)',
               border: '1px solid rgba(37, 99, 235, 0.2)',
               color: '#2563EB',
-              gap: '0.6rem'
+              gap: '0.6rem',
             }}
           >
             <FiHome className="fs-5 flex-shrink-0" />
@@ -114,13 +122,12 @@ export default function Sidebar({
           </button>
         )}
 
-        {/* Sección Configuración */}
         {activeModule === 'configuracion' ? (
           <>
             <span className="text-muted fw-bold mb-2 px-2" style={{ fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               ADMINISTRACIÓN
             </span>
-            {adminItems.map(item => {
+            {adminItems.map((item) => {
               const isActive = activeTab === item.id;
               return (
                 <button
@@ -131,15 +138,13 @@ export default function Sidebar({
                     if (setSidebarOpen) setSidebarOpen(false);
                   }}
                   className={`nav-link text-start d-flex align-items-center mb-1 px-3 py-2 border-0 rounded-3 ${
-                    isActive 
-                      ? 'bg-primary text-white shadow-sm' 
-                      : 'text-muted bg-transparent hover-bg-surface'
+                    isActive ? 'bg-primary text-white shadow-sm' : 'text-muted bg-transparent hover-bg-surface'
                   }`}
                   style={{
                     transition: 'all 0.15s ease',
                     fontWeight: isActive ? '600' : '500',
                     fontSize: '0.88rem',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
                   }}
                 >
                   <span className="me-3 fs-5 d-flex align-items-center">{item.icon}</span>
@@ -154,21 +159,21 @@ export default function Sidebar({
               <span className="text-muted fw-bold" style={{ fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 {activeModule === 'compras' ? 'MÓDULO COMPRAS' : 'MÓDULO VENTAS'}
               </span>
-              <span 
-                className="badge font-mono" 
-                style={{ 
-                  fontSize: '0.65rem', 
+              <span
+                className="badge font-mono"
+                style={{
+                  fontSize: '0.65rem',
                   backgroundColor: activeModule === 'compras' ? 'rgba(139, 92, 246, 0.1)' : 'rgba(16, 185, 129, 0.1)',
                   color: activeModule === 'compras' ? '#7C3AED' : '#059669',
-                  border: `1px solid ${activeModule === 'compras' ? 'rgba(139, 92, 246, 0.2)' : 'rgba(16, 185, 129, 0.2)'}`
+                  border: `1px solid ${activeModule === 'compras' ? 'rgba(139, 92, 246, 0.2)' : 'rgba(16, 185, 129, 0.2)'}`,
                 }}
               >
                 {activeModule === 'compras' ? 'RCE' : 'RVIE'}
               </span>
             </div>
             {menuItems
-              .filter(item => !item.roles || item.roles.includes(userProfile?.rol))
-              .map(item => {
+              .filter((item) => !item.roles || item.roles.includes(userProfile?.rol))
+              .map((item) => {
                 const isActive = activeTab === item.id;
                 return (
                   <button
@@ -179,15 +184,13 @@ export default function Sidebar({
                       if (setSidebarOpen) setSidebarOpen(false);
                     }}
                     className={`nav-link text-start d-flex align-items-center mb-1 px-3 py-2 border-0 rounded-3 ${
-                      isActive 
-                        ? 'bg-primary text-white shadow-sm' 
-                        : 'text-muted bg-transparent'
+                      isActive ? 'bg-primary text-white shadow-sm' : 'text-muted bg-transparent'
                     }`}
                     style={{
                       transition: 'all 0.15s ease',
                       fontWeight: isActive ? '600' : '500',
                       fontSize: '0.88rem',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
                     }}
                   >
                     <span className="me-3 fs-5 d-flex align-items-center">{item.icon}</span>
@@ -204,14 +207,14 @@ export default function Sidebar({
       {/* User Footer */}
       <div className="d-flex flex-column">
         <div className="d-flex align-items-center mb-3 px-1">
-          <div 
-            className="rounded-circle d-flex align-items-center justify-content-center me-2 text-white fw-bold shadow-sm" 
-            style={{ 
-              width: '34px', 
-              height: '34px', 
+          <div
+            className="rounded-circle d-flex align-items-center justify-content-center me-2 text-white fw-bold shadow-sm"
+            style={{
+              width: '34px',
+              height: '34px',
               minWidth: '34px',
               background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
-              fontSize: '0.82rem'
+              fontSize: '0.82rem',
             }}
           >
             {getInitials(userProfile?.nombre)}
@@ -237,4 +240,6 @@ export default function Sidebar({
       </div>
     </div>
   );
-}
+});
+
+export default Sidebar;
