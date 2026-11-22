@@ -1,27 +1,55 @@
 import React, { useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
-import { FiMail, FiLock, FiAlertCircle, FiArrowRight } from 'react-icons/fi';
+import {
+  getOrCreateCsrfToken,
+  verifyCsrfToken,
+  checkRateLimit,
+  resetRateLimit,
+  sanitizeTextInput,
+} from '../utils/security';
+import { FiMail, FiLock, FiAlertCircle, FiArrowRight, FiShield } from 'react-icons/fi';
 
-export default function Login({ onLoginSuccess }) {
+export default function Login({ onLoginSuccess, initialBanner = '' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState(initialBanner);
   const [loading, setLoading] = useState(false);
+  const [csrfToken] = useState(() => getOrCreateCsrfToken());
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setErrorMsg('');
+
+    // 1. Verificar protección CSRF
+    if (!verifyCsrfToken(csrfToken)) {
+      setErrorMsg('Token de seguridad CSRF inválido o sesión caducada. Recarga la página.');
+      return;
+    }
+
+    // 2. Rate limiting contra ataques de fuerza bruta (máximo 5 intentos por minuto, bloqueo de 2 min)
+    const rl = checkRateLimit('login_attempt', { maxAttempts: 5, windowMs: 60000, lockoutMs: 120000 });
+    if (!rl.allowed) {
+      setErrorMsg(rl.message);
+      return;
+    }
+
+    const cleanEmail = sanitizeTextInput(email, 254).toLowerCase();
+    if (!/^[A-Za-z0-9._%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(cleanEmail)) {
+      setErrorMsg('Ingresa un formato de correo electrónico válido.');
+      return;
+    }
+
     setLoading(true);
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: cleanEmail,
         password,
       });
 
       if (error) throw error;
-      
-      // Fetch user profile to verify they have a linked company
+
+      // Verificar perfil activo y empresa vinculada
       const { data: profile, error: profileErr } = await supabase
         .from('usuarios')
         .select('*, empresas!usuarios_empresa_id_fkey(*)')
@@ -35,43 +63,51 @@ export default function Login({ onLoginSuccess }) {
         return;
       }
 
+      if (!profile.activo) {
+        setErrorMsg('Tu cuenta de colaborador ha sido desactivada. Comunícate con el administrador.');
+        await supabase.auth.signOut();
+        setLoading(false);
+        return;
+      }
+
+      resetRateLimit('login_attempt');
       onLoginSuccess(data.user, profile);
-    } catch (error) {
-      console.error(error);
-      setErrorMsg(error.message || 'Error al iniciar sesión. Verifica tus credenciales.');
+    } catch {
+      // Mensaje genérico para evitar enumeración de usuarios
+      setErrorMsg('Credenciales inválidas o acceso no autorizado. Verifica tu correo y contraseña.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div 
+    <div
       className="d-flex align-items-center justify-content-center min-vh-100 px-3"
-      style={{ 
+      style={{
         backgroundColor: '#F8FAFC',
-        backgroundImage: 'radial-gradient(at 50% 0%, rgba(37, 99, 235, 0.06) 0px, transparent 60%)'
+        backgroundImage: 'radial-gradient(at 50% 0%, rgba(37, 99, 235, 0.06) 0px, transparent 60%)',
       }}
     >
-      <div 
-        className="card-premium animate-fade-in w-100 p-4 p-md-5" 
-        style={{ 
+      <div
+        className="card-premium animate-fade-in w-100 p-4 p-md-5"
+        style={{
           maxWidth: '440px',
           borderRadius: '16px',
-          boxShadow: '0 20px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04)'
+          boxShadow: '0 20px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04)',
         }}
       >
         <div className="text-center mb-4">
-          <div 
-            className="rounded-3 d-inline-flex align-items-center justify-content-center mb-3" 
-            style={{ 
-              width: '54px', 
+          <div
+            className="rounded-3 d-inline-flex align-items-center justify-content-center mb-3"
+            style={{
+              width: '54px',
               height: '54px',
               background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
               color: '#FFFFFF',
               fontWeight: 800,
               fontSize: '1.4rem',
               letterSpacing: '-0.04em',
-              boxShadow: '0 6px 14px -3px rgba(15, 23, 42, 0.25)'
+              boxShadow: '0 6px 14px -3px rgba(15, 23, 42, 0.25)',
             }}
           >
             CT
@@ -80,13 +116,13 @@ export default function Login({ onLoginSuccess }) {
             <h3 className="fw-bold mb-0" style={{ color: 'var(--color-text)', letterSpacing: '-0.02em', fontSize: '1.5rem' }}>
               ConciliaTributo
             </h3>
-            <span 
-              className="badge" 
-              style={{ 
-                fontSize: '0.72rem', 
-                backgroundColor: 'rgba(220, 38, 38, 0.08)', 
+            <span
+              className="badge"
+              style={{
+                fontSize: '0.72rem',
+                backgroundColor: 'rgba(220, 38, 38, 0.08)',
                 color: '#DC2626',
-                border: '1px solid rgba(220, 38, 38, 0.2)'
+                border: '1px solid rgba(220, 38, 38, 0.2)',
               }}
             >
               Pardos
@@ -104,7 +140,8 @@ export default function Login({ onLoginSuccess }) {
           </div>
         )}
 
-        <form onSubmit={handleLogin}>
+        <form onSubmit={handleLogin} autoComplete="off">
+          <input type="hidden" name="csrf_token" value={csrfToken} readOnly />
           <div className="mb-3">
             <label className="form-label text-muted fw-semibold" style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Correo Electrónico
@@ -116,6 +153,8 @@ export default function Login({ onLoginSuccess }) {
               <input
                 type="email"
                 required
+                maxLength={254}
+                autoComplete="username"
                 className="form-control form-control-premium"
                 placeholder="operador@pardoschicken.com"
                 value={email}
@@ -135,6 +174,8 @@ export default function Login({ onLoginSuccess }) {
               <input
                 type="password"
                 required
+                maxLength={128}
+                autoComplete="current-password"
                 className="form-control form-control-premium"
                 placeholder="••••••••"
                 value={password}
@@ -161,6 +202,11 @@ export default function Login({ onLoginSuccess }) {
               </>
             )}
           </button>
+
+          <div className="text-center mt-3 d-flex align-items-center justify-content-center gap-1 text-muted" style={{ fontSize: '0.74rem' }}>
+            <FiShield className="text-success" />
+            <span>Sesión protegida con cifrado TLS, PKCE y protección CSRF</span>
+          </div>
         </form>
       </div>
     </div>

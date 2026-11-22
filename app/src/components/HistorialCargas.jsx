@@ -1,9 +1,11 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
+import { checkRateLimit, logSuspiciousActivity } from '../utils/security';
 import { FiClock, FiUser, FiArrowRight, FiTrash2, FiRefreshCw } from 'react-icons/fi';
 
-export default function HistorialCargas({ activeCompany, onSelectPeriod, onDeletePeriod, activeModule }) {
+export default function HistorialCargas({ activeCompany, onSelectPeriod, onDeletePeriod, activeModule, userProfile }) {
+  const canDelete = !userProfile || userProfile.rol === 'admin' || userProfile.rol === 'operador';
   const { data: history = [], isLoading, refetch } = useQuery({
     queryKey: ['cargaHistory', activeCompany?.id, activeModule],
     queryFn: async () => {
@@ -21,6 +23,15 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod, onDelet
   });
 
   const handleDelete = async (periodoId, label) => {
+    if (!canDelete) {
+      logSuspiciousActivity('INTENTO_BORRAR_PERIODO_SIN_PERMISO', { periodoId });
+      return;
+    }
+    const rl = checkRateLimit('delete_period', { maxAttempts: 5, windowMs: 60000, lockoutMs: 60000 });
+    if (!rl.allowed) {
+      alert(rl.message);
+      return;
+    }
     const ok = window.confirm(`¿Está seguro de que desea eliminar el período "${label}"? Esta acción borrará permanentemente todos sus comprobantes de validación para liberar espacio.`);
     if (!ok) return;
 
@@ -148,19 +159,21 @@ export default function HistorialCargas({ activeCompany, onSelectPeriod, onDelet
                         <span>Cargar</span>
                         <FiArrowRight className="ms-1" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          let label = item.periodo;
-                          if (item.dia) label += ` (Día: ${item.dia}, v${item.version || 1})`;
-                          handleDelete(item.periodo_id, label);
-                        }}
-                        className="btn btn-sm btn-outline-danger d-flex align-items-center px-2 py-1 rounded-2"
-                        style={{ cursor: 'pointer', fontSize: '0.82rem' }}
-                        title="Eliminar período y liberar espacio"
-                      >
-                        <FiTrash2 />
-                      </button>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            let label = item.periodo;
+                            if (item.dia) label += ` (Día: ${item.dia}, v${item.version || 1})`;
+                            handleDelete(item.periodo_id, label);
+                          }}
+                          className="btn btn-sm btn-outline-danger d-flex align-items-center px-2 py-1 rounded-2"
+                          style={{ cursor: 'pointer', fontSize: '0.82rem' }}
+                          title="Eliminar período y liberar espacio"
+                        >
+                          <FiTrash2 />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -272,7 +272,22 @@ export const REPORTES_ESPECIFICOS = [
 
 // ============================================================================
 // 13. Exportación a Excel (respeta filtros aplicados y conserva datos originales)
+// Incluye sanitización contra CSV / Excel Formula Injection (=, +, -, @, Tab, CR)
 // ============================================================================
+const escaparFormulaExcel = (val) => {
+  if (typeof val !== 'string') return val;
+  return /^[=+\-@\t\r]/.test(val) ? `'${val}` : val;
+};
+
+const sanitizarFilaExcel = (fila) => {
+  if (!fila || typeof fila !== 'object') return fila;
+  const out = {};
+  for (const [k, v] of Object.entries(fila)) {
+    out[k] = escaparFormulaExcel(v);
+  }
+  return out;
+};
+
 export function filaExcelPrincipal(d) {
   const totalSap = d.en_sap ? centimosADecimal(d.sap.total) : null;
   const totalSunat = d.en_sunat ? centimosADecimal(d.sunat.total) : null;
@@ -333,9 +348,10 @@ export function exportarExcelVentas({ tipo, docs, todosDocs, periodo = 'periodo'
   const wb = XLSX.utils.book_new();
   const ind = calcularIndicadores(docs);
   const agregarHoja = (nombre, filas) => {
-    const ws = XLSX.utils.json_to_sheet(
-      filas.length ? filas : [{ Mensaje: 'Sin registros para los criterios seleccionados' }]
-    );
+    const filasSeguras = filas.length
+      ? filas.map(sanitizarFilaExcel)
+      : [{ Mensaje: 'Sin registros para los criterios seleccionados' }];
+    const ws = XLSX.utils.json_to_sheet(filasSeguras);
     XLSX.utils.book_append_sheet(wb, ws, nombre.slice(0, 31));
   };
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
+import { sanitizeExcelRow, checkRateLimit } from '../utils/security';
 import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle, FiCheckCircle } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
 import ConciliacionVentas from './ventas/ConciliacionVentas';
@@ -226,7 +227,8 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
       }
 
       if (filterSerie) {
-        query = query.ilike('serie', `%${filterSerie.trim()}%`);
+        const cleanSerie = filterSerie.trim().replace(/[^A-Za-z0-9-]/g, '').slice(0, 10);
+        if (cleanSerie) query = query.ilike('serie', `%${cleanSerie}%`);
       }
       if (startDate) {
         query = query.gte('fecha_emision', startDate);
@@ -247,7 +249,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         }
       }
 
-      const cleanTerm = searchTerm.trim().replace(/[(),.:"']/g, '');
+      const cleanTerm = searchTerm.trim().replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s-]/g, '').slice(0, 80);
       if (cleanTerm !== '') {
         const term = `%${cleanTerm}%`;
         query = query.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
@@ -334,6 +336,11 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
 
   // Exportar a Excel (consulta completa de registros filtrados para descarga)
   const handleExport = async () => {
+    const rl = checkRateLimit('excel_export', { maxAttempts: 10, windowMs: 60000, lockoutMs: 60000 });
+    if (!rl.allowed) {
+      alert(rl.message);
+      return;
+    }
     setExportLoading(true);
     setExportProgress(0);
     try {
@@ -355,7 +362,8 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         }
 
         if (filterSerie) {
-          currentQuery = currentQuery.ilike('serie', `%${filterSerie.trim()}%`);
+          const cleanSerie = filterSerie.trim().replace(/[^A-Za-z0-9-]/g, '').slice(0, 10);
+          if (cleanSerie) currentQuery = currentQuery.ilike('serie', `%${cleanSerie}%`);
         }
         if (startDate) {
           currentQuery = currentQuery.gte('fecha_emision', startDate);
@@ -376,7 +384,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
           }
         }
 
-        const cleanTerm = searchTerm.trim().replace(/[(),.:"']/g, '');
+        const cleanTerm = searchTerm.trim().replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s-]/g, '').slice(0, 80);
         if (cleanTerm !== '') {
           const term = `%${cleanTerm}%`;
           currentQuery = currentQuery.or(`buscar_documento.ilike.${term},serie.ilike.${term},correlativo.ilike.${term},nro_identidad_sunat.ilike.${term},nro_identidad_sap.ilike.${term},nombre_sunat.ilike.${term},nombre_sap.ilike.${term}`);
@@ -488,7 +496,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
           rowObj['Cliente SUNAT'] = r.nombre_sunat;
         }
 
-        return rowObj;
+        return sanitizeExcelRow(rowObj);
       });
 
       const ws = XLSX.utils.json_to_sheet(wsData);

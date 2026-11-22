@@ -1,5 +1,7 @@
--- 1. Extensiones necesarias
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- 1. Extensiones necesarias (en schema separado extensions)
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions;
 
 -- 2. Tabla de Estudios Contables (Organizaciones)
 CREATE TABLE IF NOT EXISTS public.estudios (
@@ -29,6 +31,13 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     rol TEXT NOT NULL CHECK (rol IN ('admin', 'operador', 'consulta')),
     activo BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 4.1 Tabla de Relación Muchos a Muchos (public.usuario_empresas)
+CREATE TABLE IF NOT EXISTS public.usuario_empresas (
+    usuario_id UUID NOT NULL REFERENCES public.usuarios(id) ON DELETE CASCADE,
+    empresa_id UUID NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
+    PRIMARY KEY (usuario_id, empresa_id)
 );
 
 -- 5. Tabla de Períodos de Carga
@@ -163,6 +172,9 @@ CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_id ON public.detalle_comp
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_empresa_id ON public.detalle_compras (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_car_sunat ON public.detalle_compras (car_sunat);
 CREATE INDEX IF NOT EXISTS idx_periodos_carga_empresa_id ON public.periodos_carga (empresa_id);
+CREATE INDEX IF NOT EXISTS idx_periodos_carga_usuario_id ON public.periodos_carga (usuario_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_empresa_id ON public.usuarios (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_estudio_id ON public.usuarios (estudio_id);
 CREATE INDEX IF NOT EXISTS idx_empresas_estudio_id ON public.empresas (estudio_id);
+CREATE INDEX IF NOT EXISTS idx_usuario_empresas_empresa_id ON public.usuario_empresas (empresa_id);
+CREATE INDEX IF NOT EXISTS idx_auditoria_estudio_id ON public.auditoria (estudio_id);

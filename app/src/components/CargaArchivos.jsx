@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
+import {
+  getOrCreateCsrfToken,
+  verifyCsrfToken,
+  checkRateLimit,
+  validateUploadedFile,
+} from '../utils/security';
 import { parseSIRE, stripBOM, parseSAPCompras, parseSUNATCompras } from '../utils/parsers';
 import { reconcileData } from '../utils/validations';
 import { decodificarTexto, parsearSapVentas, parsearSunatVentas, parsearCortesias } from '../utils/ventas/lectores';
@@ -14,6 +20,7 @@ import * as XLSX from 'xlsx';
 
 export default function CargaArchivos({ activeCompany, userProfile, onProcessComplete, activeModule }) {
   const queryClient = useQueryClient();
+  const [csrfToken] = useState(() => getOrCreateCsrfToken());
   const esVentas = activeModule !== 'compras';
 
   const [periodo, setPeriodo] = useState(''); // Formato YYYYMM, ej. 202606
@@ -109,6 +116,14 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
     setErrorMsg('');
     setSuccessMsg('');
 
+    // Validar tamaño máximo (15 MB TXT / 5 MB Excel), extensión y tipo MIME antes de cargar en memoria
+    const check = validateUploadedFile(file, type === 'cortesias' ? 'excel' : 'txt');
+    if (!check.valid) {
+      setErrorMsg(check.error);
+      e.target.value = '';
+      return;
+    }
+
     if (!esVentas) {
       if (type === 'sap') setSapFile(file);
       if (type === 'sunat') setSunatFile(file);
@@ -185,6 +200,17 @@ export default function CargaArchivos({ activeCompany, userProfile, onProcessCom
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
+
+    if (!verifyCsrfToken(csrfToken)) {
+      setErrorMsg('Token de seguridad CSRF inválido. Recarga la página.');
+      return;
+    }
+
+    const rl = checkRateLimit('file_upload_process', { maxAttempts: 6, windowMs: 60000, lockoutMs: 60000 });
+    if (!rl.allowed) {
+      setErrorMsg(rl.message);
+      return;
+    }
 
     if (esVentas) {
       if (!sapValido || !sunatValido) {

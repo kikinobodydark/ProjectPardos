@@ -1,9 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle } from 'react-icons/fi';
+import {
+  getOrCreateCsrfToken,
+  verifyCsrfToken,
+  checkRateLimit,
+  sanitizeTextInput,
+  logSuspiciousActivity,
+} from '../utils/security';
+import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock } from 'react-icons/fi';
 
 export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
+  const [csrfToken] = useState(() => getOrCreateCsrfToken());
+
   // Formulario
   const [editingId, setEditingId] = useState(null);
   const [nombre, setNombre] = useState('');
@@ -16,6 +25,8 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const isAdmin = userProfile?.rol === 'admin';
+
   // Sync empresaIds with activeCompany on initial load/creation mode
   useEffect(() => {
     if (activeCompany?.id && !editingId) {
@@ -23,7 +34,6 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     }
   }, [activeCompany, editingId]);
 
-  // TanStack Query para obtener la lista de empresas (para asignar al usuario)
   const { data: companies = [] } = useQuery({
     queryKey: ['companies'],
     queryFn: async () => {
@@ -34,11 +44,11 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
       if (error) throw error;
       return data || [];
     },
+    enabled: isAdmin,
   });
 
-  const activeCompanies = companies.filter(c => c.activo === true);
+  const activeCompanies = companies.filter((c) => c.activo === true);
 
-  // TanStack Query para obtener la lista de usuarios del estudio (con join de empresas y relaciones muchos a muchos)
   const { data: usuarios = [], isLoading, refetch } = useQuery({
     queryKey: ['usuarios', userProfile?.estudio_id],
     queryFn: async () => {
@@ -51,7 +61,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!userProfile?.estudio_id,
+    enabled: isAdmin && !!userProfile?.estudio_id,
   });
 
   const resetForm = () => {
@@ -65,28 +75,25 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     setErrorMsg('');
   };
 
-  // TanStack Mutation para guardar/crear usuario
   const saveUserMutation = useMutation({
     mutationFn: async (payload) => {
       if (payload.id) {
-        // Actualizar usuario
         const { error } = await supabase.rpc('actualizar_usuario', {
           p_id: payload.id,
           p_nombre: payload.nombre,
           p_rol: payload.rol,
           p_activo: payload.activo,
           p_password: payload.password || null,
-          p_empresa_ids: payload.empresaIds
+          p_empresa_ids: payload.empresaIds,
         });
         if (error) throw error;
       } else {
-        // Crear usuario
         const { error } = await supabase.rpc('crear_usuario', {
           p_email: payload.email,
           p_password: payload.password,
           p_nombre: payload.nombre,
           p_rol: payload.rol,
-          p_empresa_ids: payload.empresaIds
+          p_empresa_ids: payload.empresaIds,
         });
         if (error) throw error;
       }
@@ -98,14 +105,13 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     },
     onError: (err) => {
       setErrorMsg(err.message || 'Error al guardar el usuario.');
-    }
+    },
   });
 
-  // TanStack Mutation para eliminar usuario
   const deleteUserMutation = useMutation({
     mutationFn: async (id) => {
       const { error } = await supabase.rpc('eliminar_usuario', {
-        p_id: id
+        p_id: id,
       });
       if (error) throw error;
     },
@@ -115,16 +121,61 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
     },
     onError: (err) => {
       setErrorMsg(err.message || 'Error al eliminar el usuario.');
-    }
+    },
   });
+
+  // Defensa en profundidad: bloquear renderizado si no es admin
+  if (!isAdmin) {
+    logSuspiciousActivity('RENDER_CONFIG_USUARIOS_NO_ADMIN', { userId: userProfile?.id });
+    return (
+      <div className="card-premium p-4 text-center">
+        <FiLock className="text-danger fs-2 mb-2" />
+        <h5 className="fw-bold">Acceso Restringido</h5>
+        <p className="text-muted mb-0">Solo los administradores activos pueden gestionar usuarios.</p>
+      </div>
+    );
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
 
+    if (!verifyCsrfToken(csrfToken)) {
+      setErrorMsg('Token CSRF inválido. Recarga la sesión.');
+      return;
+    }
+
+    const rl = checkRateLimit('admin_user_mutation', { maxAttempts: 10, windowMs: 60000, lockoutMs: 60000 });
+    if (!rl.allowed) {
+      setErrorMsg(rl.message);
+      return;
+    }
+
+    const cleanNombre = sanitizeTextInput(nombre, 120);
+    if (cleanNombre.length < 2) {
+      setErrorMsg('El nombre del colaborador debe tener al menos 2 caracteres válidos.');
+      return;
+    }
+
+    const cleanEmail = sanitizeTextInput(email, 254).toLowerCase();
+    if (!editingId && !/^[A-Za-z0-9._%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(cleanEmail)) {
+      setErrorMsg('El formato del correo electrónico no es válido.');
+      return;
+    }
+
     if (!editingId && !password) {
       setErrorMsg('La contraseña es obligatoria para nuevos usuarios.');
+      return;
+    }
+
+    if (password && (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password))) {
+      setErrorMsg('La contraseña debe tener mínimo 8 caracteres, al menos 1 mayúscula, 1 minúscula y 1 número.');
+      return;
+    }
+
+    if (!['admin', 'operador', 'consulta'].includes(rol)) {
+      setErrorMsg('Rol seleccionado inválido.');
       return;
     }
 
@@ -135,17 +186,27 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
 
     saveUserMutation.mutate({
       id: editingId,
-      nombre,
-      email,
+      nombre: cleanNombre,
+      email: cleanEmail,
       password,
       rol,
       activo,
-      empresaIds
+      empresaIds,
     });
   };
 
   const handleDelete = (id) => {
-    const confirmMsg = '¿Estás seguro de que deseas eliminar permanentemente este colaborador? Esta acción eliminará su cuenta de acceso y es irreversible.\n\nTip: Si solo quieres suspender su acceso, desactívalo desmarcando "Colaborador Activo" al editar.';
+    if (!verifyCsrfToken(csrfToken)) {
+      setErrorMsg('Token CSRF inválido. Recarga la sesión.');
+      return;
+    }
+    const rl = checkRateLimit('admin_user_delete', { maxAttempts: 5, windowMs: 60000, lockoutMs: 60000 });
+    if (!rl.allowed) {
+      setErrorMsg(rl.message);
+      return;
+    }
+    const confirmMsg =
+      '¿Estás seguro de que deseas eliminar permanentemente este colaborador? Esta acción eliminará su cuenta de acceso y es irreversible.\n\nTip: Si solo quieres suspender su acceso, desactívalo desmarcando "Colaborador Activo" al editar.';
     if (window.confirm(confirmMsg)) {
       deleteUserMutation.mutate(id);
     }
@@ -156,11 +217,11 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   const handleEdit = (user) => {
     setEditingId(user.id);
     setNombre(user.nombre);
-    setEmail(''); // No mostramos ni editamos el email por seguridad, queda estático
-    setPassword(''); // En blanco a menos que se desee cambiar
+    setEmail('');
+    setPassword('');
     setRol(user.rol);
     setActivo(user.activo);
-    setEmpresaIds(user.usuario_empresas?.map(ue => ue.empresa_id).filter(Boolean) || []);
+    setEmpresaIds(user.usuario_empresas?.map((ue) => ue.empresa_id).filter(Boolean) || []);
   };
 
   return (
@@ -177,12 +238,14 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
             </div>
           )}
 
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} autoComplete="off">
+            <input type="hidden" name="csrf_token" value={csrfToken} readOnly />
             <div className="mb-3">
               <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Nombre Completo</label>
               <input
                 type="text"
                 required
+                maxLength={120}
                 className="form-control form-control-premium"
                 placeholder="Nombre del operador"
                 value={nombre}
@@ -196,6 +259,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                 <input
                   type="email"
                   required
+                  maxLength={254}
                   className="form-control form-control-premium"
                   placeholder="correo@empresa.com"
                   value={email}
@@ -210,7 +274,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                 {activeCompanies.length === 0 ? (
                   <span className="text-muted" style={{ fontSize: '0.85rem' }}>No hay empresas activas disponibles.</span>
                 ) : (
-                  activeCompanies.map(c => {
+                  activeCompanies.map((c) => {
                     const isChecked = empresaIds.includes(c.id);
                     return (
                       <div key={c.id} className="d-flex align-items-center">
@@ -224,7 +288,7 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                             if (e.target.checked) {
                               setEmpresaIds([...empresaIds, c.id]);
                             } else {
-                              setEmpresaIds(empresaIds.filter(id => id !== c.id));
+                              setEmpresaIds(empresaIds.filter((id) => id !== c.id));
                             }
                           }}
                         />
@@ -245,8 +309,10 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
               <input
                 type="password"
                 required={!editingId}
+                maxLength={128}
+                autoComplete="new-password"
                 className="form-control form-control-premium"
-                placeholder={editingId ? 'Dejar en blanco para no cambiar' : 'Mínimo 8 caracteres, 1 mayúscula, 1 número'}
+                placeholder={editingId ? 'Dejar en blanco para no cambiar' : 'Mín. 8 caracteres, mayúscula, minúscula y número'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -332,20 +398,20 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {usuarios.map(user => (
+                  {usuarios.map((user) => (
                     <tr key={user.id}>
                       <td className="fw-semibold">{user.nombre}</td>
                       <td className="text-muted" style={{ fontSize: '0.82rem' }}>
                         <div className="d-flex flex-wrap gap-1">
-                          {user.usuario_empresas?.map(ue => (
-                            <span 
-                              key={ue.empresa_id} 
-                              className="badge font-mono" 
-                              style={{ 
-                                backgroundColor: 'rgba(241, 245, 249, 0.9)', 
-                                color: '#334155', 
-                                border: '1px solid #E2E8F0', 
-                                fontSize: '0.72rem' 
+                          {user.usuario_empresas?.map((ue) => (
+                            <span
+                              key={ue.empresa_id}
+                              className="badge font-mono"
+                              style={{
+                                backgroundColor: 'rgba(241, 245, 249, 0.9)',
+                                color: '#334155',
+                                border: '1px solid #E2E8F0',
+                                fontSize: '0.72rem',
                               }}
                             >
                               {ue.empresas?.razon_social}
@@ -354,13 +420,13 @@ export default function ConfiguracionUsuarios({ activeCompany, userProfile }) {
                         </div>
                       </td>
                       <td>
-                        <span 
-                          className="badge font-mono" 
-                          style={{ 
-                            backgroundColor: user.rol === 'admin' ? 'rgba(37, 99, 235, 0.1)' : 'rgba(100, 116, 139, 0.1)', 
-                            color: user.rol === 'admin' ? '#2563EB' : '#475569', 
-                            border: `1px solid ${user.rol === 'admin' ? 'rgba(37, 99, 235, 0.2)' : '#E2E8F0'}`, 
-                            fontSize: '0.74rem' 
+                        <span
+                          className="badge font-mono"
+                          style={{
+                            backgroundColor: user.rol === 'admin' ? 'rgba(37, 99, 235, 0.1)' : 'rgba(100, 116, 139, 0.1)',
+                            color: user.rol === 'admin' ? '#2563EB' : '#475569',
+                            border: `1px solid ${user.rol === 'admin' ? 'rgba(37, 99, 235, 0.2)' : '#E2E8F0'}`,
+                            fontSize: '0.74rem',
                           }}
                         >
                           {user.rol.toUpperCase()}
