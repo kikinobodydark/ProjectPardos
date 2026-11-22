@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS public.auditoria (
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_id ON public.detalle_ventas (periodo_id);
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_empresa_id ON public.detalle_ventas (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_car_sunat ON public.detalle_ventas (car_sunat);
+CREATE INDEX IF NOT EXISTS idx_detalle_ventas_errores_json_gin ON public.detalle_ventas USING gin (errores_json);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_id ON public.detalle_compras (periodo_id);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_empresa_id ON public.detalle_compras (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_car_sunat ON public.detalle_compras (car_sunat);

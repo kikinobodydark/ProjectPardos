@@ -4,9 +4,37 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle, FiCheckCircle } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
+import ConciliacionVentas from './ventas/ConciliacionVentas';
 
+export default function TablaUnificada({
+  periodId, activePeriod, initialFilter, onFilterReset, activeModule,
+  activeCompany, userProfile, onProcessComplete,
+}) {
+  if (activeModule !== 'compras') {
+    return (
+      <ConciliacionVentas
+        periodId={periodId}
+        activePeriod={activePeriod}
+        initialFilter={initialFilter}
+        onFilterReset={onFilterReset}
+        activeCompany={activeCompany}
+        userProfile={userProfile}
+        onProcessComplete={onProcessComplete}
+      />
+    );
+  }
+  return (
+    <TablaUnificadaCompras
+      periodId={periodId}
+      activePeriod={activePeriod}
+      initialFilter={initialFilter}
+      onFilterReset={onFilterReset}
+      activeModule={activeModule}
+    />
+  );
+}
 
-export default function TablaUnificada({ periodId, activePeriod, initialFilter, onFilterReset, activeModule }) {
+function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilterReset, activeModule }) {
   const [exportLoading, setExportLoading] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
