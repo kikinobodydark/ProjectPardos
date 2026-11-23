@@ -1397,3 +1397,168 @@ h6, .h6 { font-size: 0.9rem !important; }
     animation: none;
   }
 }
+
+/* ==========================================================================
+   Segmented Toggle Control (Comparativa Monetaria - Ventas y Compras)
+   ========================================================================== */
+.segmented-toggle {
+  --seg-accent: #2563EB;
+  --seg-accent-soft: rgba(37, 99, 235, 0.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background-color: #F1F5F9;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.segmented-toggle--compras {
+  --seg-accent: #7C3AED;
+  --seg-accent-soft: rgba(124, 58, 237, 0.1);
+}
+
+.segmented-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.segmented-toggle-btn:hover:not(.is-active) {
+  color: var(--color-text);
+  background-color: rgba(255, 255, 255, 0.65);
+}
+
+.segmented-toggle-btn.is-active {
+  background-color: #FFFFFF;
+  color: var(--seg-accent);
+  border-color: rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.segmented-toggle-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background-color: rgba(100, 116, 139, 0.14);
+  color: #475569;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.segmented-toggle-btn.is-active .segmented-toggle-count {
+  background-color: var(--seg-accent-soft);
+  color: var(--seg-accent);
+}
+
+/* ==========================================================================
+   Botones de Acción del Header del Dashboard (alineados con SelectorLocal)
+   ========================================================================== */
+.dashboard-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 34px;
+  padding: 0 0.9rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.dashboard-action-btn svg {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  transition: transform 0.16s ease;
+}
+
+.dashboard-action-btn:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.dashboard-action-btn--secondary {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.dashboard-action-btn--secondary svg {
+  color: #2563EB;
+}
+
+.dashboard-action-btn--secondary.dashboard-action-btn--compras svg {
+  color: #7C3AED;
+}
+
+.dashboard-action-btn--secondary:hover:not(:disabled) {
+  background-color: #EFF6FF;
+  border-color: rgba(37, 99, 235, 0.4);
+  color: #1D4ED8;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.1);
+  transform: translateY(-1px);
+}
+
+.dashboard-action-btn--secondary.dashboard-action-btn--compras:hover:not(:disabled) {
+  background-color: #F5F3FF;
+  border-color: rgba(124, 58, 237, 0.4);
+  color: #6D28D9;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.12);
+}
+
+.dashboard-action-btn--primary {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  border: 1px solid #1D4ED8;
+  color: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.24);
+}
+
+.dashboard-action-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1D4ED8 0%, #1E40AF 100%);
+  border-color: #1E40AF;
+  color: #FFFFFF;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.32);
+  transform: translateY(-1px);
+}
+
+.dashboard-action-btn--primary.dashboard-action-btn--compras {
+  background: linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%);
+  border-color: #6D28D9;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.24);
+}
+
+.dashboard-action-btn--primary.dashboard-action-btn--compras:hover:not(:disabled) {
+  background: linear-gradient(135deg, #6D28D9 0%, #5B21B6 100%);
+  border-color: #5B21B6;
+  box-shadow: 0 4px 10px rgba(124, 58, 237, 0.32);
+}
+
+.dashboard-action-btn--primary:hover:not(:disabled) svg {
+  transform: translateX(2px);
+}
+
+.dashboard-action-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+}

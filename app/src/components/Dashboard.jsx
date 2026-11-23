@@ -13,7 +13,6 @@ import { formatoMonto, dentroDeTolerancia } from '../utils/ventas/montos';
 import {
   INCIDENCIAS_COMPRAS,
   CONCEPTOS_IMPORTE_COMPRAS,
-  LISTA_RESULTADOS_COMPRAS,
 } from '../utils/compras/catalogos';
 import {
   calcularIndicadoresCompras,
@@ -83,8 +82,6 @@ const DashboardVentas = memo(function DashboardVentas({
 
   const ind = useMemo(() => calcularIndicadores(docs), [docs]);
 
-  const pct = (val) => (ind.totalUnicos > 0 ? `${((val / ind.totalUnicos) * 100).toFixed(1)}%` : '0.0%');
-
   const irAConciliacion = (payload) => {
     if (!onNavigateToReconciliation) return;
     if (typeof payload === 'object' && payload !== null) {
@@ -126,17 +123,19 @@ const DashboardVentas = memo(function DashboardVentas({
           <button
             type="button"
             disabled={docs.length === 0}
-            className="btn btn-sm btn-outline-primary d-flex align-items-center fw-semibold"
+            className="dashboard-action-btn dashboard-action-btn--secondary"
             onClick={() => exportarExcelVentas({ tipo: 'completo', docs, todosDocs: docs, periodo: activePeriod || 'periodo' })}
           >
-            <FiDownload className="me-1.5" /> Exportar Libro Completo
+            <FiDownload />
+            <span>Exportar Libro Completo</span>
           </button>
           <button
             type="button"
-            className="btn btn-sm btn-primary d-flex align-items-center fw-semibold"
+            className="dashboard-action-btn dashboard-action-btn--primary"
             onClick={() => irAConciliacion('ALL')}
           >
-            Ir a Tabla de Conciliación <FiArrowRight className="ms-1.5" />
+            <span>Ir a Tabla de Conciliación</span>
+            <FiArrowRight />
           </button>
         </div>
       </div>
@@ -154,34 +153,36 @@ const DashboardVentas = memo(function DashboardVentas({
 
           <div className="row g-3 mb-3">
             {/* Comparativa monetaria por los conceptos verificados */}
-            <div className="col-lg-7">
+            <div className="col-12">
               <div className="card-premium h-100 p-3 d-flex flex-column justify-content-between">
                 <div>
-                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                  <div className="d-flex justify-content-between align-items-start align-items-md-center flex-wrap gap-3 mb-3">
                     <div>
                       <h5 className="mb-0 fw-bold">Comparativa Monetaria (SAP vs. SUNAT — Tolerancia S/ 0.05)</h5>
-                      <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                      <small className="text-muted" style={{ fontSize: '0.78rem' }}>
                         {modoComparativa === 'coincidentes'
                           ? `Solo documentos presentes en SAP y SUNAT (${ind.coincidentes.toLocaleString('es-PE')} docs) — coincide con ERROR 1 al 5 y 7.`
                           : `Suma total del archivo SAP (${ind.totalSap.toLocaleString('es-PE')}) vs. SUNAT (${ind.totalSunat.toLocaleString('es-PE')}), incluyendo documentos sin par (OBS 4 / OBS 5).`}
                       </small>
                     </div>
-                    <div className="btn-group btn-group-sm" role="group" aria-label="Modo de comparativa monetaria">
+                    <div className="segmented-toggle" role="group" aria-label="Modo de comparativa monetaria">
                       <button
                         type="button"
-                        className={`btn ${modoComparativa === 'coincidentes' ? 'btn-primary' : 'btn-outline-secondary'}`}
-                        style={{ fontSize: '0.74rem' }}
+                        aria-pressed={modoComparativa === 'coincidentes'}
+                        className={`segmented-toggle-btn ${modoComparativa === 'coincidentes' ? 'is-active' : ''}`}
                         onClick={() => setModoComparativa('coincidentes')}
                       >
-                        Coincidentes ({ind.coincidentes.toLocaleString('es-PE')})
+                        <span>Coincidentes</span>
+                        <span className="segmented-toggle-count font-mono">{ind.coincidentes.toLocaleString('es-PE')}</span>
                       </button>
                       <button
                         type="button"
-                        className={`btn ${modoComparativa === 'lote' ? 'btn-primary' : 'btn-outline-secondary'}`}
-                        style={{ fontSize: '0.74rem' }}
+                        aria-pressed={modoComparativa === 'lote'}
+                        className={`segmented-toggle-btn ${modoComparativa === 'lote' ? 'is-active' : ''}`}
                         onClick={() => setModoComparativa('lote')}
                       >
-                        Total Lote ({ind.totalUnicos.toLocaleString('es-PE')})
+                        <span>Total Lote</span>
+                        <span className="segmented-toggle-count font-mono">{ind.totalUnicos.toLocaleString('es-PE')}</span>
                       </button>
                     </div>
                   </div>
@@ -252,73 +253,6 @@ const DashboardVentas = memo(function DashboardVentas({
                     </table>
                   </div>
                 </div>
-
-                {haySinCoincidencia && (
-                  <div
-                    className="mt-2 pt-2 border-top d-flex flex-wrap align-items-center justify-content-between gap-2"
-                    style={{ borderColor: 'var(--border-color)', fontSize: '0.75rem' }}
-                  >
-                    <span className="text-muted fw-semibold">Impacto de documentos sin par (no incluidos en ERROR 1-5/7):</span>
-                    <div className="d-flex flex-wrap gap-2">
-                      {ind.soloSunat > 0 && (
-                        <button
-                          type="button"
-                          className="btn btn-sm py-0 px-2 rounded-2 font-mono fw-semibold"
-                          style={{ backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#B45309', border: '1px solid rgba(217, 119, 6, 0.25)', fontSize: '0.73rem' }}
-                          onClick={() => irAConciliacion({ vista: 'tabla', filtros: { codigos: ['OBS 4'] } })}
-                        >
-                          OBS 4 Solo SUNAT ({ind.soloSunat}): BI S/ {formatoMonto(ind.sumasSoloSunat.base)} · Total S/ {formatoMonto(ind.sumasSoloSunat.total)}
-                        </button>
-                      )}
-                      {ind.soloSap > 0 && (
-                        <button
-                          type="button"
-                          className="btn btn-sm py-0 px-2 rounded-2 font-mono fw-semibold"
-                          style={{ backgroundColor: 'rgba(180, 83, 9, 0.1)', color: '#92400E', border: '1px solid rgba(180, 83, 9, 0.25)', fontSize: '0.73rem' }}
-                          onClick={() => irAConciliacion({ vista: 'tabla', filtros: { codigos: ['OBS 5'] } })}
-                        >
-                          OBS 5 Solo SAP ({ind.soloSap}): BI S/ {formatoMonto(ind.sumasSoloSap.base)} · Total S/ {formatoMonto(ind.sumasSoloSap.total)}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Jerarquía de Estados (Verde / Ámbar / Rojo) */}
-            <div className="col-lg-5">
-              <div className="card-premium h-100 p-3 d-flex flex-column justify-content-between">
-                <div>
-                  <h5 className="mb-2 fw-bold">Distribución por Estado General</h5>
-                  <p className="text-muted mb-3" style={{ fontSize: '0.8rem' }}>
-                    Prioridad de clasificación: <strong>ERROR</strong> sobre <strong>OBSERVACIÓN</strong> y <strong>OBSERVACIÓN</strong> sobre <strong>CORRECTO</strong>.
-                  </p>
-
-                  {[
-                    { estado: 'OK', label: 'CORRECTO', count: ind.correctos, clase: 'ok', bar: 'bg-success', desc: 'Cálculos, identidad, boletas > S/ 700 e importes dentro de S/ 0.05.' },
-                    { estado: 'OBSERVADO', label: 'OBSERVACIÓN', count: ind.conObservaciones, clase: 'observado', bar: 'bg-warning', desc: 'Diferencias de identidad, secuencia o existencia únicamente en un sistema.' },
-                    { estado: 'ERROR', label: 'ERROR', count: ind.conErrores, clase: 'error', bar: 'bg-danger', desc: 'Diferencias de importes > S/ 0.05 o boletas > S/ 700 sin DNI.' },
-                  ].map((e) => (
-                    <div
-                      key={e.estado}
-                      className="p-2 rounded-2 mb-2"
-                      style={{ backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)', cursor: 'pointer' }}
-                      onClick={() => irAConciliacion({ vista: 'tabla', filtros: { estado: e.estado } })}
-                    >
-                      <div className="d-flex justify-content-between align-items-center mb-1">
-                        <div className="d-flex align-items-center gap-2">
-                          <span className={`badge badge-status badge-status-${e.clase}`}>{e.label}</span>
-                          <small className="text-muted">{e.desc}</small>
-                        </div>
-                        <span className="font-mono fw-bold">{e.count.toLocaleString('es-PE')} ({pct(e.count)})</span>
-                      </div>
-                      <div className="progress" style={{ height: '6px' }}>
-                        <div className={`progress-bar ${e.bar}`} style={{ width: pct(e.count) }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             </div>
           </div>
@@ -370,52 +304,6 @@ const DashboardVentas = memo(function DashboardVentas({
                         );
                       })}
                     </tbody>
-                    <tfoot>
-                      <tr style={{ backgroundColor: 'rgba(220, 38, 38, 0.05)' }}>
-                        <td colSpan={2} className="fw-bold text-danger" style={{ fontSize: '0.78rem' }}>
-                          Total hallazgos de ERROR
-                          {ind.docsConMultiplesErrores > 0 && (
-                            <span className="fw-normal text-muted ms-1">
-                              ({ind.conErrores.toLocaleString('es-PE')} docs únicos · {ind.docsConMultiplesErrores} con múltiples errores)
-                            </span>
-                          )}
-                        </td>
-                        <td className="text-end font-mono fw-bold text-danger">
-                          {ind.totalHallazgosError.toLocaleString('es-PE')}
-                        </td>
-                        <td className="text-center">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-link p-0 text-danger text-decoration-none fw-semibold"
-                            style={{ fontSize: '0.75rem' }}
-                            onClick={() => irAConciliacion({ vista: 'tabla', filtros: { estado: 'ERROR' } })}
-                          >
-                            Ver {ind.conErrores.toLocaleString('es-PE')} docs →
-                          </button>
-                        </td>
-                      </tr>
-                      <tr style={{ backgroundColor: 'rgba(217, 119, 6, 0.05)' }}>
-                        <td colSpan={2} className="fw-bold text-warning" style={{ fontSize: '0.78rem' }}>
-                          Total hallazgos de OBSERVACIÓN
-                          <span className="fw-normal text-muted ms-1">
-                            ({ind.conObservaciones.toLocaleString('es-PE')} docs clasificados en estado Observado)
-                          </span>
-                        </td>
-                        <td className="text-end font-mono fw-bold text-warning">
-                          {ind.totalHallazgosObs.toLocaleString('es-PE')}
-                        </td>
-                        <td className="text-center">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-link p-0 text-warning text-decoration-none fw-semibold"
-                            style={{ fontSize: '0.75rem' }}
-                            onClick={() => irAConciliacion({ vista: 'tabla', filtros: { estado: 'OBSERVADO' } })}
-                          >
-                            Ver {ind.conObservaciones.toLocaleString('es-PE')} docs →
-                          </button>
-                        </td>
-                      </tr>
-                    </tfoot>
                   </table>
                 </div>
               </div>
@@ -462,30 +350,12 @@ const DashboardCompras = memo(function DashboardCompras({
 
   const ind = useMemo(() => calcularIndicadoresCompras(docs), [docs]);
 
-  const pct = (val) => (ind.totalUnicos > 0 ? `${((val / ind.totalUnicos) * 100).toFixed(1)}%` : '0.0%');
-
   const irAConciliacion = (payload) => {
     if (!onNavigateToReconciliation) return;
     onNavigateToReconciliation(payload);
   };
 
   const sumasActivas = modoComparativa === 'coincidentes' ? ind.sumasCoincidentes : ind.sumas;
-
-  const conteosResultado = {
-    OK: ind.ok,
-    CON_DIFERENCIAS: ind.conDiferencias,
-    CON_OBSERVACIONES: ind.conObservaciones,
-    NO_EXISTE_SUNAT: ind.noExisteSunat,
-    NO_EXISTE_SAP: ind.noExisteSap,
-  };
-
-  const descResultado = {
-    OK: 'Coincidente sin diferencias ni observaciones (incluye recibos tipo 14).',
-    CON_DIFERENCIAS: 'Presente en SAP y SUNAT, pero con errores económicos, fecha o tipo doc.',
-    CON_OBSERVACIONES: 'Sin errores críticos, presenta observaciones de identidad.',
-    NO_EXISTE_SUNAT: 'Registrado en SAP sin correspondencia en SUNAT (ERROR 6).',
-    NO_EXISTE_SAP: 'Registrado en SUNAT sin correspondencia en SAP (OBS 1).',
-  };
 
   return (
     <div className="animate-fade-in w-100">
@@ -502,17 +372,19 @@ const DashboardCompras = memo(function DashboardCompras({
           <button
             type="button"
             disabled={docs.length === 0}
-            className="btn btn-sm btn-outline-primary d-flex align-items-center fw-semibold"
+            className="dashboard-action-btn dashboard-action-btn--secondary dashboard-action-btn--compras"
             onClick={() => exportarExcelCompras({ docs, alcance: 'completo', periodo: activePeriod || 'periodo' })}
           >
-            <FiDownload className="me-1.5" /> Exportar Excel Completo
+            <FiDownload />
+            <span>Exportar Excel Completo</span>
           </button>
           <button
             type="button"
-            className="btn btn-sm btn-primary d-flex align-items-center fw-semibold"
+            className="dashboard-action-btn dashboard-action-btn--primary dashboard-action-btn--compras"
             onClick={() => irAConciliacion('ALL')}
           >
-            Ir a Tabla de Conciliación <FiArrowRight className="ms-1.5" />
+            <span>Ir a Tabla de Conciliación</span>
+            <FiArrowRight />
           </button>
         </div>
       </div>
@@ -530,34 +402,36 @@ const DashboardCompras = memo(function DashboardCompras({
 
           <div className="row g-3 mb-3">
             {/* Comparativa Monetaria SAP vs SUNAT */}
-            <div className="col-lg-7">
+            <div className="col-12">
               <div className="card-premium h-100 p-3 d-flex flex-column justify-content-between">
                 <div>
-                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                  <div className="d-flex justify-content-between align-items-start align-items-md-center flex-wrap gap-3 mb-3">
                     <div>
                       <h5 className="mb-0 fw-bold">Comparativa Monetaria de Compras (SAP vs. SUNAT)</h5>
-                      <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                      <small className="text-muted" style={{ fontSize: '0.78rem' }}>
                         {modoComparativa === 'coincidentes'
                           ? `Solo documentos coincidentes en SAP y SUNAT (${ind.coincidentes.toLocaleString('es-PE')} docs) — precisión decimal exacta.`
                           : `Suma total del archivo SAP (${ind.totalSap.toLocaleString('es-PE')}) vs. SUNAT (${ind.totalSunat.toLocaleString('es-PE')}).`}
                       </small>
                     </div>
-                    <div className="btn-group btn-group-sm" role="group">
+                    <div className="segmented-toggle segmented-toggle--compras" role="group" aria-label="Modo de comparativa monetaria de compras">
                       <button
                         type="button"
-                        className={`btn ${modoComparativa === 'coincidentes' ? 'btn-primary' : 'btn-outline-secondary'}`}
-                        style={{ fontSize: '0.74rem' }}
+                        aria-pressed={modoComparativa === 'coincidentes'}
+                        className={`segmented-toggle-btn ${modoComparativa === 'coincidentes' ? 'is-active' : ''}`}
                         onClick={() => setModoComparativa('coincidentes')}
                       >
-                        Coincidentes ({ind.coincidentes.toLocaleString('es-PE')})
+                        <span>Coincidentes</span>
+                        <span className="segmented-toggle-count font-mono">{ind.coincidentes.toLocaleString('es-PE')}</span>
                       </button>
                       <button
                         type="button"
-                        className={`btn ${modoComparativa === 'lote' ? 'btn-primary' : 'btn-outline-secondary'}`}
-                        style={{ fontSize: '0.74rem' }}
+                        aria-pressed={modoComparativa === 'lote'}
+                        className={`segmented-toggle-btn ${modoComparativa === 'lote' ? 'is-active' : ''}`}
                         onClick={() => setModoComparativa('lote')}
                       >
-                        Total Lote ({ind.totalUnicos.toLocaleString('es-PE')})
+                        <span>Total Lote</span>
+                        <span className="segmented-toggle-count font-mono">{ind.totalUnicos.toLocaleString('es-PE')}</span>
                       </button>
                     </div>
                   </div>
@@ -607,42 +481,6 @@ const DashboardCompras = memo(function DashboardCompras({
                     </table>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Distribución por Clasificación de Resultados (5 estados) */}
-            <div className="col-lg-5">
-              <div className="card-premium h-100 p-3">
-                <h5 className="mb-2 fw-bold">Clasificación de Resultados</h5>
-                <p className="text-muted mb-3" style={{ fontSize: '0.8rem' }}>
-                  Haga clic en cualquier estado para inspeccionar los comprobantes clasificados.
-                </p>
-                {LISTA_RESULTADOS_COMPRAS.map((r) => {
-                  const count = conteosResultado[r.valor] || 0;
-                  const barClass =
-                    r.clase === 'ok' ? 'bg-success' : r.clase === 'observado' ? 'bg-warning' : 'bg-danger';
-                  return (
-                    <div
-                      key={r.valor}
-                      className="p-2 rounded-2 mb-2"
-                      style={{ backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)', cursor: 'pointer' }}
-                      onClick={() => irAConciliacion({ kpi: r.valor, filtros: { resultado: r.valor } })}
-                    >
-                      <div className="d-flex justify-content-between align-items-center mb-1 gap-2">
-                        <div className="d-flex align-items-center gap-2 text-truncate">
-                          <span className={`badge badge-status badge-status-${r.clase}`}>{r.etiqueta}</span>
-                          <small className="text-muted text-truncate">{descResultado[r.valor]}</small>
-                        </div>
-                        <span className="font-mono fw-bold flex-shrink-0">
-                          {count.toLocaleString('es-PE')} ({pct(count)})
-                        </span>
-                      </div>
-                      <div className="progress" style={{ height: '6px' }}>
-                        <div className={`progress-bar ${barClass}`} style={{ width: pct(count) }} />
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
             </div>
           </div>
