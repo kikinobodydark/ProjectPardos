@@ -195,13 +195,15 @@ export default function App() {
   // Blindaje de rutas en tiempo real
   useEffect(() => {
     if (!userProfile) return;
-    if (!isAdmin && (activeModule === 'configuracion' || activeTab === 'companies' || activeTab === 'locales' || activeTab === 'users')) {
+    if (!isAdmin && (activeModule === 'configuracion' || activeTab === 'companies' || activeTab === 'locales' || activeTab === 'users' || activeTab === 'history')) {
       logSuspiciousActivity('ACCESO_RUTA_ADMIN_BLOQUEADO', {
         rol: userProfile.rol,
         modulo: activeModule,
         tab: activeTab,
       });
-      setActiveModule(null);
+      if (activeModule === 'configuracion') {
+        setActiveModule(null);
+      }
       setActiveTab('dashboard');
     }
     if (!canUpload && activeTab === 'upload') {
@@ -250,7 +252,7 @@ export default function App() {
 
   const changeTab = useCallback(
     (tabId) => {
-      if ((tabId === 'companies' || tabId === 'locales' || tabId === 'users') && !isAdmin) {
+      if ((tabId === 'companies' || tabId === 'locales' || tabId === 'users' || tabId === 'history') && !isAdmin) {
         logSuspiciousActivity('INTENTO_TAB_ADMIN_NO_AUTORIZADO', { tabId });
         return;
       }
@@ -601,7 +603,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'history' && (
+          {activeTab === 'history' && isAdmin && (
             <HistorialCargas
               activeCompany={activeCompany}
               onSelectPeriod={handleSelectPeriod}

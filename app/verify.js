@@ -445,8 +445,8 @@ console.log('\n=== 3. PRUEBAS DE OPTIMIZACIÓN DE RENDIMIENTO Y REDES LENTAS ===
   assert.strictEqual(slowProfile.isMobile, true);
   assert.strictEqual(slowProfile.isSlowNetwork, true);
   assert.strictEqual(slowProfile.recommendedPageSize, 15, 'En móvil/red lenta debe reducir la paginación a 15 filas');
-  assert.strictEqual(slowProfile.recommendedBatchSize, 400, 'En red lenta debe reducir los lotes a 400 registros');
-  assert.strictEqual(slowProfile.recommendedConcurrency, 2, 'En red lenta debe limitar la concurrencia a 2');
+  assert.strictEqual(slowProfile.recommendedBatchSize, 250, 'En red lenta debe reducir los lotes a 250 registros');
+  assert.strictEqual(slowProfile.recommendedConcurrency, 1, 'En red lenta debe limitar la concurrencia a 1');
   simulateNetworkProfile(null);
 }
 

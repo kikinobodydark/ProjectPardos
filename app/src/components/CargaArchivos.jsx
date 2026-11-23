@@ -246,25 +246,115 @@ const CargaArchivos = memo(function CargaArchivos({
 
     setLoading(true);
     setProgressPct(5);
-    const chunkSize = networkProfile.recommendedBatchSize || 1500;
-    const concurrency = networkProfile.recommendedConcurrency || 4;
+    const chunkSize = Math.min(500, networkProfile.recommendedBatchSize || 500);
+    const concurrency = Math.min(2, networkProfile.recommendedConcurrency || 2);
     const diaPadded = String(diaNum).padStart(2, '0');
     // Versión temporal negativa en staging para NO borrar la carga previa válida hasta confirmar todos los lotes
     const stagingVersion = -Math.max(1, (Date.now() % 1_000_000_000) + Math.floor(Math.random() * 1000));
 
+    const esRpcFaltante = (err) => {
+      const msg = err?.message || '';
+      return (
+        err?.code === '42883' ||
+        err?.code === 'PGRST202' ||
+        msg.includes('Could not find the function')
+      );
+    };
+
+    const esErrorReintentable = (err) => {
+      const code = err?.code || '';
+      const msg = (err?.message || '').toLowerCase();
+      return (
+        code === '57014' ||
+        code === '53300' ||
+        code === '40P01' ||
+        code === '08006' ||
+        msg.includes('statement timeout') ||
+        msg.includes('canceling statement') ||
+        msg.includes('timeout') ||
+        msg.includes('failed to fetch') ||
+        msg.includes('network') ||
+        msg.includes('502') ||
+        msg.includes('503') ||
+        msg.includes('504')
+      );
+    };
+
+    const insertarLoteConReintento = async ({
+      rpcName,
+      tableName,
+      periodId,
+      filas,
+      onInserted,
+      attempt = 0,
+    }) => {
+      if (!filas || filas.length === 0) return;
+
+      const { error: rpcErr } = await supabase.rpc(rpcName, {
+        p_periodo_id: periodId,
+        p_empresa_id: activeCompany.id,
+        p_filas: filas,
+      });
+
+      let finalErr = rpcErr;
+      if (rpcErr && esRpcFaltante(rpcErr)) {
+        const { error: insertErr } = await supabase.from(tableName).insert(filas);
+        finalErr = insertErr;
+      }
+
+      if (!finalErr) {
+        onInserted(filas.length);
+        return;
+      }
+
+      // Ante timeout o error transitorio: dividir el lote en sub-lotes más pequeños y reintentar secuencialmente
+      if (esErrorReintentable(finalErr) && filas.length > 100) {
+        const mid = Math.ceil(filas.length / 2);
+        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        await insertarLoteConReintento({
+          rpcName,
+          tableName,
+          periodId,
+          filas: filas.slice(0, mid),
+          onInserted,
+          attempt: attempt + 1,
+        });
+        await insertarLoteConReintento({
+          rpcName,
+          tableName,
+          periodId,
+          filas: filas.slice(mid),
+          onInserted,
+          attempt: attempt + 1,
+        });
+        return;
+      }
+
+      if (esErrorReintentable(finalErr) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        return insertarLoteConReintento({
+          rpcName,
+          tableName,
+          periodId,
+          filas,
+          onInserted,
+          attempt: attempt + 1,
+        });
+      }
+
+      throw finalErr;
+    };
+
     const publicarPeriodoAtomico = async (periodId) => {
+      setStatusText('Finalizando y publicando período...');
+      setProgressPct(97);
       const { error: finErr } = await supabase.rpc('finalizar_periodo_carga', {
         p_periodo_id: periodId,
         p_target_version: versionNum,
       });
       if (!finErr) return;
 
-      const msg = finErr.message || '';
-      const rpcMissing =
-        finErr.code === '42883' ||
-        finErr.code === 'PGRST202' ||
-        msg.includes('Could not find the function');
-      if (!rpcMissing) throw finErr;
+      if (!esRpcFaltante(finErr)) throw finErr;
 
       // Fallback si la RPC aún no ha sido migrada en la BD remota
       await supabase
@@ -324,27 +414,27 @@ const CargaArchivos = memo(function CargaArchivos({
         );
         setProgressPct(40);
 
-        // 3. Insertar todos los lotes en paralelo usando la RPC masiva `insertar_lote_ventas`
+        // 3. Insertar lotes progresivamente con reintento adaptativo ante timeout
         let insertedCount = 0;
+        const registrarAvance = (cantidad) => {
+          insertedCount += cantidad;
+          const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
+          setProgressPct(pct);
+          setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
+        };
         setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase...`);
         try {
           await executeParallelBatches(
             serializedChunks,
             1,
             async ([chunk]) => {
-              const { error: rpcErr } = await supabase.rpc('insertar_lote_ventas', {
-                p_periodo_id: periodId,
-                p_empresa_id: activeCompany.id,
-                p_filas: chunk,
+              await insertarLoteConReintento({
+                rpcName: 'insertar_lote_ventas',
+                tableName: 'detalle_ventas',
+                periodId,
+                filas: chunk,
+                onInserted: registrarAvance,
               });
-              if (rpcErr) {
-                const { error: insertErr } = await supabase.from('detalle_ventas').insert(chunk);
-                if (insertErr) throw insertErr;
-              }
-              insertedCount += chunk.length;
-              const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
-              setProgressPct(pct);
-              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
             },
             {
               concurrency,
@@ -355,7 +445,11 @@ const CargaArchivos = memo(function CargaArchivos({
           await publicarPeriodoAtomico(periodId);
         } catch (insertErr) {
           // Limpiar únicamente el período en staging para preservar cualquier carga previa válida
-          await supabase.from('periodos_carga').delete().eq('id', periodId);
+          try {
+            await supabase.from('periodos_carga').delete().eq('id', periodId);
+          } catch {
+            // No enmascarar el error original
+          }
           throw insertErr;
         }
 
@@ -414,27 +508,27 @@ const CargaArchivos = memo(function CargaArchivos({
         );
         setProgressPct(40);
 
-        // 3. Insertar todos los lotes en paralelo usando la RPC masiva `insertar_lote_compras`
+        // 3. Insertar lotes progresivamente con reintento adaptativo ante timeout
         let insertedCount = 0;
+        const registrarAvance = (cantidad) => {
+          insertedCount += cantidad;
+          const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
+          setProgressPct(pct);
+          setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
+        };
         setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase...`);
         try {
           await executeParallelBatches(
             serializedChunks,
             1,
             async ([chunk]) => {
-              const { error: rpcErr } = await supabase.rpc('insertar_lote_compras', {
-                p_periodo_id: periodId,
-                p_empresa_id: activeCompany.id,
-                p_filas: chunk,
+              await insertarLoteConReintento({
+                rpcName: 'insertar_lote_compras',
+                tableName: 'detalle_compras',
+                periodId,
+                filas: chunk,
+                onInserted: registrarAvance,
               });
-              if (rpcErr) {
-                const { error: insertErr } = await supabase.from('detalle_compras').insert(chunk);
-                if (insertErr) throw insertErr;
-              }
-              insertedCount += chunk.length;
-              const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
-              setProgressPct(pct);
-              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
             },
             {
               concurrency,
@@ -445,7 +539,11 @@ const CargaArchivos = memo(function CargaArchivos({
           await publicarPeriodoAtomico(periodId);
         } catch (insertErr) {
           // Limpiar únicamente el período en staging para preservar cualquier carga previa válida
-          await supabase.from('periodos_carga').delete().eq('id', periodId);
+          try {
+            await supabase.from('periodos_carga').delete().eq('id', periodId);
+          } catch {
+            // No enmascarar el error original
+          }
           throw insertErr;
         }
 
@@ -933,17 +1031,60 @@ const CargaArchivos = memo(function CargaArchivos({
         )}
 
         {loading && (
-          <div className="mb-3 animate-fade-in">
-            <div className="d-flex justify-content-between align-items-center mb-1" style={{ fontSize: '0.82rem' }}>
-              <span className="text-primary fw-semibold">{statusText}</span>
-              <span className="font-mono fw-bold text-primary">{progressPct}%</span>
+          <div className={`upload-wave-box mb-3 animate-fade-in ${esVentas ? '' : 'upload-wave-box--compras'}`}>
+            <div className="upload-wave-header">
+              <span className="upload-wave-status">
+                <span className="upload-wave-dot" aria-hidden="true" />
+                <span className="text-truncate">{statusText}</span>
+              </span>
+              <span className="upload-wave-pct font-mono">{progressPct}%</span>
             </div>
-            <div className="progress" style={{ height: '7px' }}>
-              <div
-                className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
-                role="progressbar"
-                style={{ width: `${progressPct}%`, transition: 'width 0.2s ease' }}
-              />
+
+            <div
+              className="upload-wave-track"
+              role="progressbar"
+              aria-valuenow={progressPct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={statusText || 'Progreso de carga'}
+            >
+              <div className="upload-wave-rail" aria-hidden="true" />
+
+              <div className="upload-wave-fill" style={{ width: `${progressPct}%` }}>
+                <svg className="upload-wave-svg upload-wave-svg--echo" aria-hidden="true">
+                  <defs>
+                    <pattern id="upload-wave-echo-pat" width="48" height="22" patternUnits="userSpaceOnUse">
+                      <path
+                        d="M 0 11 Q 12 3, 24 11 T 48 11"
+                        fill="none"
+                        stroke={esVentas ? '#0EA5E9' : '#3B82F6'}
+                        strokeWidth="3.5"
+                        strokeLinecap="round"
+                      />
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="22" fill="url(#upload-wave-echo-pat)" />
+                </svg>
+
+                <svg className="upload-wave-svg upload-wave-svg--primary" aria-hidden="true">
+                  <defs>
+                    <pattern id="upload-wave-main-pat" width="48" height="22" patternUnits="userSpaceOnUse">
+                      <path
+                        d="M 0 11 Q 12 3, 24 11 T 48 11"
+                        fill="none"
+                        stroke={esVentas ? '#2563EB' : '#7C3AED'}
+                        strokeWidth="4.5"
+                        strokeLinecap="round"
+                      />
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="22" fill="url(#upload-wave-main-pat)" />
+                </svg>
+              </div>
+
+              {progressPct > 0 && progressPct < 100 && (
+                <div className="upload-wave-tip" style={{ left: `${progressPct}%` }} aria-hidden="true" />
+              )}
             </div>
           </div>
         )}

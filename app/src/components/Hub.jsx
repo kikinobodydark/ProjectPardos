@@ -72,8 +72,8 @@ const Hub = memo(function Hub({
     return 'Buenas noches';
   })();
 
-  // Definición de Módulos del Hub
-  const cards = [
+  // Definición de Módulos del Hub (Configuración Global solo visible para rol admin)
+  const allCards = [
     {
       id: 'ventas',
       title: 'Conciliación de Ventas',
@@ -107,19 +107,21 @@ const Hub = memo(function Hub({
     {
       id: 'configuracion',
       title: 'Configuración Global',
-      badge: isAdmin ? 'Acceso Administrador' : 'Solo Administradores',
-      badgeBg: isAdmin ? 'rgba(37, 99, 235, 0.1)' : '#F1F5F9',
-      badgeColor: isAdmin ? '#2563EB' : '#64748B',
-      badgeBorder: isAdmin ? 'rgba(37, 99, 235, 0.25)' : '#E2E8F0',
+      badge: 'Acceso Administrador',
+      badgeBg: 'rgba(37, 99, 235, 0.1)',
+      badgeColor: '#2563EB',
+      badgeBorder: 'rgba(37, 99, 235, 0.25)',
       description: 'Administración de empresas asociadas, gestión de operadores, asignación de permisos multi-tenant y revalidación masiva de reglas contables.',
       chips: ['Multi-empresa', 'Usuarios & Roles', 'Auditoría RLS', 'Revalidación Reglas'],
       icon: <FiSliders />,
       color: '#3B82F6',
       bgColor: 'rgba(59, 130, 246, 0.1)',
       active: isAdmin,
-      ctaText: isAdmin ? 'Administrar Sistema' : 'Requiere Rol Admin'
+      ctaText: 'Administrar Sistema'
     }
   ];
+
+  const cards = isAdmin ? allCards : allCards.filter((card) => card.id !== 'configuracion');
 
   return (
     <div className="hub-wrapper">
@@ -266,12 +268,14 @@ const Hub = memo(function Hub({
             {greeting}, {userProfile?.nombre?.split(' ')[0] || 'Administrador'}
           </h2>
           <p className="hub-section-desc">
-            Selecciona el entorno de trabajo para iniciar la conciliación o administración de comprobantes:
+            {isAdmin
+              ? 'Selecciona el entorno de trabajo para iniciar la conciliación o administración de comprobantes:'
+              : 'Selecciona el entorno de trabajo para iniciar la conciliación de comprobantes:'}
           </p>
         </div>
 
         {/* Grid de Tarjetas de Módulos (Full Width) */}
-        <div className="hub-cards-grid">
+        <div className={`hub-cards-grid ${cards.length === 2 ? 'hub-cards-grid--two' : ''}`}>
           {cards.map((card) => {
             const isClickable = card.active;
             return (
