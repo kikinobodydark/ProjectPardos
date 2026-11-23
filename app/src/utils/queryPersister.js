@@ -12,8 +12,8 @@
 // ============================================================================
 
 const SESSION_CACHE_KEY = 'ct_rq_sync_cache_v1';
-const LEGACY_IDB_NAMES = ['conciliatributo_rq_idb_v1', 'conciliatributo_rq_idb_v2'];
-const IDB_NAME = 'conciliatributo_rq_idb_v3';
+const LEGACY_IDB_NAMES = ['conciliatributo_rq_idb_v1', 'conciliatributo_rq_idb_v2', 'conciliatributo_rq_idb_v3'];
+const IDB_NAME = 'conciliatributo_rq_idb_v4';
 const IDB_STORE = 'queries';
 const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutos de validez de caché
 let legacyIdbCleaned = false;

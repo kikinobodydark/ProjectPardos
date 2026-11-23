@@ -156,6 +156,7 @@ const FilaDocumentoCompra = memo(function FilaDocumentoCompra({
 const TablaUnificada = memo(function TablaUnificada({
   periodId, activePeriod, initialFilter, onFilterReset, activeModule,
   activeCompany, userProfile, onProcessComplete,
+  selectedLocalId = 'ALL', onChangeLocalId,
 }) {
   if (activeModule !== 'compras') {
     return (
@@ -174,6 +175,8 @@ const TablaUnificada = memo(function TablaUnificada({
           activeCompany={activeCompany}
           userProfile={userProfile}
           onProcessComplete={onProcessComplete}
+          selectedLocalId={selectedLocalId}
+          onChangeLocalId={onChangeLocalId}
         />
       </Suspense>
     );
@@ -186,15 +189,20 @@ const TablaUnificada = memo(function TablaUnificada({
       onFilterReset={onFilterReset}
       activeModule={activeModule}
       activeCompany={activeCompany}
+      selectedLocalId={selectedLocalId}
+      onChangeLocalId={onChangeLocalId}
     />
   );
 });
 
 export default TablaUnificada;
 
-function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilterReset, activeModule, activeCompany }) {
+function TablaUnificadaCompras({
+  periodId, activePeriod, initialFilter, onFilterReset, activeModule, activeCompany,
+  selectedLocalId = 'ALL', onChangeLocalId,
+}) {
   const networkProfile = useNetworkProfile();
-  const { localesActivos } = useLocalesEmpresa(activeCompany?.id, true);
+  const { localesActivos, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
@@ -253,18 +261,22 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
   const [startCorr, setStartCorr] = useState('');
   const [endCorr, setEndCorr] = useState('');
   const [originFilter, setOriginFilter] = useState('ALL');
-  const [localFilter, setLocalFilter] = useState('ALL');
 
-  // Reiniciar el filtro de local si cambia la empresa o si el local fue eliminado
-  useEffect(() => {
-    setLocalFilter('ALL');
-  }, [activeCompany?.id]);
+  const localFilter = selectedLocalId === 'SIN_LOCAL' ? 'ALL' : (selectedLocalId || 'ALL');
+  const setLocalFilter = (val) => {
+    if (onChangeLocalId) onChangeLocalId(val);
+  };
 
   useEffect(() => {
-    if (localFilter !== 'ALL' && !localesActivos.some((l) => l.id === localFilter)) {
-      setLocalFilter('ALL');
+    if (
+      localesFetched &&
+      !localesLoading &&
+      localFilter !== 'ALL' &&
+      !localesActivos.some((l) => l.id === localFilter)
+    ) {
+      if (onChangeLocalId) onChangeLocalId('ALL');
     }
-  }, [localFilter, localesActivos]);
+  }, [localesFetched, localesLoading, localFilter, localesActivos, onChangeLocalId]);
 
   // Modal para ver errores
   const [selectedRow, setSelectedRow] = useState(null);

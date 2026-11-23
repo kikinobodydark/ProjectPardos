@@ -156,6 +156,56 @@ console.log('=== 1. PRUEBAS UNITARIAS DE REGLAS DE LA HOJA FLUJO ===');
   assert.strictEqual(coincideConLocal(docsMuestra[0], 'ALL', idx), true);
 }
 
+// 4.6 Factura con RUC extranjero (inicia con 15), totales coincidentes vs OBS 4 y multi-error
+{
+  const mk = (overrides) => ({
+    linea: 1, tipo_doc_pago: '01', serie: 'F608', correlativo: '2572',
+    clave: '01|F608|2572', fecha_emision: '2026-11-01', tipo_identidad: '6',
+    nro_identidad: '15613145122', nombre: 'EXTRANJERO TEST',
+    base: 10000, igv: 1800, exonerado: 0, inafecto: 0, otros: 0, total: 11800, estado: '1',
+    ...overrides,
+  });
+
+  // Factura con RUC 15 debe ser válida (sin OBS 6)
+  const f15 = mk({});
+  const soloSunat = mk({ correlativo: '2573', clave: '01|F608|2573', nro_identidad: '20553596441', base: 50000, igv: 9000, total: 59000 });
+  const multiErrSap = mk({ correlativo: '2574', clave: '01|F608|2574', nro_identidad: '20553596441', base: 10000, igv: 1800, otros: 60, total: 11860 });
+  const multiErrSunat = mk({ correlativo: '2574', clave: '01|F608|2574', nro_identidad: '20553596441', base: 9900, igv: 1800, otros: 0, total: 11700 });
+
+  const { docs } = conciliarVentas({
+    sap: [f15, multiErrSap],
+    sunat: [f15, soloSunat, multiErrSunat],
+  });
+
+  const d15 = docs.find((d) => d.correlativo === '2572');
+  assert.strictEqual(d15.estado, 'OK', 'Factura con RUC que inicia en 15 debe ser válida (OK)');
+  assert.strictEqual(d15.codigos.includes('OBS 6'), false);
+
+  const ind = calcularIndicadores(docs);
+  // Coincidentes solo incluye 2572 y 2574 (excluye soloSunat de S/ 500.00 BI)
+  assert.strictEqual(ind.sumasCoincidentes.base_sap - ind.sumasCoincidentes.base_sunat, 100, 'Diferencia BI coincidentes = S/ 1.00 (no incluye los S/ 500 de OBS 4)');
+  assert.strictEqual(ind.sumasSoloSunat.base, 50000, 'Monto BI de OBS 4 separado correctamente');
+  assert.strictEqual(ind.conErrores, 1, '1 documento único con error');
+  assert.strictEqual(ind.docsConMultiplesErrores, 1, 'El doc 2574 tiene múltiples errores (ERROR 1, ERROR 5 y ERROR 7)');
+  assert.strictEqual(ind.totalHallazgosError, 3, 'Total hallazgos de error = 3 (1+1+1)');
+
+  // Re-evaluación automática de RUC 15 en períodos históricos cargados desde BD
+  const legacyConObs6 = docs.map((d) =>
+    d.correlativo === '2572'
+      ? {
+          ...d,
+          estado: 'OBSERVADO',
+          codigos: ['OBS 6'],
+          incidencias: [{ codigo: 'OBS 6', tipo: 'OBS', descripcion: 'OBS 6', detalle: 'Legacy 20/10', regla: 'R-ID-05', datos: {} }],
+        }
+      : d
+  );
+  const reeval = enriquecerSecuenciasEnDocs(legacyConObs6);
+  const d15Reeval = reeval.find((d) => d.correlativo === '2572');
+  assert.strictEqual(d15Reeval.estado, 'OK', 'enriquecerSecuenciasEnDocs debe revalidar RUC 15 en períodos históricos');
+  assert.strictEqual(d15Reeval.codigos.includes('OBS 6'), false);
+}
+
 // 6. Tolerancia de S/ 0.05 exacta y 8. Prioridad ERROR > OBSERVADO > OK sin sobrescribir incidencias
 {
   const sap = [

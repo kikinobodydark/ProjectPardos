@@ -13,7 +13,9 @@ import { obtenerEvaluacionIdentidad } from '../../utils/ventas/reportes';
 import { parsearCorrelativoBigInt, generarCorrelativosFaltantes } from '../../utils/ventas/documento';
 import { BadgeSistemaSalto, ListaCorrelativosFaltantes } from './PanelSaltosSecuenciaVentas';
 
-const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ doc, localNombre, onClose, onFiltrarCodigo }) {
+const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({
+  doc, localNombre, onClose, onFiltrarCodigo, onSelectDoc,
+}) {
   useEffect(() => {
     if (!doc) return undefined;
     const handleKeyDown = (e) => {
@@ -29,8 +31,9 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
   }, [doc, onClose]);
 
   if (!doc) return null;
+  const esFaltante = !!doc.esFaltanteSecuencia;
   const est = ESTADOS[doc.estado] || ESTADOS.OK;
-  const evId = obtenerEvaluacionIdentidad(doc);
+  const evId = esFaltante ? null : obtenerEvaluacionIdentidad(doc);
 
   const filasImportes = CONCEPTOS_IMPORTE.map((c) => {
     const s = doc.en_sap ? doc.sap[c.campo] : null;
@@ -70,8 +73,11 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                   {doc.serie}-{doc.correlativo}
                 </h4>
                 <span className={`badge badge-status badge-status-${est.clase}`}>
-                  {est.etiqueta}
+                  {esFaltante ? 'CORRELATIVO FALTANTE' : est.etiqueta}
                 </span>
+                {esFaltante && doc.saltoMeta?.sistema && (
+                  <BadgeSistemaSalto sistema={doc.saltoMeta.sistema} />
+                )}
                 {localNombre && (
                   <span
                     className="badge d-inline-flex align-items-center gap-1"
@@ -90,18 +96,30 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                 )}
               </div>
               <div className="text-muted mt-1" style={{ fontSize: '0.82rem' }}>
-                Fecha de emisión: <strong className="font-mono">{doc.fecha_emision || '—'}</strong>
-                {doc.sap && (
-                  <span className="ms-3">
-                    Folio original SAP: <strong className="font-mono">{doc.serie}-{doc.sap.correlativo}</strong>
-                    {doc.sap.linea ? ` (línea ${doc.sap.linea})` : ''}
-                  </span>
-                )}
-                {doc.sunat && (
-                  <span className="ms-3">
-                    Folio original SUNAT: <strong className="font-mono">{doc.serie}-{doc.sunat.correlativo}</strong>
-                    {doc.sunat.linea ? ` (línea ${doc.sunat.linea})` : ''}
-                  </span>
+                {esFaltante ? (
+                  <>
+                    Comprobante no encontrado en la secuencia de <strong>{doc.saltoMeta?.sistema_etiqueta}</strong>
+                    {' · '}Salto entre{' '}
+                    <strong className="font-mono">{doc.serie}-{doc.saltoMeta?.anterior}</strong> ({doc.saltoMeta?.fecha_anterior || 's/f'})
+                    {' y '}
+                    <strong className="font-mono">{doc.serie}-{doc.saltoMeta?.siguiente}</strong> ({doc.saltoMeta?.fecha_siguiente || 's/f'})
+                  </>
+                ) : (
+                  <>
+                    Fecha de emisión: <strong className="font-mono">{doc.fecha_emision || '—'}</strong>
+                    {doc.sap && (
+                      <span className="ms-3">
+                        Folio original SAP: <strong className="font-mono">{doc.serie}-{doc.sap.correlativo}</strong>
+                        {doc.sap.linea ? ` (línea ${doc.sap.linea})` : ''}
+                      </span>
+                    )}
+                    {doc.sunat && (
+                      <span className="ms-3">
+                        Folio original SUNAT: <strong className="font-mono">{doc.serie}-{doc.sunat.correlativo}</strong>
+                        {doc.sunat.linea ? ` (línea ${doc.sunat.linea})` : ''}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -146,44 +164,66 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                       <tbody>
                         <tr>
                           <td className="fw-semibold">Existencia</td>
-                          <td>{doc.en_sap ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SAP</span>}</td>
-                          <td>{doc.en_sunat ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SUNAT</span>}</td>
-                          <td className="text-center">{doc.en_sap && doc.en_sunat ? <FiCheckCircle className="text-success" /> : <FiAlertTriangle className="text-warning" />}</td>
+                          {esFaltante ? (
+                            <>
+                              <td>
+                                {doc.saltoMeta?.sistema === 'SAP' || doc.saltoMeta?.sistema === 'AMBOS' ? (
+                                  <span className="text-danger fw-bold">FALTANTE EN SAP</span>
+                                ) : (
+                                  <span className="text-muted">N/A</span>
+                                )}
+                              </td>
+                              <td>
+                                {doc.saltoMeta?.sistema === 'SUNAT' || doc.saltoMeta?.sistema === 'AMBOS' ? (
+                                  <span className="text-danger fw-bold">FALTANTE EN SUNAT</span>
+                                ) : (
+                                  <span className="text-muted">N/A</span>
+                                )}
+                              </td>
+                              <td className="text-center"><span className="text-muted">N/A</span></td>
+                            </>
+                          ) : (
+                            <>
+                              <td>{doc.en_sap ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SAP</span>}</td>
+                              <td>{doc.en_sunat ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SUNAT</span>}</td>
+                              <td className="text-center">{doc.en_sap && doc.en_sunat ? <FiCheckCircle className="text-success" /> : <FiAlertTriangle className="text-warning" />}</td>
+                            </>
+                          )}
                         </tr>
                         <tr>
                           <td className="fw-semibold">Tipo Identidad</td>
                           <td className={`font-mono ${diffTipoId ? 'cell-mismatch' : ''}`}>
-                            {doc.en_sap ? descripcionTipoIdentidad(doc.sap.tipo_identidad) : '—'}
+                            {esFaltante ? <span className="text-muted">N/A</span> : doc.en_sap ? descripcionTipoIdentidad(doc.sap.tipo_identidad) : '—'}
                           </td>
                           <td className={`font-mono ${diffTipoId ? 'cell-mismatch' : ''}`}>
-                            {doc.en_sunat ? descripcionTipoIdentidad(doc.sunat.tipo_identidad) : '—'}
+                            {esFaltante ? <span className="text-muted">N/A</span> : doc.en_sunat ? descripcionTipoIdentidad(doc.sunat.tipo_identidad) : '—'}
                           </td>
                           <td className="text-center">
-                            {!doc.en_sap || !doc.en_sunat ? '—' : diffTipoId ? <span className="badge badge-status badge-status-observado">OBS 1</span> : <FiCheckCircle className="text-success" />}
+                            {esFaltante ? <span className="text-muted">N/A</span> : !doc.en_sap || !doc.en_sunat ? '—' : diffTipoId ? <span className="badge badge-status badge-status-observado">OBS 1</span> : <FiCheckCircle className="text-success" />}
                           </td>
                         </tr>
                         <tr>
                           <td className="fw-semibold">N° Identidad</td>
                           <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
-                            {doc.en_sap ? (doc.sap.nro_identidad || '(vacío)') : '—'}
+                            {esFaltante ? <span className="text-muted">N/A</span> : doc.en_sap ? (doc.sap.nro_identidad || '(vacío)') : '—'}
                           </td>
                           <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
-                            {doc.en_sunat ? (doc.sunat.nro_identidad || '(vacío)') : '—'}
+                            {esFaltante ? <span className="text-muted">N/A</span> : doc.en_sunat ? (doc.sunat.nro_identidad || '(vacío)') : '—'}
                           </td>
                           <td className="text-center">
-                            {!doc.en_sap || !doc.en_sunat ? '—' : diffNroId ? <span className="badge badge-status badge-status-observado">OBS 2</span> : <FiCheckCircle className="text-success" />}
+                            {esFaltante ? <span className="text-muted">N/A</span> : !doc.en_sap || !doc.en_sunat ? '—' : diffNroId ? <span className="badge badge-status badge-status-observado">OBS 2</span> : <FiCheckCircle className="text-success" />}
                           </td>
                         </tr>
                         <tr>
                           <td className="fw-semibold">Nombre / Razón Social</td>
                           <td className={diffNombre ? 'text-warning fw-semibold' : ''} style={{ whiteSpace: 'normal' }}>
-                            {doc.en_sap ? (doc.sap.nombre || '—') : '—'}
+                            {esFaltante ? <span className="text-muted">N/A</span> : doc.en_sap ? (doc.sap.nombre || '—') : '—'}
                           </td>
                           <td className={diffNombre ? 'text-warning fw-semibold' : ''} style={{ whiteSpace: 'normal' }}>
-                            {doc.en_sunat ? (doc.sunat.nombre || '—') : '—'}
+                            {esFaltante ? <span className="text-muted">N/A</span> : doc.en_sunat ? (doc.sunat.nombre || '—') : '—'}
                           </td>
                           <td className="text-center">
-                            {!doc.en_sap || !doc.en_sunat ? '—' : diffNombre ? <span className="text-muted">Distinto</span> : <FiCheckCircle className="text-success" />}
+                            {esFaltante ? <span className="text-muted">N/A</span> : !doc.en_sap || !doc.en_sunat ? '—' : diffNombre ? <span className="text-muted">Distinto</span> : <FiCheckCircle className="text-success" />}
                           </td>
                         </tr>
                       </tbody>
@@ -361,6 +401,31 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                                 truncado={obs3Truncado}
                                 limiteInicial={12}
                               />
+                            </div>
+                          )}
+                          {esFaltante && onSelectDoc && (doc.saltoMeta?.prevDoc || doc.saltoMeta?.nextDoc) && (
+                            <div className="mt-2 pt-2 border-top d-flex align-items-center flex-wrap gap-2" style={{ borderColor: 'rgba(217,119,6,0.2)', fontSize: '0.76rem' }}>
+                              <span className="text-muted fw-semibold">Documentos adyacentes de referencia:</span>
+                              {doc.saltoMeta?.prevDoc && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-secondary py-0 px-2 font-mono"
+                                  style={{ fontSize: '0.73rem' }}
+                                  onClick={() => onSelectDoc(doc.saltoMeta.prevDoc)}
+                                >
+                                  Anterior: {doc.serie}-{doc.saltoMeta.anterior}
+                                </button>
+                              )}
+                              {doc.saltoMeta?.nextDoc && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-secondary py-0 px-2 font-mono"
+                                  style={{ fontSize: '0.73rem' }}
+                                  onClick={() => onSelectDoc(doc.saltoMeta.nextDoc)}
+                                >
+                                  Posterior: {doc.serie}-{doc.saltoMeta.siguiente}
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>

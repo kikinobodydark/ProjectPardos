@@ -167,9 +167,10 @@ const FilaDocumentoVenta = memo(function FilaDocumentoVenta({
 
 const ConciliacionVentas = memo(function ConciliacionVentas({
   periodId, activePeriod, initialFilter, onFilterReset, activeCompany,
+  selectedLocalId = 'ALL', onChangeLocalId,
 }) {
   const { data: todosDocs = [], isLoading } = useDocumentosVentas(periodId, true);
-  const { localesActivos, indiceLocales } = useLocalesEmpresa(activeCompany?.id, true);
+  const { localesActivos, indiceLocales, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
   const networkProfile = useNetworkProfile();
 
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
@@ -192,7 +193,7 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
     return () => clearTimeout(t);
   }, [busquedaInput]);
 
-  // Recibir filtro inicial desde el Dashboard
+  // Recibir filtro inicial desde el Dashboard (preservando el local activo)
   useEffect(() => {
     if (!initialFilter) return;
     if (typeof initialFilter === 'object') {
@@ -203,44 +204,53 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
         setVistaActiva('tabla');
       }
       if (initialFilter.filtros) {
-        setFiltros({ ...FILTROS_INICIALES, ...initialFilter.filtros });
+        const nextLocal = initialFilter.filtros.localId ?? selectedLocalId ?? 'ALL';
+        if (initialFilter.filtros.localId !== undefined && onChangeLocalId) {
+          onChangeLocalId(initialFilter.filtros.localId);
+        }
+        setFiltros({ ...FILTROS_INICIALES, ...initialFilter.filtros, localId: nextLocal });
       }
     } else if (typeof initialFilter === 'string') {
       setVistaActiva('tabla');
       if (['OK', 'OBSERVADO', 'ERROR', 'ALL'].includes(initialFilter)) {
-        setFiltros({ ...FILTROS_INICIALES, estado: initialFilter });
+        setFiltros({ ...FILTROS_INICIALES, estado: initialFilter, localId: selectedLocalId || 'ALL' });
       } else if (initialFilter.startsWith('ERROR ') || initialFilter.startsWith('OBS ')) {
-        setFiltros({ ...FILTROS_INICIALES, codigos: [initialFilter] });
+        setFiltros({ ...FILTROS_INICIALES, codigos: [initialFilter], localId: selectedLocalId || 'ALL' });
       }
     }
     setPagina(1);
     if (onFilterReset) onFilterReset();
-  }, [initialFilter, onFilterReset]);
+  }, [initialFilter, onFilterReset, selectedLocalId, onChangeLocalId]);
 
-  // Reiniciar el filtro de local si cambia la empresa o si el local fue eliminado/desactivado en Configuración
-  useEffect(() => {
-    setFiltros((prev) => (prev.localId !== 'ALL' ? { ...prev, localId: 'ALL' } : prev));
-  }, [activeCompany?.id]);
+  const localActivoId = selectedLocalId || 'ALL';
 
+  // Solo reiniciar si ya cargaron los locales de la empresa y el local elegido ya no existe
   useEffect(() => {
     if (
-      filtros.localId !== 'ALL' &&
-      filtros.localId !== 'SIN_LOCAL' &&
-      !localesActivos.some((l) => l.id === filtros.localId)
+      localesFetched &&
+      !localesLoading &&
+      localActivoId !== 'ALL' &&
+      localActivoId !== 'SIN_LOCAL' &&
+      !localesActivos.some((l) => l.id === localActivoId)
     ) {
-      setFiltros((prev) => ({ ...prev, localId: 'ALL' }));
+      if (onChangeLocalId) onChangeLocalId('ALL');
     }
-  }, [filtros.localId, localesActivos]);
+  }, [localesFetched, localesLoading, localActivoId, localesActivos, onChangeLocalId]);
+
+  const filtrosEfectivos = useMemo(
+    () => ({ ...filtros, localId: localActivoId }),
+    [filtros, localActivoId]
+  );
 
   const docsFiltrados = useMemo(
-    () => filtrarDocumentos(todosDocs, filtros, indiceLocales),
-    [todosDocs, filtros, indiceLocales]
+    () => filtrarDocumentos(todosDocs, filtrosEfectivos, indiceLocales),
+    [todosDocs, filtrosEfectivos, indiceLocales]
   );
 
   const conteoPorCodigoBase = useMemo(() => {
-    const sinCodigos = filtrarDocumentos(todosDocs, { ...filtros, codigos: [] }, indiceLocales);
+    const sinCodigos = filtrarDocumentos(todosDocs, { ...filtrosEfectivos, codigos: [] }, indiceLocales);
     return calcularIndicadores(sinCodigos).porCodigo;
-  }, [todosDocs, filtros, indiceLocales]);
+  }, [todosDocs, filtrosEfectivos, indiceLocales]);
 
   // Correlativos faltantes (OBS 3) cuando el usuario filtra por OBS 3 en la tabla principal
   const mostrandoObs3 = vistaActiva === 'tabla' && filtros.codigos.includes('OBS 3');
@@ -251,7 +261,7 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
     const serieQ = (filtros.serie || '').trim().toUpperCase();
     const q = (filtros.busqueda || '').trim().toLowerCase();
     return saltos.filter((s) => {
-      if (filtros.localId !== 'ALL' && !coincideConLocal(s, filtros.localId, indiceLocales)) return false;
+      if (localActivoId !== 'ALL' && !coincideConLocal(s, localActivoId, indiceLocales)) return false;
       if (filtros.tipoCP !== 'ALL' && s.tipo_doc_pago !== filtros.tipoCP) return false;
       if (serieQ && !s.serie.toUpperCase().includes(serieQ)) return false;
       if (filtros.fechaDesde && s.fecha_siguiente && s.fecha_siguiente < filtros.fechaDesde) return false;
@@ -273,7 +283,7 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
       }
       return true;
     });
-  }, [mostrandoObs3, todosDocs, filtros.localId, indiceLocales, filtros.tipoCP, filtros.serie, filtros.fechaDesde, filtros.fechaHasta, filtros.busqueda]);
+  }, [mostrandoObs3, todosDocs, localActivoId, indiceLocales, filtros.tipoCP, filtros.serie, filtros.fechaDesde, filtros.fechaHasta, filtros.busqueda]);
 
   // Paginación en memoria
   const totalRegistros = docsFiltrados.length;
@@ -325,8 +335,9 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
   const limpiarTodosLosFiltros = useCallback(() => {
     setBusquedaInput('');
     setFiltros(FILTROS_INICIALES);
+    if (onChangeLocalId) onChangeLocalId('ALL');
     setPagina(1);
-  }, []);
+  }, [onChangeLocalId]);
 
   const cerrarModal = useCallback(() => {
     setDocSeleccionado(null);
@@ -338,7 +349,7 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
     filtros.tipoCP !== 'ALL' ||
     filtros.existencia !== 'ALL' ||
     filtros.categoria !== 'ALL' ||
-    filtros.localId !== 'ALL' ||
+    localActivoId !== 'ALL' ||
     filtros.codigos.length > 0 ||
     filtros.serie !== '' ||
     filtros.corrDesde !== '' ||
@@ -556,8 +567,11 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
 
             <SelectorLocal
               locales={localesActivos}
-              value={filtros.localId}
-              onChange={(val) => actualizarFiltro({ localId: val })}
+              value={localActivoId}
+              onChange={(val) => {
+                if (onChangeLocalId) onChangeLocalId(val);
+                actualizarFiltro({ localId: val });
+              }}
               mostrarSinAsignar
               align="left"
             />
@@ -926,6 +940,7 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
         }
         onClose={cerrarModal}
         onFiltrarCodigo={seleccionarSoloCodigo}
+        onSelectDoc={setDocSeleccionado}
       />
     </div>
   );

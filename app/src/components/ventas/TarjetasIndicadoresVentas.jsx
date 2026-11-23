@@ -69,9 +69,12 @@ const TarjetasIndicadoresVentas = memo(function TarjetasIndicadoresVentas({ indi
     },
     {
       id: 'ERRORES',
-      titulo: 'Con Errores',
+      titulo: 'Con Errores (Docs únicos)',
       valor: indicadores.conErrores,
-      sub: `${pct(indicadores.conErrores)} incumplimientos`,
+      sub:
+        indicadores.totalHallazgosError > indicadores.conErrores
+          ? `${pct(indicadores.conErrores)} · ${indicadores.totalHallazgosError.toLocaleString('es-PE')} hallazgos (${indicadores.docsConMultiplesErrores} multi-error)`
+          : `${pct(indicadores.conErrores)} incumplimientos`,
       color: '#DC2626',
       bg: 'rgba(220, 38, 38, 0.1)',
       icono: <FiXCircle />,
@@ -102,7 +105,7 @@ const TarjetasIndicadoresVentas = memo(function TarjetasIndicadoresVentas({ indi
       id: 'DIF_IMPORTES',
       titulo: 'Diferencias de Importes',
       valor: indicadores.conDifImportes,
-      sub: 'ERROR 1 al 5 (> S/ 0.05)',
+      sub: 'ERROR 1 al 5 y 7 (> S/ 0.05)',
       color: '#DC2626',
       bg: 'rgba(220, 38, 38, 0.1)',
       icono: <FiDollarSign />,

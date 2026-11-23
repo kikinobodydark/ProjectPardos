@@ -16,7 +16,10 @@ import { formatoMonto, dentroDeTolerancia } from '../utils/ventas/montos';
 const COLS_RESUMEN_COMPRAS =
   'total_registros, ok_registros, error_registros, observado_registros, sum_base_sap, sum_base_sunat, sum_igv_sap, sum_igv_sunat, sum_total_sap, sum_total_sunat';
 
-const Dashboard = memo(function Dashboard({ activeCompany, periodId, activePeriod, onNavigateToReconciliation, activeModule }) {
+const Dashboard = memo(function Dashboard({
+  activeCompany, periodId, activePeriod, onNavigateToReconciliation, activeModule,
+  selectedLocalId = 'ALL', onChangeLocalId,
+}) {
   if (activeModule !== 'compras') {
     return (
       <DashboardVentas
@@ -24,6 +27,8 @@ const Dashboard = memo(function Dashboard({ activeCompany, periodId, activePerio
         periodId={periodId}
         activePeriod={activePeriod}
         onNavigateToReconciliation={onNavigateToReconciliation}
+        selectedLocalId={selectedLocalId}
+        onChangeLocalId={onChangeLocalId}
       />
     );
   }
@@ -41,21 +46,31 @@ export default Dashboard;
 // ============================================================================
 // Dashboard del módulo de Ventas (Secciones 3.B, 8, 9, 11 y 13)
 // ============================================================================
-const DashboardVentas = memo(function DashboardVentas({ activeCompany, periodId, activePeriod, onNavigateToReconciliation }) {
+const DashboardVentas = memo(function DashboardVentas({
+  activeCompany, periodId, activePeriod, onNavigateToReconciliation,
+  selectedLocalId = 'ALL', onChangeLocalId,
+}) {
   const { data: todosDocs = [], isLoading } = useDocumentosVentas(periodId, true);
-  const { localesActivos, indiceLocales } = useLocalesEmpresa(activeCompany?.id, true);
-  const [localId, setLocalId] = useState('ALL');
+  const { localesActivos, indiceLocales, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
+  const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
 
-  // Reiniciar el filtro si cambia la empresa o si el local seleccionado fue eliminado/desactivado
-  useEffect(() => {
-    setLocalId('ALL');
-  }, [activeCompany?.id]);
+  const localId = selectedLocalId || 'ALL';
+  const setLocalId = (val) => {
+    if (onChangeLocalId) onChangeLocalId(val);
+  };
 
+  // Solo reiniciar si ya cargaron los locales de la empresa y el local elegido ya no existe
   useEffect(() => {
-    if (localId !== 'ALL' && localId !== 'SIN_LOCAL' && !localesActivos.some((l) => l.id === localId)) {
-      setLocalId('ALL');
+    if (
+      localesFetched &&
+      !localesLoading &&
+      localId !== 'ALL' &&
+      localId !== 'SIN_LOCAL' &&
+      !localesActivos.some((l) => l.id === localId)
+    ) {
+      if (onChangeLocalId) onChangeLocalId('ALL');
     }
-  }, [localId, localesActivos]);
+  }, [localesFetched, localesLoading, localId, localesActivos, onChangeLocalId]);
 
   const docs = useMemo(() => {
     if (localId === 'ALL' || localesActivos.length === 0) return todosDocs;
@@ -68,21 +83,22 @@ const DashboardVentas = memo(function DashboardVentas({ activeCompany, periodId,
 
   const irAConciliacion = (payload) => {
     if (!onNavigateToReconciliation) return;
-    if (localId !== 'ALL') {
-      if (typeof payload === 'object' && payload !== null) {
-        onNavigateToReconciliation({
-          ...payload,
-          filtros: { ...(payload.filtros || {}), localId },
-        });
-        return;
-      }
-      if (payload === 'ALL') {
-        onNavigateToReconciliation({ vista: 'tabla', filtros: { localId } });
-        return;
-      }
+    if (typeof payload === 'object' && payload !== null) {
+      onNavigateToReconciliation({
+        ...payload,
+        filtros: { ...(payload.filtros || {}), localId },
+      });
+      return;
+    }
+    if (payload === 'ALL') {
+      onNavigateToReconciliation({ vista: 'tabla', filtros: { localId } });
+      return;
     }
     onNavigateToReconciliation(payload);
   };
+
+  const sumasActivas = modoComparativa === 'coincidentes' ? ind.sumasCoincidentes : ind.sumas;
+  const haySinCoincidencia = ind.soloSunat > 0 || ind.soloSap > 0;
 
   return (
     <div className="animate-fade-in w-100">
@@ -135,56 +151,134 @@ const DashboardVentas = memo(function DashboardVentas({ activeCompany, periodId,
           <div className="row g-3 mb-3">
             {/* Comparativa monetaria por los conceptos verificados */}
             <div className="col-lg-7">
-              <div className="card-premium h-100 p-3">
-                <h5 className="mb-2 fw-bold">Comparativa Monetaria Lote (SAP vs. SUNAT — Tolerancia S/ 0.05)</h5>
-                <div className="table-responsive">
-                  <table className="table table-hover table-dense align-middle mb-0">
-                    <thead>
-                      <tr>
-                        <th>Concepto</th>
-                        <th className="text-end">SAP (S/)</th>
-                        <th className="text-end">SUNAT (S/)</th>
-                        <th className="text-end">Diferencia (S/)</th>
-                        <th className="text-center">Docs Afectados</th>
-                        <th className="text-center">Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        ['Base Imponible Gravada', ind.sumas.base_sap, ind.sumas.base_sunat, 'ERROR 1'],
-                        ['IGV / IPM', ind.sumas.igv_sap, ind.sumas.igv_sunat, 'ERROR 2'],
-                        ['Monto Exonerado', ind.sumas.exonerado_sap, ind.sumas.exonerado_sunat, 'ERROR 3'],
-                        ['Monto Inafecto', ind.sumas.inafecto_sap, ind.sumas.inafecto_sunat, 'ERROR 4'],
-                        ['Otros Tributos / Servicios', ind.sumas.otros_sap, ind.sumas.otros_sunat, 'ERROR 7'],
-                        ['Importe Total', ind.sumas.total_sap, ind.sumas.total_sunat, 'ERROR 5'],
-                      ].map(([concepto, s, u, codigo]) => {
-                        const dif = s - u;
-                        const afectados = ind.porCodigo[codigo] || 0;
-                        const ok = afectados === 0 && dentroDeTolerancia(dif);
-                        return (
-                          <tr
-                            key={codigo}
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => irAConciliacion({ vista: 'tabla', filtros: { codigos: [codigo] } })}
-                          >
-                            <td className="fw-semibold">{concepto}</td>
-                            <td className="text-end font-mono">{formatoMonto(s)}</td>
-                            <td className="text-end font-mono">{formatoMonto(u)}</td>
-                            <td className={`text-end font-mono ${!dentroDeTolerancia(dif) ? 'text-danger fw-bold' : 'text-success'}`}>
-                              {formatoMonto(dif)}
-                            </td>
-                            <td className="text-center font-mono fw-bold">{afectados}</td>
-                            <td className="text-center">
-                              <span className={`badge badge-status badge-status-${ok ? 'ok' : 'error'}`}>
-                                {ok ? 'CORRECTO' : codigo}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+              <div className="card-premium h-100 p-3 d-flex flex-column justify-content-between">
+                <div>
+                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <div>
+                      <h5 className="mb-0 fw-bold">Comparativa Monetaria (SAP vs. SUNAT — Tolerancia S/ 0.05)</h5>
+                      <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                        {modoComparativa === 'coincidentes'
+                          ? `Solo documentos presentes en SAP y SUNAT (${ind.coincidentes.toLocaleString('es-PE')} docs) — coincide con ERROR 1 al 5 y 7.`
+                          : `Suma total del archivo SAP (${ind.totalSap.toLocaleString('es-PE')}) vs. SUNAT (${ind.totalSunat.toLocaleString('es-PE')}), incluyendo documentos sin par (OBS 4 / OBS 5).`}
+                      </small>
+                    </div>
+                    <div className="btn-group btn-group-sm" role="group" aria-label="Modo de comparativa monetaria">
+                      <button
+                        type="button"
+                        className={`btn ${modoComparativa === 'coincidentes' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                        style={{ fontSize: '0.74rem' }}
+                        onClick={() => setModoComparativa('coincidentes')}
+                      >
+                        Coincidentes ({ind.coincidentes.toLocaleString('es-PE')})
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn ${modoComparativa === 'lote' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                        style={{ fontSize: '0.74rem' }}
+                        onClick={() => setModoComparativa('lote')}
+                      >
+                        Total Lote ({ind.totalUnicos.toLocaleString('es-PE')})
+                      </button>
+                    </div>
+                  </div>
+                  <div className="table-responsive">
+                    <table className="table table-hover table-dense align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>Concepto</th>
+                          <th className="text-end">SAP (S/)</th>
+                          <th className="text-end">SUNAT (S/)</th>
+                          <th className="text-end">Diferencia (S/)</th>
+                          <th className="text-center">Docs Afectados</th>
+                          <th className="text-center">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          ['Base Imponible Gravada', sumasActivas.base_sap, sumasActivas.base_sunat, 'ERROR 1'],
+                          ['IGV / IPM', sumasActivas.igv_sap, sumasActivas.igv_sunat, 'ERROR 2'],
+                          ['Monto Exonerado', sumasActivas.exonerado_sap, sumasActivas.exonerado_sunat, 'ERROR 3'],
+                          ['Monto Inafecto', sumasActivas.inafecto_sap, sumasActivas.inafecto_sunat, 'ERROR 4'],
+                          ['Otros Tributos / Servicios', sumasActivas.otros_sap, sumasActivas.otros_sunat, 'ERROR 7'],
+                          ['Importe Total', sumasActivas.total_sap, sumasActivas.total_sunat, 'ERROR 5'],
+                        ].map(([concepto, s, u, codigo]) => {
+                          const dif = s - u;
+                          const afectados = ind.porCodigo[codigo] || 0;
+                          const soloPorSinPar = modoComparativa === 'lote' && afectados === 0 && !dentroDeTolerancia(dif) && haySinCoincidencia;
+                          const ok = afectados === 0 && dentroDeTolerancia(dif);
+                          return (
+                            <tr
+                              key={codigo}
+                              style={{ cursor: 'pointer' }}
+                              onClick={() =>
+                                irAConciliacion(
+                                  soloPorSinPar
+                                    ? { vista: 'tabla', filtros: { codigos: ['OBS 4', 'OBS 5'] } }
+                                    : { vista: 'tabla', filtros: { codigos: [codigo] } }
+                                )
+                              }
+                            >
+                              <td className="fw-semibold">{concepto}</td>
+                              <td className="text-end font-mono">{formatoMonto(s)}</td>
+                              <td className="text-end font-mono">{formatoMonto(u)}</td>
+                              <td className={`text-end font-mono ${!dentroDeTolerancia(dif) ? (soloPorSinPar ? 'text-warning fw-bold' : 'text-danger fw-bold') : 'text-success'}`}>
+                                {formatoMonto(dif)}
+                              </td>
+                              <td className="text-center font-mono fw-bold">
+                                {afectados.toLocaleString('es-PE')}
+                                {soloPorSinPar && (
+                                  <span className="text-warning fw-normal ms-1" style={{ fontSize: '0.7rem' }}>
+                                    (+{(ind.soloSunat + ind.soloSap).toLocaleString('es-PE')} sin par)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="text-center">
+                                {ok ? (
+                                  <span className="badge badge-status badge-status-ok">CORRECTO</span>
+                                ) : soloPorSinPar ? (
+                                  <span className="badge badge-status badge-status-observado">OBS 4 / 5</span>
+                                ) : (
+                                  <span className="badge badge-status badge-status-error">{codigo}</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
+
+                {haySinCoincidencia && (
+                  <div
+                    className="mt-2 pt-2 border-top d-flex flex-wrap align-items-center justify-content-between gap-2"
+                    style={{ borderColor: 'var(--border-color)', fontSize: '0.75rem' }}
+                  >
+                    <span className="text-muted fw-semibold">Impacto de documentos sin par (no incluidos en ERROR 1-5/7):</span>
+                    <div className="d-flex flex-wrap gap-2">
+                      {ind.soloSunat > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-sm py-0 px-2 rounded-2 font-mono fw-semibold"
+                          style={{ backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#B45309', border: '1px solid rgba(217, 119, 6, 0.25)', fontSize: '0.73rem' }}
+                          onClick={() => irAConciliacion({ vista: 'tabla', filtros: { codigos: ['OBS 4'] } })}
+                        >
+                          OBS 4 Solo SUNAT ({ind.soloSunat}): BI S/ {formatoMonto(ind.sumasSoloSunat.base)} · Total S/ {formatoMonto(ind.sumasSoloSunat.total)}
+                        </button>
+                      )}
+                      {ind.soloSap > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-sm py-0 px-2 rounded-2 font-mono fw-semibold"
+                          style={{ backgroundColor: 'rgba(180, 83, 9, 0.1)', color: '#92400E', border: '1px solid rgba(180, 83, 9, 0.25)', fontSize: '0.73rem' }}
+                          onClick={() => irAConciliacion({ vista: 'tabla', filtros: { codigos: ['OBS 5'] } })}
+                        >
+                          OBS 5 Solo SAP ({ind.soloSap}): BI S/ {formatoMonto(ind.sumasSoloSap.base)} · Total S/ {formatoMonto(ind.sumasSoloSap.total)}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -229,7 +323,14 @@ const DashboardVentas = memo(function DashboardVentas({ activeCompany, periodId,
           <div className="row g-3">
             <div className="col-lg-7">
               <div className="card-premium h-100 p-3">
-                <h5 className="mb-2 fw-bold">Incidencias por Código (Clic para ver documentos afectados)</h5>
+                <div className="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                  <div>
+                    <h5 className="mb-0 fw-bold">Incidencias por Código (Clic para ver documentos afectados)</h5>
+                    <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                      Un mismo comprobante puede registrar más de un código a la vez (por eso la suma de hallazgos puede superar el total de documentos únicos).
+                    </small>
+                  </div>
+                </div>
                 <div className="table-responsive">
                   <table className="table table-hover table-dense align-middle mb-0">
                     <thead>
@@ -265,6 +366,52 @@ const DashboardVentas = memo(function DashboardVentas({ activeCompany, periodId,
                         );
                       })}
                     </tbody>
+                    <tfoot>
+                      <tr style={{ backgroundColor: 'rgba(220, 38, 38, 0.05)' }}>
+                        <td colSpan={2} className="fw-bold text-danger" style={{ fontSize: '0.78rem' }}>
+                          Total hallazgos de ERROR
+                          {ind.docsConMultiplesErrores > 0 && (
+                            <span className="fw-normal text-muted ms-1">
+                              ({ind.conErrores.toLocaleString('es-PE')} docs únicos · {ind.docsConMultiplesErrores} con múltiples errores)
+                            </span>
+                          )}
+                        </td>
+                        <td className="text-end font-mono fw-bold text-danger">
+                          {ind.totalHallazgosError.toLocaleString('es-PE')}
+                        </td>
+                        <td className="text-center">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-link p-0 text-danger text-decoration-none fw-semibold"
+                            style={{ fontSize: '0.75rem' }}
+                            onClick={() => irAConciliacion({ vista: 'tabla', filtros: { estado: 'ERROR' } })}
+                          >
+                            Ver {ind.conErrores.toLocaleString('es-PE')} docs →
+                          </button>
+                        </td>
+                      </tr>
+                      <tr style={{ backgroundColor: 'rgba(217, 119, 6, 0.05)' }}>
+                        <td colSpan={2} className="fw-bold text-warning" style={{ fontSize: '0.78rem' }}>
+                          Total hallazgos de OBSERVACIÓN
+                          <span className="fw-normal text-muted ms-1">
+                            ({ind.conObservaciones.toLocaleString('es-PE')} docs clasificados en estado Observado)
+                          </span>
+                        </td>
+                        <td className="text-end font-mono fw-bold text-warning">
+                          {ind.totalHallazgosObs.toLocaleString('es-PE')}
+                        </td>
+                        <td className="text-center">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-link p-0 text-warning text-decoration-none fw-semibold"
+                            style={{ fontSize: '0.75rem' }}
+                            onClick={() => irAConciliacion({ vista: 'tabla', filtros: { estado: 'OBSERVADO' } })}
+                          >
+                            Ver {ind.conObservaciones.toLocaleString('es-PE')} docs →
+                          </button>
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
