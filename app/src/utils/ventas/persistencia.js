@@ -69,6 +69,64 @@ export function aFilaBD(doc, { periodoId, empresaId, ruc }) {
   return fila;
 }
 
+/**
+ * Versión compacta de `aFilaBD` para las RPCs masivas (`insertar_lote_ventas_json`):
+ * omite `periodo_id`, `empresa_id`, `mensaje_sire` (los inyecta la RPC) y campos
+ * numéricos en 0 o valores por defecto ('NORMAL'), reduciendo ~35-45% el payload JSON.
+ */
+export function aFilaBDRpc(doc, { ruc }) {
+  const carSunat = construirCar(ruc, doc);
+  const fila = {
+    car_sunat: carSunat,
+    serie: doc.serie,
+    correlativo: doc.correlativo,
+    fecha_emision: doc.fecha_emision,
+    tipo_doc_pago: doc.tipo_doc_pago,
+    estado_validacion: doc.estado,
+  };
+  if (doc.cortesia && (doc.cortesia.sap || doc.cortesia.sunat)) {
+    fila.tipo_pago_sire = 'CORTESIA';
+  }
+  const opGrat = doc.sunat?.op_gratuitas || 0;
+  if (opGrat !== 0) {
+    fila.op_gratuitas = centimosADecimal(opGrat);
+  }
+  for (const sis of ['sap', 'sunat']) {
+    const r = doc[sis];
+    if (!r) continue;
+    if (r.tipo_identidad !== null && r.tipo_identidad !== undefined) fila[`tipo_identidad_${sis}`] = r.tipo_identidad;
+    if (r.nro_identidad !== null && r.nro_identidad !== undefined) fila[`nro_identidad_${sis}`] = r.nro_identidad;
+    if (r.nombre !== null && r.nombre !== undefined) fila[`nombre_${sis}`] = r.nombre;
+    for (const m of CAMPOS_MONTO) {
+      if (r[m]) fila[`${m}_${sis}`] = centimosADecimal(r[m]);
+    }
+  }
+
+  const meta = {
+    tipo: TIPO.META,
+    version: VERSION_FORMATO,
+    en_sap: doc.en_sap,
+    en_sunat: doc.en_sunat,
+  };
+  if (doc.anulado) meta.anulado = true;
+  if (doc.sap) {
+    meta.sap = { correlativo: doc.sap.correlativo, linea: doc.sap.linea };
+    if (doc.sap.fecha_emision !== doc.fecha_emision) meta.sap.fecha_emision = doc.sap.fecha_emision;
+    if (doc.sap.estado && doc.sap.estado !== '1') meta.sap.estado = doc.sap.estado;
+  }
+  if (doc.sunat) {
+    meta.sunat = { linea: doc.sunat.linea };
+    if (doc.sunat.correlativo !== doc.correlativo) meta.sunat.correlativo = doc.sunat.correlativo;
+    if (doc.sunat.fecha_emision !== doc.fecha_emision) meta.sunat.fecha_emision = doc.sunat.fecha_emision;
+    if (doc.sunat.estado && doc.sunat.estado !== '1') meta.sunat.estado = doc.sunat.estado;
+    if (doc.sunat.car_sunat && doc.sunat.car_sunat !== carSunat) meta.sunat.car_sunat = doc.sunat.car_sunat;
+  }
+  if (doc.cortesia) meta.cortesia = doc.cortesia;
+
+  fila.errores_json = [...doc.incidencias, meta];
+  return fila;
+}
+
 /** Convierte incidencias en texto (cargas anteriores) al formato estructurado. */
 function incidenciaDesdeTexto(txt) {
   const m = /^(ERROR \d+|OBS \d+)\s*:\s*(.*)$/i.exec(String(txt));

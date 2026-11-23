@@ -117,6 +117,21 @@ export function aFilaBDCompras(doc, { periodoId, empresaId }) {
   return fila;
 }
 
+/**
+ * Versión compacta de `aFilaBDCompras` para las RPCs masivas (`insertar_lote_compras_json`):
+ * omite `periodo_id`, `empresa_id`, `mensaje_sire` y montos en 0 para reducir el payload en red.
+ */
+export function aFilaBDComprasRpc(doc) {
+  const full = aFilaBDCompras(doc, { periodoId: undefined, empresaId: undefined });
+  const compact = {};
+  for (const [k, v] of Object.entries(full)) {
+    if (k === 'periodo_id' || k === 'empresa_id' || k === 'mensaje_sire') continue;
+    if (v === null || v === undefined || v === 0) continue;
+    compact[k] = v;
+  }
+  return compact;
+}
+
 /** Convierte incidencias de texto plano (cargas antiguas) al formato estructurado. */
 function incidenciaLegacyDesdeTexto(txt) {
   const m = /^(ERROR \d+|OBS \d+)\s*:\s*(.*)$/i.exec(String(txt));

@@ -14,9 +14,9 @@ import { sanitizeExcelCell, sanitizeExcelRow } from './excelSanitizer.js';
 
 export { sanitizeExcelCell, sanitizeExcelRow };
 
-// 1. Límites de tamaño de archivo (200 MB para TXT contables y Excel opcionales)
-export const MAX_TXT_SIZE_BYTES = 200 * 1024 * 1024; // 200 MB
-export const MAX_EXCEL_SIZE_BYTES = 200 * 1024 * 1024; // 200 MB
+// 1. Límites de tamaño de archivo (400 MB para TXT contables y Excel opcionales)
+export const MAX_TXT_SIZE_BYTES = 400 * 1024 * 1024; // 400 MB
+export const MAX_EXCEL_SIZE_BYTES = 400 * 1024 * 1024; // 400 MB
 
 // 2. Expiración de enlaces de recuperación (15 minutos) y timeout de sesión inactiva (30 minutos)
 export const RECOVERY_LINK_MAX_AGE_MS = 15 * 60 * 1000;
