@@ -1240,22 +1240,23 @@ h6, .h6 { font-size: 0.9rem !important; }
 
 /* ==========================================================================
    Barra de Progreso Ondeada (Carga de Archivos - Ventas y Compras)
+   100% GPU-composited (clip-path + translate3d sobre SVG de ancho fijo)
    ========================================================================== */
 .upload-wave-box {
   --wave-color: #2563EB;
-  --wave-color-alt: #0EA5E9;
+  --wave-color-alt: #38BDF8;
   --wave-track: rgba(37, 99, 235, 0.14);
-  --wave-bg: rgba(239, 246, 255, 0.65);
+  --wave-bg: rgba(239, 246, 255, 0.68);
   --wave-border: rgba(37, 99, 235, 0.18);
   background: var(--wave-bg);
   border: 1px solid var(--wave-border);
   border-radius: 12px;
-  padding: 0.85rem 1rem 0.9rem;
+  padding: 0.9rem 1.05rem 0.95rem;
 }
 
 .upload-wave-box--compras {
   --wave-color: #7C3AED;
-  --wave-color-alt: #3B82F6;
+  --wave-color-alt: #38BDF8;
   --wave-track: rgba(124, 58, 237, 0.14);
   --wave-bg: rgba(245, 243, 255, 0.72);
   --wave-border: rgba(124, 58, 237, 0.2);
@@ -1286,7 +1287,7 @@ h6, .h6 { font-size: 0.9rem !important; }
   background: var(--wave-color);
   flex-shrink: 0;
   box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.45);
-  animation: uploadWavePulse 1.5s ease-out infinite;
+  animation: uploadWavePulse 1.6s ease-in-out infinite;
 }
 
 .upload-wave-box--compras .upload-wave-dot {
@@ -1299,18 +1300,22 @@ h6, .h6 { font-size: 0.9rem !important; }
   background: #FFFFFF;
   border: 1px solid var(--wave-border);
   border-radius: 999px;
-  padding: 0.12rem 0.55rem;
+  padding: 0.14rem 0.6rem;
   font-size: 0.78rem;
   line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2rem;
+  text-align: center;
   flex-shrink: 0;
 }
 
 .upload-wave-track {
   position: relative;
   width: 100%;
-  height: 22px;
+  height: 26px;
   display: flex;
   align-items: center;
+  contain: layout style;
 }
 
 .upload-wave-rail {
@@ -1324,46 +1329,49 @@ h6, .h6 { font-size: 0.9rem !important; }
   background: var(--wave-track);
 }
 
+/* Capa de recorte fija al 100%: solo cambia clip-path en GPU sin redibujar el SVG */
 .upload-wave-fill {
-  position: relative;
-  height: 22px;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
-  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   z-index: 1;
+  will-change: clip-path;
 }
 
 .upload-wave-svg {
   position: absolute;
   top: 0;
   left: 0;
-  width: calc(100% + 48px);
-  height: 22px;
+  width: calc(100% + 96px);
+  height: 26px;
   display: block;
   will-change: transform;
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
 }
 
 .upload-wave-svg--primary {
-  animation: uploadWaveFlow 1.05s linear infinite;
+  animation: uploadWaveFlow 1.55s linear infinite;
 }
 
 .upload-wave-svg--echo {
-  opacity: 0.28;
-  animation: uploadWaveFlow 1.75s linear infinite reverse;
+  opacity: 0.34;
+  animation: uploadWaveFlow 2.55s linear infinite;
 }
 
 .upload-wave-tip {
   position: absolute;
   top: 50%;
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   background: var(--wave-color);
   border: 2px solid #FFFFFF;
-  box-shadow: 0 0 0 3px var(--wave-track);
-  transform: translate(-50%, -50%);
-  transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 0 0 4px var(--wave-track);
+  transform: translate3d(-50%, -50%, 0);
   z-index: 2;
   pointer-events: none;
+  will-change: left;
 }
 
 @keyframes uploadWaveFlow {
@@ -1371,22 +1379,18 @@ h6, .h6 { font-size: 0.9rem !important; }
     transform: translate3d(0, 0, 0);
   }
   to {
-    transform: translate3d(-48px, 0, 0);
+    transform: translate3d(-96px, 0, 0);
   }
 }
 
 @keyframes uploadWavePulse {
-  0% {
-    transform: scale(0.95);
-    opacity: 0.9;
+  0%, 100% {
+    transform: scale(0.92);
+    opacity: 0.85;
   }
   50% {
-    transform: scale(1.25);
+    transform: scale(1.22);
     opacity: 1;
-  }
-  100% {
-    transform: scale(0.95);
-    opacity: 0.9;
   }
 }
 
@@ -1396,4 +1400,169 @@ h6, .h6 { font-size: 0.9rem !important; }
   .upload-wave-dot {
     animation: none;
   }
+}
+
+/* ==========================================================================
+   Segmented Toggle Control (Comparativa Monetaria - Ventas y Compras)
+   ========================================================================== */
+.segmented-toggle {
+  --seg-accent: #2563EB;
+  --seg-accent-soft: rgba(37, 99, 235, 0.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background-color: #F1F5F9;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.segmented-toggle--compras {
+  --seg-accent: #7C3AED;
+  --seg-accent-soft: rgba(124, 58, 237, 0.1);
+}
+
+.segmented-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.segmented-toggle-btn:hover:not(.is-active) {
+  color: var(--color-text);
+  background-color: rgba(255, 255, 255, 0.65);
+}
+
+.segmented-toggle-btn.is-active {
+  background-color: #FFFFFF;
+  color: var(--seg-accent);
+  border-color: rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.segmented-toggle-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background-color: rgba(100, 116, 139, 0.14);
+  color: #475569;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.segmented-toggle-btn.is-active .segmented-toggle-count {
+  background-color: var(--seg-accent-soft);
+  color: var(--seg-accent);
+}
+
+/* ==========================================================================
+   Botones de Acción del Header del Dashboard (alineados con SelectorLocal)
+   ========================================================================== */
+.dashboard-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 34px;
+  padding: 0 0.9rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.dashboard-action-btn svg {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  transition: transform 0.16s ease;
+}
+
+.dashboard-action-btn:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.dashboard-action-btn--secondary {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.dashboard-action-btn--secondary svg {
+  color: #2563EB;
+}
+
+.dashboard-action-btn--secondary.dashboard-action-btn--compras svg {
+  color: #7C3AED;
+}
+
+.dashboard-action-btn--secondary:hover:not(:disabled) {
+  background-color: #EFF6FF;
+  border-color: rgba(37, 99, 235, 0.4);
+  color: #1D4ED8;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.1);
+  transform: translateY(-1px);
+}
+
+.dashboard-action-btn--secondary.dashboard-action-btn--compras:hover:not(:disabled) {
+  background-color: #F5F3FF;
+  border-color: rgba(124, 58, 237, 0.4);
+  color: #6D28D9;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.12);
+}
+
+.dashboard-action-btn--primary {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  border: 1px solid #1D4ED8;
+  color: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.24);
+}
+
+.dashboard-action-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1D4ED8 0%, #1E40AF 100%);
+  border-color: #1E40AF;
+  color: #FFFFFF;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.32);
+  transform: translateY(-1px);
+}
+
+.dashboard-action-btn--primary.dashboard-action-btn--compras {
+  background: linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%);
+  border-color: #6D28D9;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.24);
+}
+
+.dashboard-action-btn--primary.dashboard-action-btn--compras:hover:not(:disabled) {
+  background: linear-gradient(135deg, #6D28D9 0%, #5B21B6 100%);
+  border-color: #5B21B6;
+  box-shadow: 0 4px 10px rgba(124, 58, 237, 0.32);
+}
+
+.dashboard-action-btn--primary:hover:not(:disabled) svg {
+  transform: translateX(2px);
+}
+
+.dashboard-action-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
 }

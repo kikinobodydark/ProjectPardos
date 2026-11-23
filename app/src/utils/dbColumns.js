@@ -11,4 +11,4 @@ export const COLS_PERIODO =
   'id, empresa_id, periodo, dia, version, fecha_carga, estado, modulo';
 
 export const COLS_USUARIOS_LISTA =
-  'id, nombre, rol, activo, estudio_id, empresa_id, usuario_empresas(empresa_id, empresas(razon_social))';
+  'id, nombre, email, rol, activo, estudio_id, empresa_id, usuario_empresas(empresa_id, empresas(razon_social))';

@@ -10,7 +10,7 @@ import {
 } from '../utils/security';
 import { SkeletonTable } from './SkeletonLoader';
 import { COLS_EMPRESA, COLS_USUARIOS_LISTA } from '../utils/dbColumns';
-import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock } from 'react-icons/fi';
+import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock, FiMail } from 'react-icons/fi';
 
 const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   const [csrfToken] = useState(() => getOrCreateCsrfToken());
@@ -19,6 +19,7 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
   const [editingId, setEditingId] = useState(null);
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
+  const [originalEmail, setOriginalEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rol, setRol] = useState('operador');
   const [activo, setActivo] = useState(true);
@@ -80,6 +81,7 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
     setEditingId(null);
     setNombre('');
     setEmail('');
+    setOriginalEmail('');
     setPassword('');
     setRol('operador');
     setActivo(true);
@@ -90,6 +92,13 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
   const saveUserMutation = useMutation({
     mutationFn: async (payload) => {
       if (payload.id) {
+        if (payload.email && payload.email !== payload.originalEmail) {
+          const { error: emailErr } = await supabase.rpc('actualizar_correo_usuario', {
+            p_id: payload.id,
+            p_email: payload.email,
+          });
+          if (emailErr) throw emailErr;
+        }
         const { error } = await supabase.rpc('actualizar_usuario', {
           p_id: payload.id,
           p_nombre: payload.nombre,
@@ -170,7 +179,7 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
     }
 
     const cleanEmail = sanitizeTextInput(email, 254).toLowerCase();
-    if (!editingId && !/^[A-Za-z0-9._%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(cleanEmail)) {
+    if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(cleanEmail)) {
       setErrorMsg('El formato del correo electrónico no es válido.');
       return;
     }
@@ -199,6 +208,7 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
       id: editingId,
       nombre: cleanNombre,
       email: cleanEmail,
+      originalEmail,
       password,
       rol,
       activo,
@@ -228,20 +238,28 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
   const handleEdit = (user) => {
     setEditingId(user.id);
     setNombre(user.nombre);
-    setEmail('');
+    setEmail(user.email || '');
+    setOriginalEmail((user.email || '').toLowerCase());
     setPassword('');
     setRol(user.rol);
     setActivo(user.activo);
     setEmpresaIds(user.usuario_empresas?.map((ue) => ue.empresa_id).filter(Boolean) || []);
+    setErrorMsg('');
+    setSuccessMsg('');
   };
 
   return (
     <div className="row g-4 animate-fade-in">
-      <div className="col-lg-5">
+      <div className="col-lg-4">
         <div className="card-premium">
-          <h5 className="mb-3 fw-bold">
-            {editingId ? 'Editar Colaborador' : 'Registrar Nuevo Operador'}
-          </h5>
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h5 className="mb-0 fw-bold">
+              {editingId ? 'Editar Colaborador' : 'Registrar Nuevo Operador'}
+            </h5>
+            {editingId && (
+              <span className="badge badge-status badge-status-observado">Editando</span>
+            )}
+          </div>
 
           {errorMsg && (
             <div className="alert alert-danger py-2 px-3 mb-3 border-0 rounded-3" style={{ fontSize: '0.85rem' }}>
@@ -252,7 +270,7 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
           <form onSubmit={handleSubmit} autoComplete="off">
             <input type="hidden" name="csrf_token" value={csrfToken} readOnly />
             <div className="mb-3">
-              <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Nombre Completo</label>
+              <label className="form-label text-muted fw-semibold" style={{ fontSize: '0.78rem' }}>Nombre Completo</label>
               <input
                 type="text"
                 required
@@ -264,20 +282,18 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
               />
             </div>
 
-            {!editingId && (
-              <div className="mb-3">
-                <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Correo Electrónico</label>
-                <input
-                  type="email"
-                  required
-                  maxLength={254}
-                  className="form-control form-control-premium"
-                  placeholder="correo@empresa.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-            )}
+            <div className="mb-3">
+              <label className="form-label text-muted fw-semibold" style={{ fontSize: '0.78rem' }}>Correo Electrónico</label>
+              <input
+                type="email"
+                required
+                maxLength={254}
+                className="form-control form-control-premium"
+                placeholder="correo@empresa.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
 
             <div className="mb-3">
               <label className="form-label text-muted" style={{ fontSize: '0.8rem' }}>Empresas Asignadas</label>
@@ -380,9 +396,16 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
         </div>
       </div>
 
-      <div className="col-lg-7">
+      <div className="col-lg-8">
         <div className="card-premium">
-          <h5 className="mb-3 fw-bold">Equipo de Conciliación ({usuarios.length})</h5>
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <div>
+              <h5 className="mb-0 fw-bold">Equipo de Conciliación ({usuarios.length})</h5>
+              <small className="text-muted" style={{ fontSize: '0.78rem' }}>
+                Haz clic en editar para modificar nombre, correo, empresas asignadas o privilegios.
+              </small>
+            </div>
+          </div>
 
           {successMsg && (
             <div className="alert alert-success py-2 px-3 mb-3 border-0 rounded-3" style={{ fontSize: '0.85rem' }}>
@@ -391,7 +414,7 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
           )}
 
           {loading ? (
-            <SkeletonTable rows={5} columns={5} title="Cargando usuarios..." />
+            <SkeletonTable rows={5} columns={6} title="Cargando usuarios..." />
           ) : usuarios.length === 0 ? (
             <p className="text-muted mb-0">No se encontraron usuarios registrados.</p>
           ) : (
@@ -401,16 +424,27 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
                   <thead>
                     <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
                       <th style={{ backgroundColor: 'var(--bg-surface)' }}>NOMBRE</th>
+                      <th style={{ backgroundColor: 'var(--bg-surface)' }}>CORREO</th>
                       <th style={{ backgroundColor: 'var(--bg-surface)' }}>EMPRESA</th>
-                      <th style={{ backgroundColor: 'var(--bg-surface)' }}>ROL</th>
+                      <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ROL</th>
                       <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ESTADO</th>
                       <th className="text-center" style={{ backgroundColor: 'var(--bg-surface)' }}>ACCIONES</th>
                     </tr>
                   </thead>
                   <tbody>
                     {usuariosPaginados.map((user) => (
-                      <tr key={user.id}>
-                        <td className="fw-semibold">{user.nombre}</td>
+                      <tr key={user.id} className={editingId === user.id ? 'table-active' : ''}>
+                        <td className="fw-semibold text-nowrap">{user.nombre}</td>
+                        <td className="font-mono text-muted text-nowrap" style={{ fontSize: '0.8rem' }}>
+                          {user.email ? (
+                            <span className="d-inline-flex align-items-center gap-1">
+                              <FiMail style={{ fontSize: '0.78rem', opacity: 0.7 }} />
+                              <span>{user.email}</span>
+                            </span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
                         <td className="text-muted" style={{ fontSize: '0.82rem' }}>
                           <div className="d-flex flex-wrap gap-1">
                             {user.usuario_empresas?.map((ue) => (
@@ -429,46 +463,64 @@ const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompan
                             )) || <span className="text-muted">Ninguna</span>}
                           </div>
                         </td>
-                        <td>
+                        <td className="text-center text-nowrap">
                           <span
                             className="badge font-mono"
                             style={{
-                              backgroundColor: user.rol === 'admin' ? 'rgba(37, 99, 235, 0.1)' : 'rgba(100, 116, 139, 0.1)',
-                              color: user.rol === 'admin' ? '#2563EB' : '#475569',
-                              border: `1px solid ${user.rol === 'admin' ? 'rgba(37, 99, 235, 0.2)' : '#E2E8F0'}`,
+                              backgroundColor:
+                                user.rol === 'admin'
+                                  ? 'rgba(37, 99, 235, 0.1)'
+                                  : user.rol === 'operador'
+                                    ? 'rgba(5, 150, 105, 0.1)'
+                                    : 'rgba(100, 116, 139, 0.1)',
+                              color:
+                                user.rol === 'admin'
+                                  ? '#2563EB'
+                                  : user.rol === 'operador'
+                                    ? '#047857'
+                                    : '#475569',
+                              border: `1px solid ${
+                                user.rol === 'admin'
+                                  ? 'rgba(37, 99, 235, 0.2)'
+                                  : user.rol === 'operador'
+                                    ? 'rgba(5, 150, 105, 0.22)'
+                                    : '#E2E8F0'
+                              }`,
                               fontSize: '0.74rem',
                             }}
                           >
                             {user.rol.toUpperCase()}
                           </span>
                         </td>
-                        <td className="text-center">
+                        <td className="text-center text-nowrap">
                           {user.activo ? (
                             <span className="badge badge-status badge-status-ok">Activo</span>
                           ) : (
                             <span className="badge badge-status badge-status-error">Inactivo</span>
                           )}
                         </td>
-                        <td className="text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleEdit(user)}
-                            className="btn btn-sm btn-outline-warning me-1"
-                            style={{ cursor: 'pointer' }}
-                            title="Editar"
-                          >
-                            <FiEdit2 />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(user.id)}
-                            className="btn btn-sm btn-outline-danger"
-                            style={{ cursor: 'pointer' }}
-                            title="Eliminar"
-                            disabled={user.id === userProfile?.id}
-                          >
-                            <FiTrash2 />
-                          </button>
+                        <td className="text-center text-nowrap">
+                          <div className="d-inline-flex align-items-center justify-content-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleEdit(user)}
+                              className="btn btn-sm btn-outline-warning"
+                              style={{ cursor: 'pointer' }}
+                              title="Editar colaborador"
+                            >
+                              <FiEdit2 />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(user.id)}
+                              className="btn btn-sm btn-outline-danger"
+                              style={{ cursor: 'pointer' }}
+                              title="Eliminar colaborador"
+                              disabled={user.id === userProfile?.id}
+                            >
+                              <FiTrash2 />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

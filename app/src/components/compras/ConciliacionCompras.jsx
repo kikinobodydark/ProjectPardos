@@ -25,7 +25,6 @@ import {
   FiX,
 } from 'react-icons/fi';
 import { useDocumentosCompras } from './useDocumentosCompras';
-import TarjetasIndicadoresCompras from './TarjetasIndicadoresCompras';
 import ModalDetalleDocumentoCompras from './ModalDetalleDocumentoCompras';
 import { SkeletonTable } from '../SkeletonLoader';
 import { useVirtualList } from '../../utils/useVirtualList';
@@ -299,7 +298,6 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   const [rucInput, setRucInput] = useState('');
   const [razonInput, setRazonInput] = useState('');
   const [docSapInput, setDocSapInput] = useState('');
-  const [kpiActivo, setKpiActivo] = useState(null);
   const [ocultarSinIncidencias, setOcultarSinIncidencias] = useState(false);
   const [mostrarMenuExportar, setMostrarMenuExportar] = useState(false);
   const [mostrarMenuCopiar, setMostrarMenuCopiar] = useState(false);
@@ -325,26 +323,20 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   useEffect(() => {
     if (!initialFilter) return;
     if (typeof initialFilter === 'object') {
-      if (initialFilter.kpi) setKpiActivo(initialFilter.kpi);
       if (initialFilter.filtros) {
         setFiltros({ ...FILTROS_INICIALES_COMPRAS, ...initialFilter.filtros });
       }
     } else if (typeof initialFilter === 'string') {
       if (RESULTADOS_COMPRAS[initialFilter]) {
         setFiltros({ ...FILTROS_INICIALES_COMPRAS, resultado: initialFilter });
-        setKpiActivo(initialFilter);
       } else if (initialFilter === 'ALL') {
         setFiltros(FILTROS_INICIALES_COMPRAS);
-        setKpiActivo(null);
       } else if (initialFilter === 'ERROR') {
         setFiltros({ ...FILTROS_INICIALES_COMPRAS, resultado: 'CON_DIFERENCIAS' });
-        setKpiActivo('CON_DIFERENCIAS');
       } else if (initialFilter === 'OBSERVADO') {
         setFiltros({ ...FILTROS_INICIALES_COMPRAS, resultado: 'CON_OBSERVACIONES' });
-        setKpiActivo('CON_OBSERVACIONES');
       } else if (initialFilter.startsWith('ERROR ') || initialFilter.startsWith('OBS ')) {
         setFiltros({ ...FILTROS_INICIALES_COMPRAS, codigos: [initialFilter] });
-        setKpiActivo(null);
       }
     }
     setPagina(1);
@@ -354,11 +346,6 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   const docsFiltrados = useMemo(
     () => filtrarDocumentosCompras(todosDocs, filtros),
     [todosDocs, filtros]
-  );
-
-  const indicadoresFiltrados = useMemo(
-    () => calcularIndicadoresCompras(docsFiltrados),
-    [docsFiltrados]
   );
 
   // Conteos para los chips de incidencias (sin el filtro de chips activo para permitir multi-selección intuitiva)
@@ -424,18 +411,10 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
 
   const actualizarFiltro = useCallback((parcial) => {
     setFiltros((prev) => ({ ...prev, ...parcial }));
-    setKpiActivo(null);
-    setPagina(1);
-  }, []);
-
-  const handleSelectKpi = useCallback((id, filtroKpi) => {
-    setKpiActivo(id === 'ALL' ? null : id);
-    setFiltros((prev) => ({ ...prev, ...filtroKpi }));
     setPagina(1);
   }, []);
 
   const toggleCodigoIncidencia = useCallback((codigo) => {
-    setKpiActivo(null);
     setFiltros((prev) => {
       const existe = prev.codigos.includes(codigo);
       const nuevos = existe ? prev.codigos.filter((c) => c !== codigo) : [...prev.codigos, codigo];
@@ -445,7 +424,6 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   }, []);
 
   const seleccionarSoloCodigo = useCallback((codigo) => {
-    setKpiActivo(null);
     setFiltros((prev) => ({
       ...prev,
       resultado: 'ALL',
@@ -457,13 +435,11 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   }, []);
 
   const filtrarPorResultado = useCallback((res) => {
-    setKpiActivo(res);
     setFiltros((prev) => ({ ...prev, resultado: res }));
     setPagina(1);
   }, []);
 
   const filtrarPorUsuarioSap = useCallback((usuario) => {
-    setKpiActivo(null);
     setFiltros((prev) => ({ ...prev, usuarioSap: usuario }));
     setPagina(1);
   }, []);
@@ -472,7 +448,6 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
     setRucInput('');
     setRazonInput('');
     setDocSapInput('');
-    setKpiActivo(null);
     setFiltros(FILTROS_INICIALES_COMPRAS);
     setPagina(1);
   }, []);
@@ -687,14 +662,6 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
 
   return (
     <div className="animate-fade-in">
-      {/* 7.A Panel de 7 Indicadores */}
-      <TarjetasIndicadoresCompras
-        indicadores={indicadoresFiltrados}
-        totalSinFiltro={todosDocs.length}
-        onSelectKpi={handleSelectKpi}
-        kpiActivo={kpiActivo}
-      />
-
       {/* Panel de Filtros Rápidos por Errores (1-8) y Observaciones (1-3) */}
       <div className="incidence-filter-panel mb-3">
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
