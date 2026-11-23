@@ -43,9 +43,13 @@ describe('ECC Security — Excel Formula Injection & Input Sanitization', () => 
 describe('ECC Security — File Validation & Magic Bytes', () => {
   it('valida extensión y tamaño en validateUploadedFile', () => {
     assert.equal(validateUploadedFile({ name: 'reporte.txt', size: 100, type: 'text/plain' }, 'txt').valid, true);
+    assert.equal(validateUploadedFile({ name: 'reporte_grande.txt', size: 200 * 1024 * 1024, type: 'text/plain' }, 'txt').valid, true);
+    assert.equal(validateUploadedFile({ name: 'reporte_excedido.txt', size: 200 * 1024 * 1024 + 1, type: 'text/plain' }, 'txt').valid, false);
     assert.equal(validateUploadedFile({ name: 'malware.exe', size: 100, type: '' }, 'txt').valid, false);
     assert.equal(validateUploadedFile({ name: 'vacio.txt', size: 0, type: 'text/plain' }, 'txt').valid, false);
     assert.equal(validateUploadedFile({ name: 'cortesias.xlsx', size: 1024, type: '' }, 'excel').valid, true);
+    assert.equal(validateUploadedFile({ name: 'cortesias_grande.xlsx', size: 200 * 1024 * 1024, type: '' }, 'excel').valid, true);
+    assert.equal(validateUploadedFile({ name: 'cortesias_excedido.xlsx', size: 200 * 1024 * 1024 + 1, type: '' }, 'excel').valid, false);
   });
 
   it('rechaza binarios disfrazados de .txt y valida firmas ZIP/OLE2 en Excel', () => {
