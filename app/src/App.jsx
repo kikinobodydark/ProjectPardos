@@ -23,6 +23,7 @@ const CargaArchivos = lazy(() => import('./components/CargaArchivos'));
 const TablaUnificada = lazy(() => import('./components/TablaUnificada'));
 const HistorialCargas = lazy(() => import('./components/HistorialCargas'));
 const ConfiguracionEmpresas = lazy(() => import('./components/ConfiguracionEmpresas'));
+const ConfiguracionLocales = lazy(() => import('./components/ConfiguracionLocales'));
 const ConfiguracionUsuarios = lazy(() => import('./components/ConfiguracionUsuarios'));
 
 // Columnas estrictamente necesarias por consulta (evita SELECT *)
@@ -178,7 +179,7 @@ export default function App() {
   // Blindaje de rutas en tiempo real
   useEffect(() => {
     if (!userProfile) return;
-    if (!isAdmin && (activeModule === 'configuracion' || activeTab === 'companies' || activeTab === 'users')) {
+    if (!isAdmin && (activeModule === 'configuracion' || activeTab === 'companies' || activeTab === 'locales' || activeTab === 'users')) {
       logSuspiciousActivity('ACCESO_RUTA_ADMIN_BLOQUEADO', {
         rol: userProfile.rol,
         modulo: activeModule,
@@ -231,7 +232,7 @@ export default function App() {
 
   const changeTab = useCallback(
     (tabId) => {
-      if ((tabId === 'companies' || tabId === 'users') && !isAdmin) {
+      if ((tabId === 'companies' || tabId === 'locales' || tabId === 'users') && !isAdmin) {
         logSuspiciousActivity('INTENTO_TAB_ADMIN_NO_AUTORIZADO', { tabId });
         return;
       }
@@ -585,6 +586,14 @@ export default function App() {
             <ConfiguracionEmpresas
               activeCompany={activeCompany}
               activeModule={activeModule}
+              userProfile={userProfile}
+            />
+          )}
+
+          {activeTab === 'locales' && isAdmin && (
+            <ConfiguracionLocales
+              activeCompany={activeCompany}
+              companies={companies}
               userProfile={userProfile}
             />
           )}

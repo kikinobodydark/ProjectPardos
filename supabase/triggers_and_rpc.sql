@@ -108,6 +108,14 @@ DROP TRIGGER IF EXISTS audit_periodos ON public.periodos_carga;
 CREATE TRIGGER audit_periodos AFTER INSERT OR UPDATE OR DELETE ON public.periodos_carga
     FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_func();
 
+DROP TRIGGER IF EXISTS audit_locales_empresa ON public.locales_empresa;
+CREATE TRIGGER audit_locales_empresa AFTER INSERT OR UPDATE OR DELETE ON public.locales_empresa
+    FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_func();
+
+DROP TRIGGER IF EXISTS audit_local_series ON public.local_series;
+CREATE TRIGGER audit_local_series AFTER INSERT OR UPDATE OR DELETE ON public.local_series
+    FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_func();
+
 CREATE OR REPLACE FUNCTION public.registrar_evento_seguridad(
     p_evento TEXT,
     p_detalle JSONB DEFAULT '{}'::jsonb
@@ -429,6 +437,8 @@ ALTER TABLE public.periodos_carga    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.detalle_ventas    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.detalle_compras   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auditoria         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.locales_empresa   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.local_series      ENABLE ROW LEVEL SECURITY;
 
 -- A. Tabla ESTUDIOS
 DROP POLICY IF EXISTS select_estudio ON public.estudios;
@@ -525,3 +535,26 @@ DROP POLICY IF EXISTS select_auditoria ON public.auditoria;
 CREATE POLICY select_auditoria ON public.auditoria 
     FOR SELECT TO authenticated
     USING (estudio_id = (SELECT public.get_user_estudio()) AND (SELECT public.get_user_rol()) = 'admin');
+
+-- I. Tablas LOCALES_EMPRESA y LOCAL_SERIES
+DROP POLICY IF EXISTS select_locales_empresa ON public.locales_empresa;
+CREATE POLICY select_locales_empresa ON public.locales_empresa
+    FOR SELECT TO authenticated
+    USING ((SELECT public.user_has_empresa_access(empresa_id)));
+
+DROP POLICY IF EXISTS all_locales_empresa_admin ON public.locales_empresa;
+CREATE POLICY all_locales_empresa_admin ON public.locales_empresa
+    FOR ALL TO authenticated
+    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin')
+    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');
+
+DROP POLICY IF EXISTS select_local_series ON public.local_series;
+CREATE POLICY select_local_series ON public.local_series
+    FOR SELECT TO authenticated
+    USING ((SELECT public.user_has_empresa_access(empresa_id)));
+
+DROP POLICY IF EXISTS all_local_series_admin ON public.local_series;
+CREATE POLICY all_local_series_admin ON public.local_series
+    FOR ALL TO authenticated
+    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin')
+    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');

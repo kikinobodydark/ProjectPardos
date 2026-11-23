@@ -1,11 +1,13 @@
-import React, { useMemo, memo } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import {
   FiCheckCircle, FiAlertTriangle, FiXCircle, FiLayers, FiDownload, FiArrowRight,
 } from 'react-icons/fi';
 import { useDocumentosVentas } from './ventas/useDocumentosVentas';
+import { useLocalesEmpresa, coincideConLocal } from '../utils/useLocalesEmpresa';
 import TarjetasIndicadoresVentas from './ventas/TarjetasIndicadoresVentas';
+import SelectorLocal from './SelectorLocal';
 import { SkeletonDashboard, SkeletonKpiGrid } from './SkeletonLoader';
 import { INCIDENCIAS } from '../utils/ventas/catalogos';
 import { REPORTES_ESPECIFICOS, calcularIndicadores, exportarExcelVentas } from '../utils/ventas/reportes';
@@ -14,10 +16,11 @@ import { formatoMonto, dentroDeTolerancia } from '../utils/ventas/montos';
 const COLS_RESUMEN_COMPRAS =
   'total_registros, ok_registros, error_registros, observado_registros, sum_base_sap, sum_base_sunat, sum_igv_sap, sum_igv_sunat, sum_total_sap, sum_total_sunat';
 
-const Dashboard = memo(function Dashboard({ periodId, activePeriod, onNavigateToReconciliation, activeModule }) {
+const Dashboard = memo(function Dashboard({ activeCompany, periodId, activePeriod, onNavigateToReconciliation, activeModule }) {
   if (activeModule !== 'compras') {
     return (
       <DashboardVentas
+        activeCompany={activeCompany}
         periodId={periodId}
         activePeriod={activePeriod}
         onNavigateToReconciliation={onNavigateToReconciliation}
@@ -38,14 +41,47 @@ export default Dashboard;
 // ============================================================================
 // Dashboard del módulo de Ventas (Secciones 3.B, 8, 9, 11 y 13)
 // ============================================================================
-const DashboardVentas = memo(function DashboardVentas({ periodId, activePeriod, onNavigateToReconciliation }) {
-  const { data: docs = [], isLoading } = useDocumentosVentas(periodId, true);
+const DashboardVentas = memo(function DashboardVentas({ activeCompany, periodId, activePeriod, onNavigateToReconciliation }) {
+  const { data: todosDocs = [], isLoading } = useDocumentosVentas(periodId, true);
+  const { localesActivos, indiceLocales } = useLocalesEmpresa(activeCompany?.id, true);
+  const [localId, setLocalId] = useState('ALL');
+
+  // Reiniciar el filtro si cambia la empresa o si el local seleccionado fue eliminado/desactivado
+  useEffect(() => {
+    setLocalId('ALL');
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    if (localId !== 'ALL' && localId !== 'SIN_LOCAL' && !localesActivos.some((l) => l.id === localId)) {
+      setLocalId('ALL');
+    }
+  }, [localId, localesActivos]);
+
+  const docs = useMemo(() => {
+    if (localId === 'ALL' || localesActivos.length === 0) return todosDocs;
+    return todosDocs.filter((d) => coincideConLocal(d, localId, indiceLocales));
+  }, [todosDocs, localId, localesActivos.length, indiceLocales]);
+
   const ind = useMemo(() => calcularIndicadores(docs), [docs]);
 
   const pct = (val) => (ind.totalUnicos > 0 ? `${((val / ind.totalUnicos) * 100).toFixed(1)}%` : '0.0%');
 
   const irAConciliacion = (payload) => {
-    if (onNavigateToReconciliation) onNavigateToReconciliation(payload);
+    if (!onNavigateToReconciliation) return;
+    if (localId !== 'ALL') {
+      if (typeof payload === 'object' && payload !== null) {
+        onNavigateToReconciliation({
+          ...payload,
+          filtros: { ...(payload.filtros || {}), localId },
+        });
+        return;
+      }
+      if (payload === 'ALL') {
+        onNavigateToReconciliation({ vista: 'tabla', filtros: { localId } });
+        return;
+      }
+    }
+    onNavigateToReconciliation(payload);
   };
 
   return (
@@ -59,7 +95,14 @@ const DashboardVentas = memo(function DashboardVentas({ periodId, activePeriod, 
             Haga clic en cualquier tarjeta, estado, grupo de error u observación para abrir el detalle de los documentos.
           </p>
         </div>
-        <div className="d-flex gap-2">
+        <div className="d-flex align-items-center flex-wrap gap-2">
+          <SelectorLocal
+            locales={localesActivos}
+            value={localId}
+            onChange={setLocalId}
+            mostrarSinAsignar
+            align="right"
+          />
           <button
             type="button"
             disabled={docs.length === 0}

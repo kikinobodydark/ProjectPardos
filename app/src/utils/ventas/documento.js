@@ -47,6 +47,45 @@ export function diferenciaCorrelativos(a, b) {
   return Number(BigInt(y) - BigInt(x));
 }
 
+/** Convierte un correlativo puramente numérico a BigInt, o null si no es numérico. */
+export function parsearCorrelativoBigInt(corr) {
+  const x = correlativoCanonico(corr);
+  if (!/^\d+$/.test(x)) return null;
+  return BigInt(x);
+}
+
+/** Formatea un BigInt conservando el relleno de ceros a la izquierda si ambos extremos lo usan. */
+export function formatearCorrelativoEnRango(numBigInt, ejemploA, ejemploB) {
+  const s = String(numBigInt);
+  const a = String(ejemploA ?? '').trim();
+  const b = String(ejemploB ?? '').trim();
+  if (/^0\d+$/.test(a) && /^0\d+$/.test(b) && a.length === b.length) {
+    return s.padStart(a.length, '0');
+  }
+  return s;
+}
+
+/**
+ * Genera los correlativos faltantes en el rango inclusivo [startBigInt, endBigInt].
+ * Limita la lista materializada a `maxItems` para evitar problemas de memoria en saltos masivos.
+ */
+export function generarCorrelativosFaltantes(startBigInt, endBigInt, ejemploA, ejemploB, maxItems = 100) {
+  if (startBigInt === null || endBigInt === null || startBigInt > endBigInt) {
+    return { lista: [], total: 0, truncado: false, primero: null, ultimo: null, rangoTexto: '' };
+  }
+  const totalBig = endBigInt - startBigInt + 1n;
+  const total = totalBig > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(totalBig);
+  const limite = Math.min(total, Math.max(1, maxItems));
+  const lista = [];
+  for (let i = 0; i < limite; i++) {
+    lista.push(formatearCorrelativoEnRango(startBigInt + BigInt(i), ejemploA, ejemploB));
+  }
+  const primero = formatearCorrelativoEnRango(startBigInt, ejemploA, ejemploB);
+  const ultimo = formatearCorrelativoEnRango(endBigInt, ejemploA, ejemploB);
+  const rangoTexto = total === 1 ? primero : `${primero} al ${ultimo}`;
+  return { lista, total, truncado: total > limite, primero, ultimo, rangoTexto };
+}
+
 /**
  * Normaliza un número de documento de 15 caracteres (formato del Excel de cortesías):
  *   - Carácter 1      : letra de la serie (B = Boleta '03', F = Factura '01')

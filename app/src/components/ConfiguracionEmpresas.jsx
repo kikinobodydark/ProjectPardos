@@ -9,6 +9,7 @@ import {
   logSuspiciousActivity,
 } from '../utils/security';
 import { executeParallelBatches } from '../utils/jobQueue';
+import { fetchAllSupabasePages, SUPABASE_MAX_SELECT_ROWS } from '../utils/supabasePagination';
 import { clearPersistedQueryCache } from '../utils/queryPersister';
 import { SkeletonTable } from './SkeletonLoader';
 import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock } from 'react-icons/fi';
@@ -213,36 +214,18 @@ const ConfiguracionEmpresas = memo(function ConfiguracionEmpresas({ activeCompan
     setRevalSuccess('');
     setRevalError('');
     try {
-      const fetchTableRows = async (tableName) => {
-        const pageSize = 1000;
-        const { data: firstPage, count, error } = await supabase
-          .from(tableName)
-          .select(COLS_REVALIDACION, { count: 'exact' })
-          .range(0, pageSize - 1);
-        if (error) throw error;
-        if (!firstPage || firstPage.length === 0) return [];
-
-        let allRows = [...firstPage];
-        const total = count ?? firstPage.length;
-        if (total > pageSize && firstPage.length === pageSize) {
-          const pages = Math.ceil(total / pageSize);
-          const promises = [];
-          for (let p = 1; p < pages; p++) {
-            promises.push(
-              supabase
-                .from(tableName)
-                .select(COLS_REVALIDACION)
-                .range(p * pageSize, (p + 1) * pageSize - 1)
-            );
-          }
-          const rest = await Promise.all(promises);
-          for (const r of rest) {
-            if (r.error) throw r.error;
-            if (r.data) allRows = allRows.concat(r.data);
-          }
-        }
-        return allRows;
-      };
+      const fetchTableRows = (tableName) =>
+        fetchAllSupabasePages({
+          pageSize: SUPABASE_MAX_SELECT_ROWS,
+          concurrency: 4,
+          label: `RevalFetch_${tableName}`,
+          fetchPage: (from, to, withCount) =>
+            supabase
+              .from(tableName)
+              .select(COLS_REVALIDACION, withCount ? { count: 'exact' } : undefined)
+              .order('id', { ascending: true })
+              .range(from, to),
+        });
 
       // Descargar ambas tablas en paralelo
       const [ventasRows, comprasRows] = await Promise.all([

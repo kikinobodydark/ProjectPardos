@@ -12,6 +12,7 @@ import {
 import { INCIDENCIAS, ESTADOS, descripcionTipoCP, descripcionTipoIdentidad } from '../../utils/ventas/catalogos';
 import { formatoMonto, dentroDeTolerancia } from '../../utils/ventas/montos';
 import { validarImportes } from '../../utils/ventas/reglas';
+import { BadgeSistemaSalto, ListaCorrelativosFaltantes } from './PanelSaltosSecuenciaVentas';
 
 const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
   docs, todosDocs, activePeriod, onSelectDoc, onFiltrarCodigo, reporteInicial = 'resumen',
@@ -20,6 +21,7 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
   const [subEstado, setSubEstado] = useState('ALL'); // ALL | CORRECTO | INCORRECTO
   const [subTipoRuc, setSubTipoRuc] = useState('ALL'); // ALL | BOLETA | FACTURA (para reporte RUC)
   const [conceptoImp, setConceptoImp] = useState('ALL'); // ALL | ERROR 1..5,7
+  const [subSistemaSec, setSubSistemaSec] = useState('ALL'); // ALL | AMBOS | SUNAT | SAP
   const [pagina, setPagina] = useState(1);
   const porPagina = 25;
 
@@ -111,7 +113,16 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
 
     if (reporteId === 'secuencia') {
       const { series, saltos } = calcularSecuencias(todosDocs || docs);
-      return { tipo: 'secuencia', series, lista: saltos };
+      const filtrados = subSistemaSec === 'ALL' ? saltos : saltos.filter((s) => s.sistema === subSistemaSec);
+      return {
+        tipo: 'secuencia',
+        series,
+        lista: filtrados,
+        totalSaltos: saltos.length,
+        conteoAmbos: saltos.filter((s) => s.sistema === 'AMBOS').length,
+        conteoSunat: saltos.filter((s) => s.sistema === 'SUNAT').length,
+        conteoSap: saltos.filter((s) => s.sistema === 'SAP').length,
+      };
     }
 
     if (reporteId === 'cortesias') {
@@ -128,7 +139,7 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
     }
 
     return { tipo: 'resumen' };
-  }, [reporteId, docs, todosDocs, subEstado, subTipoRuc, conceptoImp]);
+  }, [reporteId, docs, todosDocs, subEstado, subTipoRuc, conceptoImp, subSistemaSec]);
 
   const listaPaginada = useMemo(() => {
     const l = contenido.lista || [];
@@ -218,6 +229,22 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
                 <option value="CORRECTO">Conceptos correctos (≤ S/ 0.05)</option>
               </select>
             </>
+          )}
+          {reporteId === 'secuencia' && (
+            <div className="btn-group btn-group-sm">
+              <button type="button" className={`btn ${subSistemaSec === 'ALL' ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => { setSubSistemaSec('ALL'); setPagina(1); }}>
+                Todos ({contenido.totalSaltos || 0})
+              </button>
+              <button type="button" className={`btn ${subSistemaSec === 'AMBOS' ? 'btn-danger' : 'btn-outline-secondary'}`} onClick={() => { setSubSistemaSec('AMBOS'); setPagina(1); }}>
+                Ambos ({contenido.conteoAmbos || 0})
+              </button>
+              <button type="button" className={`btn ${subSistemaSec === 'SUNAT' ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => { setSubSistemaSec('SUNAT'); setPagina(1); }}>
+                Solo SUNAT ({contenido.conteoSunat || 0})
+              </button>
+              <button type="button" className={`btn ${subSistemaSec === 'SAP' ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => { setSubSistemaSec('SAP'); setPagina(1); }}>
+                Solo SAP ({contenido.conteoSap || 0})
+              </button>
+            </div>
           )}
           <button
             type="button"
@@ -497,61 +524,81 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
           <div className="col-lg-5">
             <div className="p-3 rounded-3" style={{ backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)' }}>
               <h6 className="fw-bold mb-2">Continuidad por Serie</h6>
-              <table className="table table-sm table-dense mb-0">
-                <thead>
-                  <tr>
-                    <th>Serie</th>
-                    <th>Tipo</th>
-                    <th className="text-end">Docs</th>
-                    <th className="text-end">Rango</th>
-                    <th className="text-end">Saltos</th>
-                    <th className="text-center">Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contenido.series.map((s) => (
-                    <tr key={`${s.tipo_doc_pago}-${s.serie}`}>
-                      <td className="font-mono fw-bold">{s.serie}</td>
-                      <td>{descripcionTipoCP(s.tipo_doc_pago)}</td>
-                      <td className="text-end font-mono">{s.documentos}</td>
-                      <td className="text-end font-mono">{s.primero} → {s.ultimo}</td>
-                      <td className="text-end font-mono">{s.saltos} ({s.faltantes} falt.)</td>
-                      <td className="text-center">
-                        <span className={`badge badge-status badge-status-${s.saltos === 0 ? 'ok' : 'observado'}`}>
-                          {s.estado}
-                        </span>
-                      </td>
+              <div className="table-responsive">
+                <table className="table table-sm table-dense mb-0">
+                  <thead>
+                    <tr>
+                      <th>Serie</th>
+                      <th>Tipo</th>
+                      <th className="text-end">Docs</th>
+                      <th className="text-end">Rango</th>
+                      <th className="text-end">Saltos</th>
+                      <th className="text-center">Sistema</th>
+                      <th className="text-center">Estado</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {contenido.series.map((s) => (
+                      <tr key={`${s.tipo_doc_pago}-${s.serie}`}>
+                        <td className="font-mono fw-bold">{s.serie}</td>
+                        <td>{descripcionTipoCP(s.tipo_doc_pago)}</td>
+                        <td className="text-end font-mono">{s.documentos}</td>
+                        <td className="text-end font-mono">{s.primero} → {s.ultimo}</td>
+                        <td className="text-end font-mono">{s.saltos} ({s.faltantes} falt.)</td>
+                        <td className="text-center">
+                          {s.sistema_salto ? <BadgeSistemaSalto sistema={s.sistema_salto} /> : <span className="text-muted">—</span>}
+                        </td>
+                        <td className="text-center">
+                          <span className={`badge badge-status badge-status-${s.saltos === 0 ? 'ok' : 'observado'}`}>
+                            {s.estado}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
           <div className="col-lg-7">
             <div className="p-3 rounded-3" style={{ backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)' }}>
-              <h6 className="fw-bold mb-2">Detalle de Saltos de Numeración ({contenido.lista.length})</h6>
+              <h6 className="fw-bold mb-2">Detalle de Saltos y Correlativos Faltantes ({contenido.lista.length})</h6>
               <div className="table-responsive">
-                <table className="table table-sm table-hover table-dense mb-0">
+                <table className="table table-sm table-hover table-dense align-middle mb-0">
                   <thead>
                     <tr>
-                      <th>Serie Afectada</th>
-                      <th>Correlativo Anterior</th>
-                      <th>Fecha Ant.</th>
-                      <th>Correlativo Siguiente</th>
-                      <th>Fecha Sig.</th>
-                      <th className="text-end">Diferencia</th>
-                      <th className="text-end">Faltantes</th>
+                      <th>Serie</th>
+                      <th>Correlativo(s) Faltante(s)</th>
+                      <th>Salto (Ant. → Sig.)</th>
+                      <th className="text-center">Salto en</th>
+                      <th className="text-end">Falt.</th>
                     </tr>
                   </thead>
                   <tbody>
                     {listaPaginada.map((s, i) => (
-                      <tr key={i} style={{ cursor: 'pointer' }} onClick={() => onSelectDoc(s.doc)}>
+                      <tr key={`${s.serie}-${String(s.start)}-${s.sistema}-${i}`} style={{ cursor: 'pointer' }} onClick={() => onSelectDoc(s.doc)}>
                         <td className="font-mono fw-bold">{s.serie}</td>
-                        <td className="font-mono">{s.anterior}</td>
-                        <td className="font-mono">{s.fecha_anterior || '—'}</td>
-                        <td className="font-mono fw-semibold text-warning">{s.siguiente}</td>
-                        <td className="font-mono">{s.fecha_siguiente || '—'}</td>
-                        <td className="text-end font-mono fw-bold">{s.diferencia}</td>
+                        <td style={{ minWidth: '175px', whiteSpace: 'normal' }}>
+                          <ListaCorrelativosFaltantes
+                            serie={s.serie}
+                            correlativos={s.correlativos_faltantes}
+                            total={s.faltantes}
+                            rangoTexto={s.rango_faltante}
+                            truncado={s.faltantes_truncado}
+                            limiteInicial={6}
+                          />
+                        </td>
+                        <td className="font-mono">
+                          <span>{s.anterior}</span>
+                          <span className="text-muted mx-1">→</span>
+                          <span className="fw-semibold text-warning">{s.siguiente}</span>
+                          <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                            {s.fecha_anterior || '—'} → {s.fecha_siguiente || '—'}
+                          </div>
+                        </td>
+                        <td className="text-center">
+                          <BadgeSistemaSalto sistema={s.sistema} />
+                        </td>
                         <td className="text-end font-mono text-danger fw-bold">{s.faltantes}</td>
                       </tr>
                     ))}

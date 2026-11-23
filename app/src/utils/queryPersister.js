@@ -12,13 +12,16 @@
 // ============================================================================
 
 const SESSION_CACHE_KEY = 'ct_rq_sync_cache_v1';
-const IDB_NAME = 'conciliatributo_rq_idb_v1';
+const LEGACY_IDB_NAMES = ['conciliatributo_rq_idb_v1', 'conciliatributo_rq_idb_v2'];
+const IDB_NAME = 'conciliatributo_rq_idb_v3';
 const IDB_STORE = 'queries';
 const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutos de validez de caché
+let legacyIdbCleaned = false;
 
 const SYNC_QUERY_PREFIXES = new Set([
   'userProfile',
   'companies',
+  'localesEmpresa',
   'periods',
   'cargaHistory',
   'dashboardStats',
@@ -33,6 +36,16 @@ const IDB_QUERY_PREFIXES = new Set([
 
 function openIdb() {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (!legacyIdbCleaned) {
+    legacyIdbCleaned = true;
+    for (const oldName of LEGACY_IDB_NAMES) {
+      try {
+        indexedDB.deleteDatabase(oldName);
+      } catch {
+        // Ignorar si el navegador no permite eliminar la BD anterior
+      }
+    }
+  }
   return new Promise((resolve) => {
     try {
       const req = indexedDB.open(IDB_NAME, 1);

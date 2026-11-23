@@ -7,8 +7,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../utils/supabaseClient';
 import { desdeFilaBD } from '../../utils/ventas/persistencia';
+import { enriquecerSecuenciasEnDocs } from '../../utils/ventas/reglas';
 import { getNetworkProfile } from '../../utils/networkProfile';
 import { idbGetQuery, idbSetQuery } from '../../utils/queryPersister';
+import { fetchAllSupabasePages, SUPABASE_MAX_SELECT_ROWS } from '../../utils/supabasePagination';
 
 export const COLUMNAS_DETALLE_VENTAS = [
   'id',
@@ -51,55 +53,32 @@ export function useDocumentosVentas(periodId, enabled = true) {
       const cacheKeyHash = JSON.stringify(['ventasDocumentos', periodId]);
       const cachedDocs = await idbGetQuery(cacheKeyHash);
       if (Array.isArray(cachedDocs) && cachedDocs.length > 0) {
-        return cachedDocs;
+        return enriquecerSecuenciasEnDocs(cachedDocs);
       }
 
       const net = getNetworkProfile();
-      const pageSize = net.recommendedBatchSize || 1000;
+      const pageSize = Math.min(net.recommendedBatchSize || SUPABASE_MAX_SELECT_ROWS, SUPABASE_MAX_SELECT_ROWS);
+      const concurrency = net.recommendedConcurrency || 4;
 
-      // 1. Primera página con conteo exacto
-      const { data: firstPage, count, error } = await supabase
-        .from('detalle_ventas')
-        .select(COLUMNAS_DETALLE_VENTAS, { count: 'exact' })
-        .eq('periodo_id', periodId)
-        .order('fecha_emision', { ascending: true })
-        .order('serie', { ascending: true })
-        .order('correlativo', { ascending: true })
-        .range(0, pageSize - 1);
+      const all = await fetchAllSupabasePages({
+        pageSize,
+        concurrency,
+        label: 'VentasDocumentosPage',
+        fetchPage: (from, to, withCount) =>
+          supabase
+            .from('detalle_ventas')
+            .select(COLUMNAS_DETALLE_VENTAS, withCount ? { count: 'exact' } : undefined)
+            .eq('periodo_id', periodId)
+            .order('fecha_emision', { ascending: true })
+            .order('serie', { ascending: true })
+            .order('correlativo', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, to),
+      });
 
-      if (error) throw error;
-      if (!firstPage || firstPage.length === 0) return [];
+      if (all.length === 0) return [];
 
-      let all = [...firstPage];
-      const total = count ?? firstPage.length;
-
-      // 2. Si hay más páginas, lanzar las peticiones restantes en paralelo
-      if (total > pageSize && firstPage.length === pageSize) {
-        const totalPages = Math.ceil(total / pageSize);
-        const pagePromises = [];
-        for (let p = 1; p < totalPages; p++) {
-          pagePromises.push(
-            supabase
-              .from('detalle_ventas')
-              .select(COLUMNAS_DETALLE_VENTAS)
-              .eq('periodo_id', periodId)
-              .order('fecha_emision', { ascending: true })
-              .order('serie', { ascending: true })
-              .order('correlativo', { ascending: true })
-              .range(p * pageSize, (p + 1) * pageSize - 1)
-          );
-        }
-
-        const results = await Promise.all(pagePromises);
-        for (const res of results) {
-          if (res.error) throw res.error;
-          if (res.data && res.data.length > 0) {
-            all = all.concat(res.data);
-          }
-        }
-      }
-
-      const docs = all.map(desdeFilaBD);
+      const docs = enriquecerSecuenciasEnDocs(all.map(desdeFilaBD));
       idbSetQuery(cacheKeyHash, ['ventasDocumentos', periodId], docs);
       return docs;
     },

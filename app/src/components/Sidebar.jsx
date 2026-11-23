@@ -6,6 +6,7 @@ import {
   FiClock,
   FiBriefcase,
   FiUsers,
+  FiMapPin,
   FiLogOut,
   FiX,
   FiHome,
@@ -34,6 +35,7 @@ const Sidebar = memo(function Sidebar({
 
   const adminItems = [
     { id: 'companies', label: 'Empresas', icon: <FiBriefcase /> },
+    { id: 'locales', label: 'Locales y Series', icon: <FiMapPin /> },
     { id: 'users', label: 'Usuarios', icon: <FiUsers /> },
   ];
 

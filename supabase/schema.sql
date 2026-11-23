@@ -163,6 +163,28 @@ CREATE TABLE IF NOT EXISTS public.auditoria (
     fecha_hora TIMESTAMPTZ DEFAULT now()
 );
 
+-- 8.1 Tablas de Locales y Series por Empresa
+CREATE TABLE IF NOT EXISTS public.locales_empresa (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    empresa_id UUID NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL,
+    activo BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_locales_empresa_nombre CHECK (length(trim(nombre)) BETWEEN 2 AND 120)
+);
+
+CREATE TABLE IF NOT EXISTS public.local_series (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    local_id UUID NOT NULL REFERENCES public.locales_empresa(id) ON DELETE CASCADE,
+    empresa_id UUID NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
+    tipo_doc_pago VARCHAR(2) NOT NULL CHECK (tipo_doc_pago IN ('01', '03', '07', '08')),
+    serie VARCHAR(10) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_local_series_formato CHECK (serie = upper(trim(serie)) AND length(serie) BETWEEN 2 AND 10),
+    CONSTRAINT uq_local_series_empresa_tipo_serie UNIQUE (empresa_id, tipo_doc_pago, serie)
+);
+
 -- 9. Índices para Optimización
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_id ON public.detalle_ventas (periodo_id);
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_empresa_id ON public.detalle_ventas (empresa_id);
@@ -192,6 +214,14 @@ CREATE INDEX IF NOT EXISTS idx_detalle_compras_errores_json_gin
   ON public.detalle_compras USING gin (errores_json);
 CREATE INDEX IF NOT EXISTS idx_periodos_carga_empresa_modulo_estado
   ON public.periodos_carga (empresa_id, modulo, estado, fecha_carga DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_locales_empresa_empresa_nombre
+  ON public.locales_empresa (empresa_id, lower(trim(nombre)));
+CREATE INDEX IF NOT EXISTS idx_locales_empresa_empresa_id
+  ON public.locales_empresa (empresa_id);
+CREATE INDEX IF NOT EXISTS idx_local_series_local_id
+  ON public.local_series (local_id);
+CREATE INDEX IF NOT EXISTS idx_local_series_empresa_id
+  ON public.local_series (empresa_id);
 
 -- 11. Configuración de Pool de Conexiones (Supavisor / PgBouncer Transaction Mode)
 ALTER ROLE authenticated SET statement_timeout = '15s';

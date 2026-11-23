@@ -11,7 +11,9 @@ import { decodificarTexto, parsearSapVentas, parsearSunatVentas, parsearCortesia
 import { normalizarNumeroDocumento } from './src/utils/ventas/documento.js';
 import { conciliarVentas } from './src/utils/ventas/motor.js';
 import { aFilaBD, desdeFilaBD } from './src/utils/ventas/persistencia.js';
-import { calcularIndicadores, filtrarDocumentos, FILTROS_INICIALES } from './src/utils/ventas/reportes.js';
+import { calcularIndicadores, calcularSecuencias, filtrarDocumentos, FILTROS_INICIALES } from './src/utils/ventas/reportes.js';
+import { enriquecerSecuenciasEnDocs } from './src/utils/ventas/reglas.js';
+import { normalizarLocales, construirIndiceLocales, coincideConLocal } from './src/utils/locales.js';
 
 console.log('=== 1. PRUEBAS UNITARIAS DE REGLAS DE LA HOJA FLUJO ===');
 
@@ -47,6 +49,111 @@ console.log('=== 1. PRUEBAS UNITARIAS DE REGLAS DE LA HOJA FLUJO ===');
   assert.strictEqual(docs[2].codigos.includes('OBS 3'), true, 'B633-1246 -> B633-1300 debe marcar OBS 3');
   assert.strictEqual(series[0].saltos, 1);
   assert.strictEqual(series[0].faltantes, 53);
+  assert.strictEqual(series[0].sistema_salto, 'AMBOS');
+  const obs3 = docs[2].incidencias.find((i) => i.codigo === 'OBS 3');
+  assert.strictEqual(obs3.datos.sistema, 'AMBOS');
+  assert.strictEqual(obs3.datos.correlativos_faltantes[0], '1247');
+  assert.strictEqual(obs3.datos.rango_faltante, '1247 al 1299');
+}
+
+// 4.4b Detección de correlativos faltantes exactos por sistema: Solo SUNAT, Solo SAP, AMBOS y solapamiento parcial
+{
+  const mk = (tipo, serie, corr, fecha = '2026-11-21') => ({
+    linea: 1, clave: `${tipo}|${serie}|${corr}`, tipo_doc_pago: tipo, serie, correlativo: corr,
+    fecha_emision: fecha, tipo_identidad: '6', nro_identidad: '20552886441', nombre: 'TEST SAC',
+    base: 10000, igv: 1800, exonerado: 0, inafecto: 0, otros: 0, total: 11800, estado: '1',
+  });
+
+  // Caso real F635: SAP termina en 3440, SUNAT salta de 3445 a 3447 -> falta 3446 Solo SUNAT
+  const sapSunatOnly = [mk('01', 'F635', '3440', '2026-11-20')];
+  const sunatF635 = ['3440', '3441', '3442', '3443', '3444', '3445', '3447'].map((c) => mk('01', 'F635', c));
+  const resF635 = conciliarVentas({ sap: sapSunatOnly, sunat: sunatF635 });
+  const secF635 = calcularSecuencias(resF635.docs);
+  assert.strictEqual(secF635.saltos.length, 1);
+  assert.strictEqual(secF635.saltos[0].sistema, 'SUNAT', 'El salto 3445 -> 3447 ocurre solo en SUNAT');
+  assert.deepStrictEqual(secF635.saltos[0].correlativos_faltantes, ['3446'], 'Debe reportar el correlativo exacto 3446');
+  const doc3447 = resF635.docs.find((d) => d.correlativo === '3447');
+  assert.ok(doc3447.codigos.includes('OBS 3'));
+  assert.ok(doc3447.incidencias.find((i) => i.codigo === 'OBS 3').detalle.includes('3446'));
+
+  // Caso Solo SAP: SAP tiene 100, 102 (falta 101); SUNAT tiene 100, 101, 102
+  const resSapOnly = conciliarVentas({
+    sap: [mk('01', 'F100', '100'), mk('01', 'F100', '102')],
+    sunat: [mk('01', 'F100', '100'), mk('01', 'F100', '101'), mk('01', 'F100', '102')],
+  });
+  const secSapOnly = calcularSecuencias(resSapOnly.docs);
+  assert.strictEqual(secSapOnly.saltos.length, 1);
+  assert.strictEqual(secSapOnly.saltos[0].sistema, 'SAP', 'El salto 100 -> 102 ocurre solo en SAP');
+  assert.deepStrictEqual(secSapOnly.saltos[0].correlativos_faltantes, ['101']);
+
+  // Caso Solapamiento parcial: SAP tiene 100, 103 (faltan 101 y 102); SUNAT tiene 100, 101, 103 (falta 102)
+  const resMixto = conciliarVentas({
+    sap: [mk('01', 'F200', '100'), mk('01', 'F200', '103')],
+    sunat: [mk('01', 'F200', '100'), mk('01', 'F200', '101'), mk('01', 'F200', '103')],
+  });
+  const secMixto = calcularSecuencias(resMixto.docs);
+  assert.strictEqual(secMixto.saltos.length, 2);
+  assert.strictEqual(secMixto.saltos[0].sistema, 'SAP');
+  assert.deepStrictEqual(secMixto.saltos[0].correlativos_faltantes, ['101']);
+  assert.strictEqual(secMixto.saltos[1].sistema, 'AMBOS');
+  assert.deepStrictEqual(secMixto.saltos[1].correlativos_faltantes, ['102']);
+
+  // Enriquecimiento en memoria de registros históricos (cargados desde BD con OBS 3 antiguo)
+  const docLegacy = resF635.docs.map((d) => ({
+    ...d,
+    incidencias: d.incidencias.map((inc) =>
+      inc.codigo === 'OBS 3' ? { ...inc, detalle: 'Legacy OBS 3', datos: { serie: 'F635', anterior: '3445', siguiente: '3447', faltantes: 1 } } : inc
+    ),
+  }));
+  const enriquecidos = enriquecerSecuenciasEnDocs(docLegacy);
+  const obs3Enr = enriquecidos.find((d) => d.correlativo === '3447').incidencias.find((i) => i.codigo === 'OBS 3');
+  assert.strictEqual(obs3Enr.datos.sistema, 'SUNAT');
+  assert.deepStrictEqual(obs3Enr.datos.correlativos_faltantes, ['3446']);
+}
+
+// 4.5 Locales y series por empresa (CHIFAS DEL PERU SAC)
+{
+  const rawLocales = [
+    {
+      id: 'loc-mega',
+      empresa_id: 'emp-chifas',
+      nombre: 'Mr Shao Megaplaza',
+      activo: true,
+      local_series: [
+        { id: '1', tipo_doc_pago: '01', serie: 'F635' },
+        { id: '2', tipo_doc_pago: '01', serie: 'F611' },
+        { id: '3', tipo_doc_pago: '03', serie: 'B635' },
+        { id: '4', tipo_doc_pago: '03', serie: 'B611' },
+      ],
+    },
+    {
+      id: 'loc-bo',
+      empresa_id: 'emp-chifas',
+      nombre: 'Mr Shao Backoffice',
+      activo: true,
+      local_series: [
+        { id: '5', tipo_doc_pago: '01', serie: 'FE01' },
+        { id: '6', tipo_doc_pago: '03', serie: 'BE01' },
+        { id: '7', tipo_doc_pago: '07', serie: 'BC01' },
+      ],
+    },
+  ];
+  const localesNorm = normalizarLocales(rawLocales);
+  const idx = construirIndiceLocales(localesNorm);
+  assert.strictEqual(idx.obtenerLocal('F635', '01')?.nombre, 'Mr Shao Megaplaza');
+  assert.strictEqual(idx.obtenerLocal('BC01', '07')?.nombre, 'Mr Shao Backoffice');
+  assert.strictEqual(idx.obtenerLocal('F999', '01'), null);
+
+  const docsMuestra = [
+    { tipo_doc_pago: '01', serie: 'F635', correlativo: '1', estado: 'OK', en_sap: true, en_sunat: true, codigos: [] },
+    { tipo_doc_pago: '03', serie: 'B611', correlativo: '2', estado: 'OK', en_sap: true, en_sunat: true, codigos: [] },
+    { tipo_doc_pago: '07', serie: 'BC01', correlativo: '3', estado: 'OK', en_sap: true, en_sunat: true, codigos: [] },
+    { tipo_doc_pago: '01', serie: 'F999', correlativo: '4', estado: 'OK', en_sap: true, en_sunat: true, codigos: [] },
+  ];
+  assert.strictEqual(filtrarDocumentos(docsMuestra, { ...FILTROS_INICIALES, localId: 'loc-mega' }, idx).length, 2);
+  assert.strictEqual(filtrarDocumentos(docsMuestra, { ...FILTROS_INICIALES, localId: 'loc-bo' }, idx).length, 1);
+  assert.strictEqual(filtrarDocumentos(docsMuestra, { ...FILTROS_INICIALES, localId: 'SIN_LOCAL' }, idx).length, 1);
+  assert.strictEqual(coincideConLocal(docsMuestra[0], 'ALL', idx), true);
 }
 
 // 6. Tolerancia de S/ 0.05 exacta y 8. Prioridad ERROR > OBSERVADO > OK sin sobrescribir incidencias
@@ -167,6 +274,7 @@ import {
 import { getNetworkProfile, simulateNetworkProfile } from './src/utils/networkProfile.js';
 import { executeParallelBatches, runCpuTaskInWorker } from './src/utils/jobQueue.js';
 import { calculateVirtualRange } from './src/utils/useVirtualList.js';
+import { fetchAllSupabasePages } from './src/utils/supabasePagination.js';
 
 console.log('\n=== 3. PRUEBAS DE OPTIMIZACIÓN DE RENDIMIENTO Y REDES LENTAS ===');
 
@@ -292,7 +400,65 @@ console.log('\n=== 3. PRUEBAS DE OPTIMIZACIÓN DE RENDIMIENTO Y REDES LENTAS ===
   simulateNetworkProfile(null);
 }
 
-// 3.6 Verificación de Imágenes WebP / AVIF y Vista SQL sin N+1
+// 3.6 Paginación Supabase > 12,000 filas respetando límite max_rows del servidor (1000 / 500)
+{
+  const TOTAL_ROWS = 12587;
+  const dataset = Array.from({ length: TOTAL_ROWS }, (_, idx) => ({ id: idx + 1 }));
+
+  const createMockPostgrest = (serverMaxRows, returnCount = true) => {
+    let calls = 0;
+    return {
+      getCalls: () => calls,
+      fetchPage: async (from, to, withCount) => {
+        calls += 1;
+        const limit = Math.min(to - from + 1, serverMaxRows);
+        const slice = dataset.slice(from, from + limit);
+        return {
+          data: slice,
+          count: returnCount && withCount ? TOTAL_ROWS : null,
+          error: null,
+        };
+      },
+    };
+  };
+
+  // Caso 1: Cliente solicita pageSize=1500 (como recommendedBatchSize en 4G), servidor PostgREST capa en 1000
+  const mock1000 = createMockPostgrest(1000, true);
+  const all1000 = await fetchAllSupabasePages({
+    fetchPage: mock1000.fetchPage,
+    pageSize: 1500,
+    concurrency: 4,
+    label: 'TestMaxRows1000',
+  });
+  assert.strictEqual(all1000.length, TOTAL_ROWS, 'Debe descargar las 12,587 filas completas sin truncar en 1,000');
+  assert.strictEqual(all1000[0].id, 1);
+  assert.strictEqual(all1000[TOTAL_ROWS - 1].id, TOTAL_ROWS);
+  assert.strictEqual(mock1000.getCalls(), 13, '12,587 filas en bloques de 1,000 requieren 13 peticiones');
+
+  // Caso 2: Servidor PostgREST con max_rows aún menor (500) -> adapta paso automáticamente sin perder filas
+  const mock500 = createMockPostgrest(500, true);
+  const all500 = await fetchAllSupabasePages({
+    fetchPage: mock500.fetchPage,
+    pageSize: 1000,
+    concurrency: 4,
+    label: 'TestMaxRows500',
+  });
+  assert.strictEqual(all500.length, TOTAL_ROWS, 'Debe adaptar el paso al límite real del servidor (500) sin perder filas');
+  assert.strictEqual(all500[1000].id, 1001);
+  assert.strictEqual(all500[TOTAL_ROWS - 1].id, TOTAL_ROWS);
+
+  // Caso 3: Sin `count` en la respuesta -> fallback secuencial hasta agotar filas
+  const mockNoCount = createMockPostgrest(1000, false);
+  const allNoCount = await fetchAllSupabasePages({
+    fetchPage: mockNoCount.fetchPage,
+    pageSize: 1000,
+    concurrency: 4,
+    label: 'TestNoCount',
+  });
+  assert.strictEqual(allNoCount.length, TOTAL_ROWS, 'Sin count exacto debe seguir paginando hasta completar todas las filas');
+}
+
+// 3.7 Verificación de Imágenes WebP / AVIF y Vista SQL sin N+1
 {
   assert.ok(fs.existsSync(path.resolve('./public/logo-pardos.webp')), 'Debe existir logo-pardos.webp');
   assert.ok(fs.existsSync(path.resolve('./public/logo-pardos.avif')), 'Debe existir logo-pardos.avif');
