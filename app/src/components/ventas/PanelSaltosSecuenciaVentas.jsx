@@ -7,6 +7,7 @@ import React, { useState, useMemo, memo } from 'react';
 import { FiAlertTriangle, FiDownload, FiEye } from 'react-icons/fi';
 import { descripcionTipoCP } from '../../utils/ventas/catalogos';
 import { ETIQUETA_SISTEMA_SALTO } from '../../utils/ventas/reglas';
+import { crearDocFaltanteDetalle } from '../../utils/ventas/reportes';
 
 export const BadgeSistemaSalto = memo(function BadgeSistemaSalto({ sistema }) {
   if (!sistema) return null;
@@ -61,6 +62,7 @@ export const ListaCorrelativosFaltantes = memo(function ListaCorrelativosFaltant
   truncado = false,
   limiteInicial = 8,
   mostrarSerie = true,
+  onSelectCorrelativo,
 }) {
   const [expandido, setExpandido] = useState(false);
 
@@ -73,21 +75,44 @@ export const ListaCorrelativosFaltantes = memo(function ListaCorrelativosFaltant
 
   return (
     <div className="d-flex flex-wrap align-items-center gap-1">
-      {visibles.map((corr) => (
-        <span
-          key={corr}
-          className="badge font-mono"
-          style={{
-            backgroundColor: 'rgba(220, 38, 38, 0.09)',
-            color: '#B91C1C',
-            border: '1px solid rgba(220, 38, 38, 0.28)',
-            fontSize: '0.74rem',
-            fontWeight: 700,
-          }}
-        >
-          {mostrarSerie && serie ? `${serie}-${corr}` : corr}
-        </span>
-      ))}
+      {visibles.map((corr) =>
+        onSelectCorrelativo ? (
+          <button
+            key={corr}
+            type="button"
+            className="badge font-mono"
+            style={{
+              backgroundColor: 'rgba(220, 38, 38, 0.09)',
+              color: '#B91C1C',
+              border: '1px solid rgba(220, 38, 38, 0.28)',
+              fontSize: '0.74rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+            title={`Ver detalle del comprobante faltante ${serie ? `${serie}-${corr}` : corr}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectCorrelativo(corr);
+            }}
+          >
+            {mostrarSerie && serie ? `${serie}-${corr}` : corr}
+          </button>
+        ) : (
+          <span
+            key={corr}
+            className="badge font-mono"
+            style={{
+              backgroundColor: 'rgba(220, 38, 38, 0.09)',
+              color: '#B91C1C',
+              border: '1px solid rgba(220, 38, 38, 0.28)',
+              fontSize: '0.74rem',
+              fontWeight: 700,
+            }}
+          >
+            {mostrarSerie && serie ? `${serie}-${corr}` : corr}
+          </span>
+        )
+      )}
       {!expandido && ocultos > 0 && (
         <button
           type="button"
@@ -223,7 +248,7 @@ const PanelSaltosSecuenciaVentas = memo(function PanelSaltosSecuenciaVentas({
               <th>Salto Detectado (Ant. → Sig.)</th>
               <th className="text-center">¿Dónde se salta?</th>
               <th className="text-end">Cant. Faltante</th>
-              <th className="text-center">Doc. Posterior</th>
+              <th className="text-center">Detalle Faltante</th>
             </tr>
           </thead>
           <tbody>
@@ -234,61 +259,66 @@ const PanelSaltosSecuenciaVentas = memo(function PanelSaltosSecuenciaVentas({
                 </td>
               </tr>
             ) : (
-              saltosVisibles.map((s, idx) => (
-                <tr
-                  key={`${s.tipo_doc_pago}-${s.serie}-${String(s.start)}-${s.sistema}-${idx}`}
-                  style={{ cursor: s.doc ? 'pointer' : 'default' }}
-                  onClick={() => s.doc && onSelectDoc && onSelectDoc(s.doc)}
-                >
-                  <td>
-                    <span className="font-mono fw-bold">{s.serie}</span>
-                    <div className="text-muted" style={{ fontSize: '0.72rem' }}>
-                      {descripcionTipoCP(s.tipo_doc_pago)}
-                    </div>
-                  </td>
-                  <td style={{ minWidth: '210px', whiteSpace: 'normal' }}>
-                    <ListaCorrelativosFaltantes
-                      serie={s.serie}
-                      correlativos={s.correlativos_faltantes}
-                      total={s.faltantes}
-                      rangoTexto={s.rango_faltante}
-                      truncado={s.faltantes_truncado}
-                      limiteInicial={10}
-                    />
-                  </td>
-                  <td className="font-mono">
-                    <span>{s.anterior}</span>
-                    <span className="text-muted mx-1">→</span>
-                    <span className="fw-semibold text-warning">{s.siguiente}</span>
-                    <div className="text-muted" style={{ fontSize: '0.71rem' }}>
-                      {s.fecha_anterior || 's/f'} → {s.fecha_siguiente || 's/f'}
-                    </div>
-                  </td>
-                  <td className="text-center">
-                    <BadgeSistemaSalto sistema={s.sistema} />
-                  </td>
-                  <td className="text-end font-mono fw-bold text-danger">
-                    {s.faltantes.toLocaleString('es-PE')}
-                  </td>
-                  <td className="text-center">
-                    {s.doc ? (
+              saltosVisibles.map((s, idx) => {
+                const abrirFaltante = (corr) => {
+                  if (onSelectDoc) {
+                    onSelectDoc(crearDocFaltanteDetalle(s, corr || s.primer_faltante));
+                  }
+                };
+                return (
+                  <tr
+                    key={`${s.tipo_doc_pago}-${s.serie}-${String(s.start)}-${s.sistema}-${idx}`}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => abrirFaltante(s.primer_faltante)}
+                  >
+                    <td>
+                      <span className="font-mono fw-bold">{s.serie}</span>
+                      <div className="text-muted" style={{ fontSize: '0.72rem' }}>
+                        {descripcionTipoCP(s.tipo_doc_pago)}
+                      </div>
+                    </td>
+                    <td style={{ minWidth: '210px', whiteSpace: 'normal' }}>
+                      <ListaCorrelativosFaltantes
+                        serie={s.serie}
+                        correlativos={s.correlativos_faltantes}
+                        total={s.faltantes}
+                        rangoTexto={s.rango_faltante}
+                        truncado={s.faltantes_truncado}
+                        limiteInicial={10}
+                        onSelectCorrelativo={(corr) => abrirFaltante(corr)}
+                      />
+                    </td>
+                    <td className="font-mono">
+                      <span>{s.anterior}</span>
+                      <span className="text-muted mx-1">→</span>
+                      <span className="fw-semibold text-warning">{s.siguiente}</span>
+                      <div className="text-muted" style={{ fontSize: '0.71rem' }}>
+                        {s.fecha_anterior || 's/f'} → {s.fecha_siguiente || 's/f'}
+                      </div>
+                    </td>
+                    <td className="text-center">
+                      <BadgeSistemaSalto sistema={s.sistema} />
+                    </td>
+                    <td className="text-end font-mono fw-bold text-danger">
+                      {s.faltantes.toLocaleString('es-PE')}
+                    </td>
+                    <td className="text-center">
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-secondary py-0 px-2 font-mono d-inline-flex align-items-center gap-1"
+                        className="btn btn-sm btn-outline-danger py-0 px-2 font-mono d-inline-flex align-items-center gap-1"
                         style={{ fontSize: '0.74rem' }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (onSelectDoc) onSelectDoc(s.doc);
+                          abrirFaltante(s.primer_faltante);
                         }}
+                        title="Abrir detalle del correlativo faltante"
                       >
-                        <FiEye /> {s.doc.serie}-{s.doc.correlativo}
+                        <FiEye /> {s.serie}-{s.primer_faltante || '?'}
                       </button>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                </tr>
-              ))
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

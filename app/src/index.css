@@ -1192,6 +1192,16 @@ h6, .h6 { font-size: 0.9rem !important; }
   background-color: #FFFFFF !important;
 }
 
+/* Par 2.5: VALOR DE ADQUISICIÓN SAP / SUNAT (Banda Pizarra Clara - Compras) */
+.table-dense th.col-group-adq {
+  background-color: #F8FAFC !important;
+  color: #1E293B !important;
+  border-top: 2px solid #0284C7 !important;
+}
+.table-dense td.col-group-adq {
+  background-color: rgba(240, 249, 255, 0.45) !important;
+}
+
 /* Par 3: OTROS SAP / OTROS SUNAT (Banda Pizarra Suave) */
 .table-dense th.col-group-otros {
   background-color: #F1F5F9 !important;
@@ -1215,6 +1225,7 @@ h6, .h6 { font-size: 0.9rem !important; }
 /* Hover de fila uniforme */
 .table-dense tbody tr:hover td.col-group-bi,
 .table-dense tbody tr:hover td.col-group-igv,
+.table-dense tbody tr:hover td.col-group-adq,
 .table-dense tbody tr:hover td.col-group-otros,
 .table-dense tbody tr:hover td.col-group-total {
   background-color: #E2E8F0 !important;

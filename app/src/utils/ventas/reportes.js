@@ -82,9 +82,16 @@ export function filtrarDocumentos(docs, f = FILTROS_INICIALES, indiceLocales = n
 
 /**
  * Calcula los 10 indicadores generales requeridos en la sección 3.B + totales
- * monetarios y conteo por grupo de incidencia, sobre documentos únicos.
+ * monetarios (total lote, solo coincidentes, solo SAP y solo SUNAT) y conteo
+ * por grupo de incidencia, sobre documentos únicos.
  */
 export function calcularIndicadores(docs) {
+  const sumasVacias = () => ({
+    base_sap: 0, igv_sap: 0, exonerado_sap: 0, inafecto_sap: 0, otros_sap: 0, total_sap: 0,
+    base_sunat: 0, igv_sunat: 0, exonerado_sunat: 0, inafecto_sunat: 0, otros_sunat: 0, total_sunat: 0,
+  });
+  const sumasSistemaVacias = () => ({ base: 0, igv: 0, exonerado: 0, inafecto: 0, otros: 0, total: 0 });
+
   const ind = {
     totalUnicos: docs.length,
     totalSap: 0,
@@ -99,10 +106,14 @@ export function calcularIndicadores(docs) {
     conProbIdentidad: 0,
     cortesias: 0,
     anulados: 0,
-    sumas: {
-      base_sap: 0, igv_sap: 0, exonerado_sap: 0, inafecto_sap: 0, otros_sap: 0, total_sap: 0,
-      base_sunat: 0, igv_sunat: 0, exonerado_sunat: 0, inafecto_sunat: 0, otros_sunat: 0, total_sunat: 0,
-    },
+    totalHallazgosError: 0,
+    totalHallazgosObs: 0,
+    docsConMultiplesErrores: 0,
+    docsConMultiplesObs: 0,
+    sumas: sumasVacias(),
+    sumasCoincidentes: sumasVacias(),
+    sumasSoloSap: sumasSistemaVacias(),
+    sumasSoloSunat: sumasSistemaVacias(),
     porCodigo: Object.fromEntries(INCIDENCIAS.map((i) => [i.codigo, 0])),
   };
 
@@ -125,9 +136,37 @@ export function calcularIndicadores(docs) {
       ind.sumas.otros_sunat += d.sunat.otros || 0;
       ind.sumas.total_sunat += d.sunat.total || 0;
     }
-    if (d.en_sap && d.en_sunat) ind.coincidentes += 1;
-    else if (d.en_sap) ind.soloSap += 1;
-    else if (d.en_sunat) ind.soloSunat += 1;
+    if (d.en_sap && d.en_sunat) {
+      ind.coincidentes += 1;
+      ind.sumasCoincidentes.base_sap += d.sap.base || 0;
+      ind.sumasCoincidentes.igv_sap += d.sap.igv || 0;
+      ind.sumasCoincidentes.exonerado_sap += d.sap.exonerado || 0;
+      ind.sumasCoincidentes.inafecto_sap += d.sap.inafecto || 0;
+      ind.sumasCoincidentes.otros_sap += d.sap.otros || 0;
+      ind.sumasCoincidentes.total_sap += d.sap.total || 0;
+      ind.sumasCoincidentes.base_sunat += d.sunat.base || 0;
+      ind.sumasCoincidentes.igv_sunat += d.sunat.igv || 0;
+      ind.sumasCoincidentes.exonerado_sunat += d.sunat.exonerado || 0;
+      ind.sumasCoincidentes.inafecto_sunat += d.sunat.inafecto || 0;
+      ind.sumasCoincidentes.otros_sunat += d.sunat.otros || 0;
+      ind.sumasCoincidentes.total_sunat += d.sunat.total || 0;
+    } else if (d.en_sap) {
+      ind.soloSap += 1;
+      ind.sumasSoloSap.base += d.sap.base || 0;
+      ind.sumasSoloSap.igv += d.sap.igv || 0;
+      ind.sumasSoloSap.exonerado += d.sap.exonerado || 0;
+      ind.sumasSoloSap.inafecto += d.sap.inafecto || 0;
+      ind.sumasSoloSap.otros += d.sap.otros || 0;
+      ind.sumasSoloSap.total += d.sap.total || 0;
+    } else if (d.en_sunat) {
+      ind.soloSunat += 1;
+      ind.sumasSoloSunat.base += d.sunat.base || 0;
+      ind.sumasSoloSunat.igv += d.sunat.igv || 0;
+      ind.sumasSoloSunat.exonerado += d.sunat.exonerado || 0;
+      ind.sumasSoloSunat.inafecto += d.sunat.inafecto || 0;
+      ind.sumasSoloSunat.otros += d.sunat.otros || 0;
+      ind.sumasSoloSunat.total += d.sunat.total || 0;
+    }
 
     if (d.estado === 'OK') ind.correctos += 1;
     else if (d.estado === 'OBSERVADO') ind.conObservaciones += 1;
@@ -138,9 +177,17 @@ export function calcularIndicadores(docs) {
     if (d.cortesia) ind.cortesias += 1;
     if (d.anulado) ind.anulados += 1;
 
+    let errsEnDoc = 0;
+    let obsEnDoc = 0;
     for (const c of d.codigos) {
       if (ind.porCodigo[c] !== undefined) ind.porCodigo[c] += 1;
+      if (c.startsWith('ERROR ')) errsEnDoc += 1;
+      else if (c.startsWith('OBS ')) obsEnDoc += 1;
     }
+    ind.totalHallazgosError += errsEnDoc;
+    ind.totalHallazgosObs += obsEnDoc;
+    if (errsEnDoc > 1) ind.docsConMultiplesErrores += 1;
+    if (obsEnDoc > 1) ind.docsConMultiplesObs += 1;
   }
   return ind;
 }
@@ -148,6 +195,70 @@ export function calcularIndicadores(docs) {
 /** Reconstruye el resumen por serie y los saltos de secuencia (SAP, SUNAT o AMBOS) con correlativos faltantes. */
 export function calcularSecuencias(docs) {
   return analizarSecuencias(docs);
+}
+
+/**
+ * Construye un documento sintético para visualizar el detalle de un correlativo
+ * faltante (OBS 3) con campos de comparación en blanco / N/A, evitando abrir el
+ * documento posterior del salto.
+ */
+export function crearDocFaltanteDetalle(salto, correlativoEspecifico) {
+  const corr = correlativoEspecifico || salto.primer_faltante || salto.correlativos_faltantes?.[0] || '?';
+  const sistemaEtiqueta = salto.sistema_etiqueta || ETIQUETA_SISTEMA_SALTO[salto.sistema] || salto.sistema || 'SAP / SUNAT';
+  const folioFaltante = `${salto.serie}-${corr}`;
+  const detalle =
+    `El comprobante ${folioFaltante} no figura en la secuencia de ${sistemaEtiqueta}. ` +
+    `Salto detectado entre ${salto.serie}-${salto.anterior} (${salto.fecha_anterior || 's/f'}) ` +
+    `y ${salto.serie}-${salto.siguiente} (${salto.fecha_siguiente || 's/f'}).`;
+
+  return {
+    esFaltanteSecuencia: true,
+    key: `MISSING|${salto.tipo_doc_pago}|${salto.serie}|${corr}`,
+    tipo_doc_pago: salto.tipo_doc_pago,
+    serie: salto.serie,
+    correlativo: corr,
+    fecha_emision: null,
+    en_sap: false,
+    en_sunat: false,
+    sap: null,
+    sunat: null,
+    estado: 'OBSERVADO',
+    anulado: false,
+    cortesia: null,
+    identidad: null,
+    codigos: ['OBS 3'],
+    saltoMeta: {
+      sistema: salto.sistema,
+      sistema_etiqueta: sistemaEtiqueta,
+      anterior: salto.anterior,
+      fecha_anterior: salto.fecha_anterior,
+      siguiente: salto.siguiente,
+      fecha_siguiente: salto.fecha_siguiente,
+      prevDoc: salto.prevDoc || null,
+      nextDoc: salto.doc || null,
+      faltantes: salto.faltantes,
+      correlativos_faltantes: salto.correlativos_faltantes || [corr],
+      rango_faltante: salto.rango_faltante || corr,
+    },
+    incidencias: [
+      {
+        codigo: 'OBS 3',
+        tipo: 'OBS',
+        descripcion: 'CORRELATIVO FALTANTE EN SECUENCIA',
+        regla: 'R-SEC-01',
+        detalle,
+        datos: {
+          serie: salto.serie,
+          sistema: salto.sistema,
+          anterior: salto.anterior,
+          siguiente: salto.siguiente,
+          faltantes: 1,
+          correlativos_faltantes: [corr],
+          rango_faltante: corr,
+        },
+      },
+    ],
+  };
 }
 
 /** Obtiene (o recalcula para cargas v1) la evaluación de identidad de un documento. */
@@ -394,7 +505,7 @@ export async function exportarExcelVentas({ tipo, docs, todosDocs, periodo = 'pe
     const bol = docs.map((d) => evaluarDocParaReporteIdentidad(d, '6')).filter(Boolean).map(filaExcelIdentidad);
     const fac = docs.map((d) => evaluarDocParaReporteIdentidad(d, 'FACTURA')).filter(Boolean).map(filaExcelIdentidad);
     agregarHoja('RUC en Boletas (10)', bol);
-    agregarHoja('Facturas (RUC 10-20)', fac);
+    agregarHoja('Facturas (RUC 10-15-20)', fac);
   }
   if (tipo === 'ce') {
     agregarHoja('Carnet Extranjeria', docs.map((d) => evaluarDocParaReporteIdentidad(d, '4')).filter(Boolean).map(filaExcelIdentidad));

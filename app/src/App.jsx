@@ -79,6 +79,11 @@ export default function App() {
   // Filtro inicial para la tabla de conciliación
   const [reconciliationFilter, setReconciliationFilter] = useState(null);
 
+  // Filtro de local compartido entre Dashboard y Conciliación (persiste al navegar entre vistas)
+  const [selectedLocalId, setSelectedLocalId] = useState(() => {
+    return sessionStorage.getItem('activeLocalId') || 'ALL';
+  });
+
   // 1. Inicializar defensas de seguridad (HTTPS, CSRF token, expiración de enlaces de recuperación)
   useEffect(() => {
     enforceHttps();
@@ -125,6 +130,14 @@ export default function App() {
       sessionStorage.removeItem('activePeriodLabel');
     }
   }, [activePeriod]);
+
+  useEffect(() => {
+    if (selectedLocalId && selectedLocalId !== 'ALL') {
+      sessionStorage.setItem('activeLocalId', selectedLocalId);
+    } else {
+      sessionStorage.removeItem('activeLocalId');
+    }
+  }, [selectedLocalId]);
 
   // Limpiar almacenamiento si cambia el usuario de la sesión para evitar fugas de estado
   useEffect(() => {
@@ -204,8 +217,10 @@ export default function App() {
     sessionStorage.removeItem('activeCompany');
     sessionStorage.removeItem('activePeriodId');
     sessionStorage.removeItem('activePeriodLabel');
+    sessionStorage.removeItem('activeLocalId');
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('ct_csrf_token');
+    setSelectedLocalId('ALL');
     queryClient.clear();
     await clearPersistedQueryCache();
     await supabase.auth.signOut();
@@ -348,6 +363,7 @@ export default function App() {
         setActiveCompany(selected);
         setPeriodId(null);
         setActivePeriod('');
+        setSelectedLocalId('ALL');
       }
     },
     [companies]
@@ -531,7 +547,7 @@ export default function App() {
         <Suspense
           fallback={
             activeTab === 'dashboard' ? (
-              <SkeletonDashboard kpiCount={activeModule === 'compras' ? 4 : 10} />
+              <SkeletonDashboard kpiCount={activeModule === 'compras' ? 7 : 10} />
             ) : (
               <div className="card-premium p-4">
                 <SkeletonTable rows={10} columns={8} />
@@ -546,6 +562,8 @@ export default function App() {
               activePeriod={activePeriod}
               onNavigateToReconciliation={navigateToReconciliation}
               activeModule={activeModule}
+              selectedLocalId={selectedLocalId}
+              onChangeLocalId={setSelectedLocalId}
             />
           )}
 
@@ -569,6 +587,8 @@ export default function App() {
               activeCompany={activeCompany}
               userProfile={userProfile}
               onProcessComplete={handleProcessComplete}
+              selectedLocalId={selectedLocalId}
+              onChangeLocalId={setSelectedLocalId}
             />
           )}
 

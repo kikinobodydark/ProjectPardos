@@ -7,7 +7,7 @@ import React, { useState, useMemo, memo } from 'react';
 import { FiDownload, FiEye, FiCheckCircle, FiAlertTriangle, FiXCircle } from 'react-icons/fi';
 import {
   REPORTES_ESPECIFICOS, calcularIndicadores, calcularSecuencias,
-  evaluarDocParaReporteIdentidad, exportarExcelVentas,
+  evaluarDocParaReporteIdentidad, exportarExcelVentas, crearDocFaltanteDetalle,
 } from '../../utils/ventas/reportes';
 import { INCIDENCIAS, ESTADOS, descripcionTipoCP, descripcionTipoIdentidad } from '../../utils/ventas/catalogos';
 import { formatoMonto, dentroDeTolerancia } from '../../utils/ventas/montos';
@@ -200,7 +200,7 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
             >
               <option value="ALL">Boletas Cód. 6 + Facturas</option>
               <option value="BOLETA">Solo Boletas con RUC (5.3 · inicia con 10) [{contenido.conteoBoletas}]</option>
-              <option value="FACTURA">Solo Facturas (5.5 · RUC 10 o 20) [{contenido.conteoFacturas}]</option>
+              <option value="FACTURA">Solo Facturas (5.5 · RUC 10, 15 o 20) [{contenido.conteoFacturas}]</option>
             </select>
           )}
           {reporteId === 'importes' && (
@@ -261,7 +261,10 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
         <div className="row g-3">
           <div className="col-lg-7">
             <div className="p-3 rounded-3" style={{ backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)' }}>
-              <h6 className="fw-bold mb-2">Comparativa Monetaria Total por Concepto (SAP vs. SUNAT)</h6>
+              <h6 className="fw-bold mb-1">Comparativa Monetaria — Documentos Coincidentes ({ind.coincidentes.toLocaleString('es-PE')} docs)</h6>
+              <small className="text-muted d-block mb-2" style={{ fontSize: '0.74rem' }}>
+                Compara solo comprobantes presentes en SAP y SUNAT (base exacta de ERROR 1 al 5 y 7).
+              </small>
               <table className="table table-sm table-dense mb-0">
                 <thead>
                   <tr>
@@ -274,12 +277,12 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
                 </thead>
                 <tbody>
                   {[
-                    ['Base Imponible Gravada', ind.sumas.base_sap, ind.sumas.base_sunat, 'ERROR 1'],
-                    ['IGV / IPM', ind.sumas.igv_sap, ind.sumas.igv_sunat, 'ERROR 2'],
-                    ['Monto Exonerado', ind.sumas.exonerado_sap, ind.sumas.exonerado_sunat, 'ERROR 3'],
-                    ['Monto Inafecto', ind.sumas.inafecto_sap, ind.sumas.inafecto_sunat, 'ERROR 4'],
-                    ['Otros Tributos / Servicios', ind.sumas.otros_sap, ind.sumas.otros_sunat, 'ERROR 7'],
-                    ['Importe Total', ind.sumas.total_sap, ind.sumas.total_sunat, 'ERROR 5'],
+                    ['Base Imponible Gravada', ind.sumasCoincidentes.base_sap, ind.sumasCoincidentes.base_sunat, 'ERROR 1'],
+                    ['IGV / IPM', ind.sumasCoincidentes.igv_sap, ind.sumasCoincidentes.igv_sunat, 'ERROR 2'],
+                    ['Monto Exonerado', ind.sumasCoincidentes.exonerado_sap, ind.sumasCoincidentes.exonerado_sunat, 'ERROR 3'],
+                    ['Monto Inafecto', ind.sumasCoincidentes.inafecto_sap, ind.sumasCoincidentes.inafecto_sunat, 'ERROR 4'],
+                    ['Otros Tributos / Servicios', ind.sumasCoincidentes.otros_sap, ind.sumasCoincidentes.otros_sunat, 'ERROR 7'],
+                    ['Importe Total', ind.sumasCoincidentes.total_sap, ind.sumasCoincidentes.total_sunat, 'ERROR 5'],
                   ].map(([nombre, s, u, cod]) => {
                     const dif = s - u;
                     const nErr = ind.porCodigo[cod] || 0;
@@ -576,7 +579,11 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
                   </thead>
                   <tbody>
                     {listaPaginada.map((s, i) => (
-                      <tr key={`${s.serie}-${String(s.start)}-${s.sistema}-${i}`} style={{ cursor: 'pointer' }} onClick={() => onSelectDoc(s.doc)}>
+                      <tr
+                        key={`${s.serie}-${String(s.start)}-${s.sistema}-${i}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => onSelectDoc(crearDocFaltanteDetalle(s, s.primer_faltante))}
+                      >
                         <td className="font-mono fw-bold">{s.serie}</td>
                         <td style={{ minWidth: '175px', whiteSpace: 'normal' }}>
                           <ListaCorrelativosFaltantes
@@ -586,6 +593,7 @@ const ReportesEspecificosVentas = memo(function ReportesEspecificosVentas({
                             rangoTexto={s.rango_faltante}
                             truncado={s.faltantes_truncado}
                             limiteInicial={6}
+                            onSelectCorrelativo={(corr) => onSelectDoc(crearDocFaltanteDetalle(s, corr))}
                           />
                         </td>
                         <td className="font-mono">

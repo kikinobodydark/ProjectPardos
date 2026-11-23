@@ -7,7 +7,13 @@ import {
   checkRateLimit,
   validateUploadedFile,
 } from '../utils/security';
-import { runCpuTaskInWorker, serializeDocsInWorkerPool, executeParallelBatches } from '../utils/jobQueue';
+import {
+  runCpuTaskInWorker,
+  serializeDocsInWorkerPool,
+  serializeComprasDocsInWorkerPool,
+  executeParallelBatches,
+} from '../utils/jobQueue';
+import { idbSetQuery } from '../utils/queryPersister';
 import { useNetworkProfile } from '../utils/networkProfile';
 import {
   FiUpload, FiCheck, FiPlay, FiAlertTriangle, FiXCircle,
@@ -32,10 +38,9 @@ const CargaArchivos = memo(function CargaArchivos({
 
   const [sapFile, setSapFile] = useState(null);
   const [sunatFile, setSunatFile] = useState(null);
-  const [sireFile, setSireFile] = useState(null);
   const [cortesiasFile, setCortesiasFile] = useState(null);
 
-  // Resultados de validación de lectura previa (Ventas - procesados en Pool de Web Workers)
+  // Resultados de validación de lectura previa (Ventas y Compras - procesados en Pool de Web Workers)
   const [lecturaSap, setLecturaSap] = useState(null);
   const [lecturaSunat, setLecturaSunat] = useState(null);
   const [lecturaCortesias, setLecturaCortesias] = useState(null);
@@ -84,24 +89,19 @@ const CargaArchivos = memo(function CargaArchivos({
       return;
     }
 
-    if (!esVentas) {
-      if (type === 'sap') setSapFile(file);
-      if (type === 'sunat') setSunatFile(file);
-      if (type === 'sire') setSireFile(file);
-      return;
-    }
-
     try {
       if (type === 'sap') {
         setSapFile(file);
         const buffer = await readFileAsArrayBuffer(file);
-        const res = await runCpuTaskInWorker('PARSE_SAP_VENTAS', { buffer }, [buffer]);
+        const action = esVentas ? 'PARSE_SAP_VENTAS' : 'PARSE_SAP_COMPRAS';
+        const res = await runCpuTaskInWorker(action, { buffer }, [buffer]);
         setLecturaSap(res);
         if (res.periodoDetectado && !periodo) setPeriodo(res.periodoDetectado);
       } else if (type === 'sunat') {
         setSunatFile(file);
         const buffer = await readFileAsArrayBuffer(file);
-        const res = await runCpuTaskInWorker('PARSE_SUNAT_VENTAS', { buffer }, [buffer]);
+        const action = esVentas ? 'PARSE_SUNAT_VENTAS' : 'PARSE_SUNAT_COMPRAS';
+        const res = await runCpuTaskInWorker(action, { buffer }, [buffer]);
         if (activeCompany?.ruc && res.rucDetectado && res.rucDetectado !== activeCompany.ruc) {
           res.advertencias.push(
             `El RUC del archivo (${res.rucDetectado}) difiere de la empresa activa (${activeCompany.ruc}).`
@@ -110,7 +110,7 @@ const CargaArchivos = memo(function CargaArchivos({
         }
         setLecturaSunat(res);
         if (res.periodoDetectado && !periodo) setPeriodo(res.periodoDetectado);
-      } else if (type === 'cortesias') {
+      } else if (type === 'cortesias' && esVentas) {
         setCortesiasFile(file);
         const filas = await readExcelFile(file);
         const res = await runCpuTaskInWorker('PARSE_CORTESIAS', { filas });
@@ -144,13 +144,12 @@ const CargaArchivos = memo(function CargaArchivos({
     if (type === 'sap') { setSapFile(null); setLecturaSap(null); }
     if (type === 'sunat') { setSunatFile(null); setLecturaSunat(null); }
     if (type === 'cortesias') { setCortesiasFile(null); setLecturaCortesias(null); }
-    if (type === 'sire') setSireFile(null);
   };
 
   const sapValido = !!sapFile && lecturaSap && lecturaSap.estado !== 'error' && lecturaSap.registrosValidos > 0;
   const sunatValido = !!sunatFile && lecturaSunat && lecturaSunat.estado !== 'error' && lecturaSunat.registrosValidos > 0;
-  const cortesiasInvalido = !!cortesiasFile && lecturaCortesias && lecturaCortesias.estado === 'error';
-  const botonVentasHabilitado = sapValido && sunatValido && !cortesiasInvalido && !loading;
+  const cortesiasInvalido = esVentas && !!cortesiasFile && lecturaCortesias && lecturaCortesias.estado === 'error';
+  const botonHabilitado = sapValido && sunatValido && !cortesiasInvalido && !loading;
 
   const handleProcess = async (e) => {
     e.preventDefault();
@@ -168,17 +167,12 @@ const CargaArchivos = memo(function CargaArchivos({
       return;
     }
 
-    if (esVentas) {
-      if (!sapValido || !sunatValido) {
-        setErrorMsg('Debe cargar correctamente los dos archivos obligatorios (Archivo SAP y Archivo SUNAT).');
-        return;
-      }
-      if (cortesiasInvalido) {
-        setErrorMsg('El archivo opcional de cortesías presenta errores de estructura. Reemplácelo o quítelo antes de procesar.');
-        return;
-      }
-    } else if (!sapFile || !sunatFile || !sireFile) {
-      setErrorMsg('Debes seleccionar los 3 archivos obligatorios (SAP, SUNAT y SIRE).');
+    if (!sapValido || !sunatValido) {
+      setErrorMsg('Debe cargar correctamente los dos archivos TXT obligatorios (Archivo SAP y Archivo SUNAT).');
+      return;
+    }
+    if (esVentas && cortesiasInvalido) {
+      setErrorMsg('El archivo opcional de cortesías presenta errores de estructura. Reemplácelo o quítelo antes de procesar.');
       return;
     }
 
@@ -308,37 +302,33 @@ const CargaArchivos = memo(function CargaArchivos({
 
         onProcessComplete(periodId, `${periodoFinal} (Día: ${String(diaNum).padStart(2, '0')}, v${versionNum})`);
       } else {
-        // Flujo de Compras:
+        // Flujo de Compras (únicamente TXT SAP y TXT SUNAT — sin LOG SIRE):
+        const diaPadded = String(diaNum).padStart(2, '0');
+        setStatusText('Conciliando comprobantes de Compras (SAP vs. SUNAT) y preparando período...');
+
         // Limpiar cualquier intento previo incompleto o versión idéntica para evitar error de clave duplicada
         await supabase
           .from('periodos_carga')
           .delete()
           .eq('empresa_id', activeCompany.id)
           .eq('periodo', periodoFinal)
-          .eq('dia', dia)
+          .eq('dia', diaPadded)
           .eq('version', versionNum)
           .eq('modulo', activeModule);
 
-        // 1. Leer los 3 archivos y parsear CADA UNO en un Web Worker distinto en paralelo + crear período simultáneamente
-        setStatusText('Leyendo y parseando los 3 archivos en Workers paralelos...');
-        const [sunatBuffer, sapBuffer, sireBuffer] = await Promise.all([
-          readFileAsArrayBuffer(sunatFile),
-          readFileAsArrayBuffer(sapFile),
-          readFileAsArrayBuffer(sireFile),
-        ]);
-        setProgressPct(15);
-
-        const [sunatData, sapData, sireData, periodRes] = await Promise.all([
-          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sunat', buffer: sunatBuffer }, [sunatBuffer]),
-          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sap', buffer: sapBuffer }, [sapBuffer]),
-          runCpuTaskInWorker('PARSE_SINGLE_COMPRAS', { tipo: 'sire', buffer: sireBuffer }, [sireBuffer]),
+        // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera del período en Supabase
+        const [conciliacionRes, periodRes] = await Promise.all([
+          runCpuTaskInWorker('CONCILIAR_COMPRAS_V2', {
+            sap: lecturaSap.registros,
+            sunat: lecturaSunat.registros,
+          }),
           supabase
             .from('periodos_carga')
             .insert({
               empresa_id: activeCompany.id,
               usuario_id: userProfile.id,
               periodo: periodoFinal,
-              dia: dia,
+              dia: diaPadded,
               version: versionNum,
               estado: 'procesando',
               modulo: activeModule,
@@ -349,32 +339,26 @@ const CargaArchivos = memo(function CargaArchivos({
 
         if (periodRes.error) throw periodRes.error;
         const periodId = periodRes.data.id;
+        const { docs } = conciliacionRes;
+        setProgressPct(25);
 
-        if (!sunatData.length || !sapData.length || !sireData.length) {
-          await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
-          throw new Error('Uno de los archivos (SAP, SUNAT o SIRE) está vacío o no coincide con el formato.');
-        }
-        setProgressPct(30);
+        // 2. Serializar filas en el Pool de Web Workers
+        setStatusText(`Preparando ${docs.length.toLocaleString('es-PE')} documentos de Compras en paralelo...`);
+        const serializedChunks = await serializeComprasDocsInWorkerPool(
+          docs,
+          { periodoId, empresaId: activeCompany.id },
+          chunkSize
+        );
+        setProgressPct(40);
 
-        setStatusText('Conciliando y preparando lotes en Web Worker...');
-        const { totalCount, mappedRows } = await runCpuTaskInWorker('CONCILIAR_COMPRAS_PARSED', {
-          sapData,
-          sunatData,
-          sireData,
-          rucEmpresa: activeCompany.ruc,
-          modulo: activeModule,
-          periodId,
-          empresaId: activeCompany.id,
-        });
-        setProgressPct(45);
-
+        // 3. Insertar todos los lotes en paralelo usando la RPC masiva `insertar_lote_compras`
         let insertedCount = 0;
-        setStatusText(`Guardando ${totalCount.toLocaleString('es-PE')} registros en lotes paralelos...`);
+        setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase...`);
         try {
           await executeParallelBatches(
-            mappedRows,
-            chunkSize,
-            async (chunk) => {
+            serializedChunks,
+            1,
+            async ([chunk]) => {
               const { error: rpcErr } = await supabase.rpc('insertar_lote_compras', {
                 p_periodo_id: periodId,
                 p_empresa_id: activeCompany.id,
@@ -385,9 +369,9 @@ const CargaArchivos = memo(function CargaArchivos({
                 if (insertErr) throw insertErr;
               }
               insertedCount += chunk.length;
-              const pct = Math.min(95, 45 + Math.round((insertedCount / Math.max(1, totalCount)) * 50));
+              const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
               setProgressPct(pct);
-              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${totalCount.toLocaleString('es-PE')})...`);
+              setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
             },
             {
               concurrency,
@@ -401,11 +385,17 @@ const CargaArchivos = memo(function CargaArchivos({
 
         await supabase.from('periodos_carga').update({ estado: 'completado' }).eq('id', periodId);
         setProgressPct(100);
-        setSuccessMsg(`¡Proceso exitoso! Se cargaron y conciliaron ${totalCount} registros del período ${periodoFinal}.`);
+        queryClient.setQueryData(['comprasDocumentos', periodId], docs);
+        idbSetQuery(JSON.stringify(['comprasDocumentos', periodId]), ['comprasDocumentos', periodId], docs);
+
+        setSuccessMsg(
+          `¡Conciliación de Compras completada! Se validaron ${docs.length.toLocaleString('es-PE')} documentos únicos del período ${periodoFinal}.`
+        );
         setSapFile(null);
         setSunatFile(null);
-        setSireFile(null);
-        onProcessComplete(periodId, `${periodoFinal} (Día: ${dia}, v${versionNum})`);
+        setLecturaSap(null);
+        setLecturaSunat(null);
+        onProcessComplete(periodId, `${periodoFinal} (Día: ${diaPadded}, v${versionNum})`);
       }
     } catch (err) {
       console.error(err);
@@ -417,7 +407,7 @@ const CargaArchivos = memo(function CargaArchivos({
     }
   };
 
-  const renderTarjetaArchivoVentas = ({ tipo, inputId, accept, titulo, subtitulo, obligatorio, file, lectura }) => {
+  const renderTarjetaArchivo = ({ tipo, inputId, accept, titulo, subtitulo, obligatorio, file, lectura, colClass = 'col-lg-4 col-md-6' }) => {
     const abierto = detalleAbierto[tipo];
     const tieneHallazgos =
       lectura &&
@@ -445,7 +435,7 @@ const CargaArchivos = memo(function CargaArchivos({
           : 'rgba(5, 150, 105, 0.06)';
 
     return (
-      <div className="col-lg-4 col-md-6">
+      <div className={colClass}>
         <div
           className={`dropzone-premium h-100 d-flex flex-column justify-content-between text-start p-3 ${file ? 'active' : ''}`}
           style={{ borderColor: colorBorde, backgroundColor: bgEstado, cursor: 'pointer' }}
@@ -613,12 +603,14 @@ const CargaArchivos = memo(function CargaArchivos({
   return (
     <div className="card-premium animate-fade-in w-100 p-4">
       <h4 className="mb-1 fw-bold" style={{ color: 'var(--color-text)', letterSpacing: '-0.02em' }}>
-        {esVentas ? 'Panel de Carga y Validación de Comprobantes (SAP vs. SUNAT)' : 'Nueva Carga de Reportes Mensuales'}
+        {esVentas
+          ? 'Panel de Carga y Validación de Comprobantes (SAP vs. SUNAT)'
+          : 'Carga y Conciliación de Compras (SAP vs. SUNAT)'}
       </h4>
       <p className="text-muted mb-4" style={{ fontSize: '0.86rem' }}>
         {esVentas
           ? 'Cargue los archivos TXT exportados de SAP y SUNAT del período a conciliar y, opcionalmente, el archivo Excel de cortesías.'
-          : 'Sube los tres reportes TXT de SAP, SUNAT y el log del SIRE correspondientes al mismo período contable.'}
+          : 'Cargue únicamente los archivos TXT exportados de SAP y SUNAT correspondientes al mismo período contable. La conciliación se realiza por RUC + Tipo de documento + Serie + Correlativo.'}
       </p>
 
       {errorMsg && (
@@ -801,7 +793,7 @@ const CargaArchivos = memo(function CargaArchivos({
 
         {esVentas ? (
           <div className="row g-3 mb-4">
-            {renderTarjetaArchivoVentas({
+            {renderTarjetaArchivo({
               tipo: 'sap',
               inputId: 'input-sap',
               accept: '.txt',
@@ -810,8 +802,9 @@ const CargaArchivos = memo(function CargaArchivos({
               obligatorio: true,
               file: sapFile,
               lectura: lecturaSap,
+              colClass: 'col-lg-4 col-md-6',
             })}
-            {renderTarjetaArchivoVentas({
+            {renderTarjetaArchivo({
               tipo: 'sunat',
               inputId: 'input-sunat',
               accept: '.txt',
@@ -820,8 +813,9 @@ const CargaArchivos = memo(function CargaArchivos({
               obligatorio: true,
               file: sunatFile,
               lectura: lecturaSunat,
+              colClass: 'col-lg-4 col-md-6',
             })}
-            {renderTarjetaArchivoVentas({
+            {renderTarjetaArchivo({
               tipo: 'cortesias',
               inputId: 'input-cortesias',
               accept: '.xlsx,.xls',
@@ -830,64 +824,33 @@ const CargaArchivos = memo(function CargaArchivos({
               obligatorio: false,
               file: cortesiasFile,
               lectura: lecturaCortesias,
+              colClass: 'col-lg-4 col-md-6',
             })}
           </div>
         ) : (
           <div className="row g-3 mb-4">
-            <div className="col-xl-4 col-md-6">
-              <div className={`dropzone-premium ${sapFile ? 'active' : ''}`} onClick={() => document.getElementById('input-sap').click()}>
-                <input id="input-sap" type="file" accept=".txt" className="d-none" onChange={(e) => handleFileChange(e, 'sap')} disabled={loading} />
-                {sapFile ? (
-                  <div>
-                    <FiCheck className="text-success fs-2 mb-2" />
-                    <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sapFile.name}</div>
-                    <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(sapFile.size / 1024).toFixed(1)} KB (SAP)</small>
-                  </div>
-                ) : (
-                  <div>
-                    <FiUpload className="text-muted fs-2 mb-2" />
-                    <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SAP (Compras)</div>
-                    <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="col-xl-4 col-md-6">
-              <div className={`dropzone-premium ${sunatFile ? 'active' : ''}`} onClick={() => document.getElementById('input-sunat').click()}>
-                <input id="input-sunat" type="file" accept=".txt" className="d-none" onChange={(e) => handleFileChange(e, 'sunat')} disabled={loading} />
-                {sunatFile ? (
-                  <div>
-                    <FiCheck className="text-success fs-2 mb-2" />
-                    <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sunatFile.name}</div>
-                    <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(sunatFile.size / 1024).toFixed(1)} KB (SUNAT)</small>
-                  </div>
-                ) : (
-                  <div>
-                    <FiUpload className="text-muted fs-2 mb-2" />
-                    <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>Reporte SUNAT (Compras)</div>
-                    <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="col-xl-4 col-md-6">
-              <div className={`dropzone-premium ${sireFile ? 'active' : ''}`} onClick={() => document.getElementById('input-sire').click()}>
-                <input id="input-sire" type="file" accept=".txt" className="d-none" onChange={(e) => handleFileChange(e, 'sire')} disabled={loading} />
-                {sireFile ? (
-                  <div>
-                    <FiCheck className="text-success fs-2 mb-2" />
-                    <div className="fw-semibold text-truncate" style={{ fontSize: '0.85rem' }}>{sireFile.name}</div>
-                    <small className="text-muted font-mono" style={{ fontSize: '0.72rem' }}>{(sireFile.size / 1024).toFixed(1)} KB (SIRE)</small>
-                  </div>
-                ) : (
-                  <div>
-                    <FiUpload className="text-muted fs-2 mb-2" />
-                    <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>LOG SIRE Compras</div>
-                    <small className="text-muted d-block mt-1" style={{ fontSize: '0.75rem' }}>Haga clic para seleccionar archivo TXT</small>
-                  </div>
-                )}
-              </div>
-            </div>
+            {renderTarjetaArchivo({
+              tipo: 'sap',
+              inputId: 'input-sap',
+              accept: '.txt',
+              titulo: '1. Archivo TXT de SAP (Compras)',
+              subtitulo: 'Reporte TXT exportado de SAP (PLE 8.1)',
+              obligatorio: true,
+              file: sapFile,
+              lectura: lecturaSap,
+              colClass: 'col-lg-6 col-md-6',
+            })}
+            {renderTarjetaArchivo({
+              tipo: 'sunat',
+              inputId: 'input-sunat',
+              accept: '.txt',
+              titulo: '2. Archivo TXT de SUNAT (Compras)',
+              subtitulo: 'Reporte TXT exportado de SUNAT (SIRE RCE)',
+              obligatorio: true,
+              file: sunatFile,
+              lectura: lecturaSunat,
+              colClass: 'col-lg-6 col-md-6',
+            })}
           </div>
         )}
 
@@ -910,22 +873,18 @@ const CargaArchivos = memo(function CargaArchivos({
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
           <span className="text-muted" style={{ fontSize: '0.85rem' }}>
             {!loading && (
-              esVentas ? (
-                <span className="d-flex align-items-center gap-1">
-                  <FiFileText /> Los archivos originales no se modifican. El botón se habilita al cargar los dos TXT obligatorios.
-                </span>
-              ) : (
-                'Los archivos son procesados en el navegador de manera segura.'
-              )
+              <span className="d-flex align-items-center gap-1">
+                <FiFileText /> Los archivos originales no se modifican. El botón se habilita al cargar los dos TXT obligatorios (SAP y SUNAT).
+              </span>
             )}
           </span>
           <button
             type="submit"
-            disabled={esVentas ? !botonVentasHabilitado : loading}
+            disabled={!botonHabilitado}
             className="btn btn-primary d-flex align-items-center px-4 py-2 rounded-3 fw-bold"
-            style={{ cursor: (esVentas ? botonVentasHabilitado : !loading) ? 'pointer' : 'not-allowed' }}
+            style={{ cursor: botonHabilitado ? 'pointer' : 'not-allowed' }}
           >
-            <FiPlay className="me-2" /> {esVentas ? 'PROCESAR VALIDACIÓN' : 'Procesar y Conciliar'}
+            <FiPlay className="me-2" /> {esVentas ? 'PROCESAR VALIDACIÓN' : 'PROCESAR Y CONCILIAR COMPRAS'}
           </button>
         </div>
       </form>

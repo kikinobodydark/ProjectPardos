@@ -80,11 +80,11 @@ export function evaluarIdentidad(reg, tipoCP) {
     if (esNombreCliente(nombre)) m.push(`nombre genérico "${nombre}"`);
     ev.push({ regla: 'R-ID-04', nombre: 'Carnet de extranjería', ok: m.length === 0, motivo: m.length ? m.join('; ') : 'CE válido' });
   }
-  // 5.5 Facturas: tipo 6 e inicia con 20 o 10
+  // 5.5 Facturas: tipo 6 e inicia con 20, 10 o 15 (extranjero)
   if (esFactura) {
     const m = [];
     if (tipo !== '6') m.push(`tipo de identidad ${tipo || 'vacío'} (se exige 6 - RUC)`);
-    if (!/^(20|10)/.test(nro)) m.push(`número ${nro || 'vacío'} no inicia con 20 ni 10`);
+    if (!/^(20|10|15)/.test(nro)) m.push(`número ${nro || 'vacío'} no inicia con 20, 10 ni 15`);
     ev.push({ regla: 'R-ID-05', nombre: 'Factura', ok: m.length === 0, motivo: m.length ? m.join('; ') : 'RUC válido para factura' });
   }
   // 5.6 Otros - código 0 en boletas
@@ -458,10 +458,13 @@ export function validarSecuencias(docs) {
   return series;
 }
 
+const CODIGOS_IDENTIDAD_RECALC = new Set(['ERROR 6', 'OBS 1', 'OBS 2', 'OBS 6']);
+
 /**
  * Enriquecimiento idempotente en memoria para períodos ya cargados en BD:
- * actualiza las incidencias OBS 3 con los correlativos faltantes exactos y
- * el sistema afectado (SAP, SUNAT o AMBOS) sin requerir recarga de archivos.
+ * 1) Re-evalúa las reglas de identidad vigentes (ej. RUC 15 en facturas)
+ * 2) Actualiza las incidencias OBS 3 con correlativos faltantes exactos y
+ *    sistema afectado (SAP, SUNAT o AMBOS) sin requerir recarga de archivos.
  */
 export function enriquecerSecuenciasEnDocs(docs) {
   if (!Array.isArray(docs) || docs.length === 0) return docs;
@@ -477,16 +480,28 @@ export function enriquecerSecuenciasEnDocs(docs) {
   return docs.map((d) => {
     const k = d.key || `${d.tipo_doc_pago}|${d.serie}|${correlativoCanonico(d.correlativo)}`;
     const nuevosSaltos = saltosPorClave.get(k) || [];
-    const tieneObs3Prev = Array.isArray(d.incidencias) && d.incidencias.some((i) => i.codigo === 'OBS 3');
-    if (nuevosSaltos.length === 0 && !tieneObs3Prev) return d;
-
-    const otrasIncidencias = (d.incidencias || []).filter((i) => i.codigo !== 'OBS 3');
     const nuevasObs3 = nuevosSaltos.map(construirIncidenciaObs3);
-    const incidencias = [...otrasIncidencias, ...nuevasObs3];
+
+    // Mantener incidencias de existencia, importes y notas informativas
+    const incidenciasBase = (d.incidencias || []).filter(
+      (i) => i.codigo !== 'OBS 3' && !CODIGOS_IDENTIDAD_RECALC.has(i.codigo)
+    );
+
+    let identidad = d.identidad;
+    let incidenciasId = [];
+    if (!d.anulado) {
+      const resId = validarIdentidad(d);
+      identidad = resId.identidad;
+      incidenciasId = resId.incidencias;
+    } else {
+      identidad = null;
+    }
+
+    const incidencias = [...incidenciasBase, ...incidenciasId, ...nuevasObs3];
     const codigos = [...new Set(incidencias.filter((i) => i.tipo !== TIPO.INFO).map((i) => i.codigo))];
     const estado = estadoGeneral(incidencias);
 
-    return { ...d, incidencias, codigos, estado };
+    return { ...d, identidad, incidencias, codigos, estado };
   });
 }
 

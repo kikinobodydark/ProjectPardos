@@ -66,7 +66,7 @@ export const REGLAS = {
   'R-ID-02': 'Tipo 1 (DNI): número no repetido/genérico y nombre distinto a "CLIENTE"',
   'R-ID-03': 'Boleta con tipo 6 (RUC): debe iniciar con 10',
   'R-ID-04': 'Boleta con tipo 4 (CE): número no repetido/genérico y nombre distinto a "CLIENTE"',
-  'R-ID-05': 'Factura: tipo 6 (RUC) iniciando con 20 o 10',
+  'R-ID-05': 'Factura: tipo 6 (RUC) iniciando con 20, 10 o 15',
   'R-ID-06': 'Boleta con tipo 0: sin nombre completo y número de dígitos iguales o 0',
   'R-ID-07': 'Tipo de identidad SAP = SUNAT',
   'R-ID-08': 'Número de identidad SAP = SUNAT',
