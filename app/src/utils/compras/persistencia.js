@@ -82,6 +82,11 @@ export function aFilaBDCompras(doc, { periodoId, empresaId }) {
       linea: doc.sap.linea ?? null,
       fecha_emision: doc.sap.fecha_emision ?? null,
     };
+    if (doc.sap.doc_interno) meta.sap.doc_interno = doc.sap.doc_interno;
+    if (doc.sap.usuario_sap) meta.sap.usuario_sap = doc.sap.usuario_sap;
+    if (doc.sap.transaccion_sap) meta.sap.transaccion_sap = doc.sap.transaccion_sap;
+    if (doc.sap.fecha_contabilizacion) meta.sap.fecha_contabilizacion = doc.sap.fecha_contabilizacion;
+    if (doc.sap.texto_cabecera) meta.sap.texto_cabecera = doc.sap.texto_cabecera;
     if (doc.sap.correlativo && doc.sap.correlativo !== fila.correlativo) meta.sap.correlativo = doc.sap.correlativo;
     if (doc.sap.serie && doc.sap.serie !== fila.serie) meta.sap.serie = doc.sap.serie;
     if (doc.sap.tipo_doc_pago && doc.sap.tipo_doc_pago !== fila.tipo_doc_pago) meta.sap.tipo_doc_pago = doc.sap.tipo_doc_pago;
@@ -176,6 +181,11 @@ export function desdeFilaBDCompras(fila) {
       otros: decimalACentimos(fila[`otros_${sis}`]),
       total: decimalACentimos(fila[`total_${sis}`]),
       car_sunat: sis === 'sunat' ? (m.car_sunat ?? fila.car_sunat) : null,
+      doc_interno: sis === 'sap' ? (m.doc_interno ?? null) : null,
+      usuario_sap: sis === 'sap' ? (m.usuario_sap ?? null) : null,
+      transaccion_sap: sis === 'sap' ? (m.transaccion_sap ?? null) : null,
+      fecha_contabilizacion: sis === 'sap' ? (m.fecha_contabilizacion ?? null) : null,
+      texto_cabecera: sis === 'sap' ? (m.texto_cabecera ?? null) : null,
       duplicado_en_origen: !!m.duplicado_en_origen,
       lineas_duplicadas: m.lineas_duplicadas || null,
     };
@@ -200,6 +210,8 @@ export function desdeFilaBDCompras(fila) {
     serie,
     correlativo,
     fecha_emision: fila.fecha_emision,
+    nro_doc_sap: sap?.doc_interno || '',
+    usuario_sap: sap?.usuario_sap || '',
     sap,
     sunat,
     en_sap: !!sap,

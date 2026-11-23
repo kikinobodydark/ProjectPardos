@@ -14,6 +14,7 @@ import {
 } from './reglas.js';
 import { compararCorrelativos, generarCorrelativosFaltantes } from './documento.js';
 import { coincideConLocal } from '../locales.js';
+import { sanitizeExcelRow } from '../excelSanitizer.js';
 
 export const FILTROS_INICIALES = {
   busqueda: '',
@@ -341,21 +342,9 @@ export const REPORTES_ESPECIFICOS = [
 
 // ============================================================================
 // 13. Exportación a Excel (respeta filtros aplicados y conserva datos originales)
-// Incluye sanitización contra CSV / Excel Formula Injection (=, +, -, @, Tab, CR)
+// Incluye sanitización contra CSV / Excel Formula Injection vía excelSanitizer.js
 // ============================================================================
-const escaparFormulaExcel = (val) => {
-  if (typeof val !== 'string') return val;
-  return /^[=+\-@\t\r]/.test(val) ? `'${val}` : val;
-};
-
-const sanitizarFilaExcel = (fila) => {
-  if (!fila || typeof fila !== 'object') return fila;
-  const out = {};
-  for (const [k, v] of Object.entries(fila)) {
-    out[k] = escaparFormulaExcel(v);
-  }
-  return out;
-};
+const sanitizarFilaExcel = sanitizeExcelRow;
 
 export function filaExcelPrincipal(d) {
   const totalSap = d.en_sap ? centimosADecimal(d.sap.total) : null;

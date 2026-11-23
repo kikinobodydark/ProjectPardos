@@ -98,10 +98,11 @@ export const LISTA_RESULTADOS_COMPRAS = [
  * Reglas específicas del Error 8 (equivalencias permitidas + excepción tipo 14):
  *  - 01 (1): Factura
  *  - 07 (7): Nota de crédito
- *  - 09 (9): Nota de débito
+ *  - 08 (8): Nota de débito (código oficial SUNAT Tabla 10)
+ *  - 09 (9): Nota de débito (equivalencia SAP)
  *  - 14    : Recibos que no migran a SUNAT (excepción -> OK)
  */
-export const TIPOS_DOC_PERMITIDOS = new Set(['01', '07', '09', '14']);
+export const TIPOS_DOC_PERMITIDOS = new Set(['01', '07', '08', '09', '14']);
 export const TIPO_DOC_EXCEPCION_RECIBO = '14';
 
 export const TIPOS_DOC_COMPRAS = {

@@ -236,12 +236,12 @@ console.log('=== 1. PRUEBAS UNITARIAS DE REGLAS DE LA HOJA FLUJO ===');
 console.log('✓ Pruebas unitarias de reglas superadas correctamente.\n');
 
 // ============================================================================
-// 2. PRUEBA FUNCIONAL CON ARCHIVOS DE REFERENCIA REALES
+// 2. PRUEBA FUNCIONAL CON ARCHIVOS DE REFERENCIA REALES (OPCIONAL POR ENV)
 // ============================================================================
-const scratchDir = '/home/diego/.gemini/antigravity/brain/b23485a4-fad9-4b68-819b-7f7107079ae2/scratch';
-const sapPath = path.join(scratchDir, 'LE2053799558120260600140100001111.txt');
-const sunatPath = path.join(scratchDir, 'LE205379955812026060014040001EXP2.txt');
-const cortesiasPath = path.resolve('../data - 2026-06-25T224652.394.xlsx');
+const samplesDir = process.env.VERIFY_SAMPLES_DIR || '';
+const sapPath = samplesDir ? path.join(samplesDir, 'LE2053799558120260600140100001111.txt') : '';
+const sunatPath = samplesDir ? path.join(samplesDir, 'LE205379955812026060014040001EXP2.txt') : '';
+const cortesiasPath = samplesDir ? path.join(samplesDir, 'cortesias.xlsx') : '';
 
 if (fs.existsSync(sapPath) && fs.existsSync(sunatPath)) {
   console.log('=== 2. EJECUCIÓN CON ARCHIVOS REALES DE REFERENCIA (PERÍODO 202606) ===');

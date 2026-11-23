@@ -8,7 +8,8 @@
 //  - Modal comparativo de detalle del documento (7.D)
 //  - Exportación a Excel respetando filtros o totalidad de resultados (Sec. 8)
 // ============================================================================
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   FiDownload,
   FiSearch,
@@ -17,6 +18,11 @@ import {
   FiChevronDown,
   FiAlertCircle,
   FiRefreshCw,
+  FiCopy,
+  FiCheck,
+  FiUpload,
+  FiUser,
+  FiX,
 } from 'react-icons/fi';
 import { useDocumentosCompras } from './useDocumentosCompras';
 import TarjetasIndicadoresCompras from './TarjetasIndicadoresCompras';
@@ -24,7 +30,10 @@ import ModalDetalleDocumentoCompras from './ModalDetalleDocumentoCompras';
 import { SkeletonTable } from '../SkeletonLoader';
 import { useVirtualList } from '../../utils/useVirtualList';
 import { useNetworkProfile } from '../../utils/networkProfile';
-import { checkRateLimit } from '../../utils/security';
+import { checkRateLimit, validateUploadedFile } from '../../utils/security';
+import { supabase } from '../../utils/supabaseClient';
+import { runCpuTaskInWorker, executeParallelBatches } from '../../utils/jobQueue';
+import { idbSetQuery } from '../../utils/queryPersister';
 import {
   ERRORES_COMPRAS,
   OBSERVACIONES_COMPRAS,
@@ -32,22 +41,54 @@ import {
   LISTA_RESULTADOS_COMPRAS,
   descripcionTipoDocCompras,
 } from '../../utils/compras/catalogos';
+import { enriquecerComprasConUsuariosSap } from '../../utils/compras/motor';
+import { aFilaBDCompras } from '../../utils/compras/persistencia';
 import {
   FILTROS_INICIALES_COMPRAS,
   filtrarDocumentosCompras,
   calcularIndicadoresCompras,
   exportarExcelCompras,
+  obtenerDocsSapParaCopiar,
 } from '../../utils/compras/reportes';
 import { formatoMonto } from '../../utils/ventas/montos';
+
+async function copiarTextoPortapapeles(texto) {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(texto);
+      return true;
+    } catch {
+      // Fallback a textarea temporal si el navegador bloquea Clipboard API
+    }
+  }
+  if (typeof document === 'undefined') return false;
+  const textarea = document.createElement('textarea');
+  textarea.value = texto;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } finally {
+    document.body.removeChild(textarea);
+  }
+  return ok;
+}
 
 const FilaDocumentoCompraV2 = memo(function FilaDocumentoCompraV2({
   d,
   onSelectDoc,
   onFilterResultado,
   onFilterCodigo,
+  onFilterUsuario,
 }) {
   const resInfo = RESULTADOS_COMPRAS[d.resultado] || RESULTADOS_COMPRAS.OK;
   const ambos = d.en_sap && d.en_sunat;
+  const docSap = d.en_sap ? (d.sap?.doc_interno || d.nro_doc_sap || '') : '';
+  const usuarioSap = d.en_sap ? (d.sap?.usuario_sap || d.usuario_sap || '') : '';
 
   const diffFecha = ambos && (d.sap?.fecha_emision || null) !== (d.sunat?.fecha_emision || null);
   const diffBase = ambos && (d.sap?.base ?? 0) !== (d.sunat?.base ?? 0);
@@ -63,7 +104,36 @@ const FilaDocumentoCompraV2 = memo(function FilaDocumentoCompraV2({
       onClick={() => onSelectDoc(d)}
       title="Haga clic para ver el detalle comparativo SAP vs. SUNAT"
     >
-      {/* 1. RUC del proveedor */}
+      {/* 1. N° Documento SAP */}
+      <td className="font-mono fw-semibold text-primary">
+        {docSap || <span className="text-muted fw-normal">—</span>}
+      </td>
+
+      {/* 2. Usuario SAP (opcional, desde Excel BKPF) */}
+      <td>
+        {usuarioSap ? (
+          <span
+            className="badge font-mono"
+            style={{
+              backgroundColor: 'rgba(37, 99, 235, 0.1)',
+              color: '#1D4ED8',
+              fontSize: '0.7rem',
+              cursor: 'pointer',
+            }}
+            title="Clic para filtrar por este usuario SAP"
+            onClick={(e) => {
+              e.stopPropagation();
+              onFilterUsuario(usuarioSap);
+            }}
+          >
+            {usuarioSap}
+          </span>
+        ) : (
+          <span className="text-muted" style={{ fontSize: '0.73rem' }}>—</span>
+        )}
+      </td>
+
+      {/* 3. RUC del proveedor */}
       <td className="font-mono fw-semibold">{d.ruc_proveedor || '—'}</td>
 
       {/* 2. Razón social */}
@@ -217,30 +287,39 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   activePeriod,
   initialFilter,
   onFilterReset,
+  activeCompany,
+  userProfile,
 }) {
+  const queryClient = useQueryClient();
   const { data: todosDocs = [], isLoading } = useDocumentosCompras(periodId, true);
   const networkProfile = useNetworkProfile();
+  const inputUsuariosSapRef = useRef(null);
 
   const [filtros, setFiltros] = useState(FILTROS_INICIALES_COMPRAS);
   const [rucInput, setRucInput] = useState('');
   const [razonInput, setRazonInput] = useState('');
+  const [docSapInput, setDocSapInput] = useState('');
   const [kpiActivo, setKpiActivo] = useState(null);
   const [ocultarSinIncidencias, setOcultarSinIncidencias] = useState(false);
   const [mostrarMenuExportar, setMostrarMenuExportar] = useState(false);
+  const [mostrarMenuCopiar, setMostrarMenuCopiar] = useState(false);
   const [exportando, setExportando] = useState(false);
+  const [subiendoUsuarios, setSubiendoUsuarios] = useState(false);
+  const [copiadoReciente, setCopiadoReciente] = useState(null);
+  const [bannerAviso, setBannerAviso] = useState(null);
   const [docSeleccionado, setDocSeleccionado] = useState(null);
 
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState(() => networkProfile.recommendedPageSize || 20);
 
-  // Debounce RUC y Razón Social
+  // Debounce RUC, Razón Social y N° Documento SAP
   useEffect(() => {
     const t = setTimeout(() => {
-      setFiltros((prev) => ({ ...prev, ruc: rucInput, razonSocial: razonInput }));
+      setFiltros((prev) => ({ ...prev, ruc: rucInput, razonSocial: razonInput, docSap: docSapInput }));
       setPagina(1);
     }, 220);
     return () => clearTimeout(t);
-  }, [rucInput, razonInput]);
+  }, [rucInput, razonInput, docSapInput]);
 
   // Recibir filtro inicial desde Dashboard
   useEffect(() => {
@@ -296,6 +375,35 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
     }
     return [...set].sort();
   }, [todosDocs]);
+
+  // Usuarios SAP disponibles (cuando se cargó el Excel opcional BKPF)
+  const usuariosSapDisponibles = useMemo(() => {
+    const set = new Set();
+    for (const d of todosDocs) {
+      const u = (d.sap?.usuario_sap || d.usuario_sap || '').trim();
+      if (u) set.add(u);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [todosDocs]);
+
+  const totalConUsuarioSap = useMemo(
+    () => todosDocs.filter((d) => !!(d.sap?.usuario_sap || d.usuario_sap)).length,
+    [todosDocs]
+  );
+
+  // Listas completas de N° de documento SAP para copiar (SIEMPRE ignorando paginación)
+  const docsSapErrorPeriodo = useMemo(
+    () => obtenerDocsSapParaCopiar(todosDocs, { soloConError: true }),
+    [todosDocs]
+  );
+  const docsSapErrorFiltrados = useMemo(
+    () => obtenerDocsSapParaCopiar(docsFiltrados, { soloConError: true }),
+    [docsFiltrados]
+  );
+  const docsSapTodosFiltrados = useMemo(
+    () => obtenerDocsSapParaCopiar(docsFiltrados, { soloConError: false }),
+    [docsFiltrados]
+  );
 
   const totalRegistros = docsFiltrados.length;
   const totalPaginas = Math.ceil(totalRegistros / porPagina);
@@ -354,9 +462,16 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
     setPagina(1);
   }, []);
 
+  const filtrarPorUsuarioSap = useCallback((usuario) => {
+    setKpiActivo(null);
+    setFiltros((prev) => ({ ...prev, usuarioSap: usuario }));
+    setPagina(1);
+  }, []);
+
   const limpiarTodosLosFiltros = useCallback(() => {
     setRucInput('');
     setRazonInput('');
+    setDocSapInput('');
     setKpiActivo(null);
     setFiltros(FILTROS_INICIALES_COMPRAS);
     setPagina(1);
@@ -367,6 +482,8 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   const hayFiltrosActivos =
     filtros.ruc !== '' ||
     filtros.razonSocial !== '' ||
+    filtros.docSap !== '' ||
+    filtros.usuarioSap !== 'ALL' ||
     filtros.resultado !== 'ALL' ||
     filtros.tipoError !== 'ALL' ||
     filtros.tipoObs !== 'ALL' ||
@@ -376,6 +493,157 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
     filtros.origen !== 'ALL' ||
     filtros.fechaDesde !== '' ||
     filtros.fechaHasta !== '';
+
+  const handleCopiarDocsSap = async (modo = 'auto') => {
+    setMostrarMenuCopiar(false);
+    let seleccion;
+    let etiqueta;
+
+    if (modo === 'error_periodo') {
+      seleccion = docsSapErrorPeriodo;
+      etiqueta = 'con error (todo el período)';
+    } else if (modo === 'error_filtrado') {
+      seleccion = docsSapErrorFiltrados;
+      etiqueta = 'con error (filtros actuales)';
+    } else if (modo === 'todos_filtrados') {
+      seleccion = docsSapTodosFiltrados;
+      etiqueta = 'de la vista filtrada';
+    } else if (hayFiltrosActivos && docsSapErrorFiltrados.total > 0) {
+      seleccion = docsSapErrorFiltrados;
+      etiqueta = 'con error (filtros actuales)';
+    } else {
+      seleccion = docsSapErrorPeriodo;
+      etiqueta = 'con error (todo el período)';
+    }
+
+    if (seleccion.total === 0) {
+      const tieneErroresSapSinNro = todosDocs.some(
+        (d) => d.en_sap && d.codigosError.length > 0 && !(d.sap?.doc_interno || d.nro_doc_sap)
+      );
+      setBannerAviso({
+        tipo: 'warning',
+        texto: tieneErroresSapSinNro
+          ? 'No hay N° de documento SAP registrados en este período (cargado antes de esta función). Vuelva a cargar el archivo TXT de SAP para habilitar el copiado.'
+          : 'No se encontraron documentos SAP para copiar en la selección actual.',
+      });
+      return;
+    }
+
+    const ok = await copiarTextoPortapapeles(seleccion.texto);
+    if (!ok) {
+      setBannerAviso({
+        tipo: 'danger',
+        texto: 'No se pudo acceder al portapapeles del navegador. Verifique los permisos e intente nuevamente.',
+      });
+      return;
+    }
+
+    setCopiadoReciente(seleccion.total);
+    setTimeout(() => setCopiadoReciente(null), 2800);
+    setBannerAviso({
+      tipo: 'success',
+      texto: `Se copiaron ${seleccion.total.toLocaleString('es-PE')} N° de documento SAP ${etiqueta} (todas las páginas, uno por línea). Péguelos en SAP para exportar el Excel de usuarios y luego súbalo con el botón "Subir Usuarios SAP (.xlsx)".`,
+    });
+  };
+
+  const handleSubirUsuariosSap = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const check = validateUploadedFile(file, 'excel');
+    if (!check.valid) {
+      setBannerAviso({ tipo: 'danger', texto: check.error });
+      return;
+    }
+
+    setSubiendoUsuarios(true);
+    setBannerAviso(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const filas = XLSX.utils.sheet_to_json(firstSheet, { raw: false, defval: '' });
+
+      const lectura = await runCpuTaskInWorker('PARSE_USUARIOS_SAP_COMPRAS', { filas });
+      if (lectura.estado === 'error') {
+        setBannerAviso({ tipo: 'danger', texto: lectura.mensaje });
+        return;
+      }
+
+      const cruce = enriquecerComprasConUsuariosSap(todosDocs, lectura.registros);
+      if (cruce.totalCoincidencias === 0) {
+        const notaPeriodoAntiguo =
+          cruce.totalConDocSap === 0
+            ? ' Este período no tiene N° de documento SAP registrados; vuelva a cargar el TXT de SAP para habilitar el cruce.'
+            : '';
+        setBannerAviso({
+          tipo: 'warning',
+          texto: `Se leyeron ${lectura.registrosValidos.toLocaleString('es-PE')} registros del Excel "${file.name}", pero ninguno coincidió con los N° de documento SAP de este período.${notaPeriodoAntiguo}`,
+        });
+        return;
+      }
+
+      // 1. Actualizar caché en memoria (React Query) e IndexedDB inmediatamente
+      queryClient.setQueryData(['comprasDocumentos', periodId], cruce.docs);
+      idbSetQuery(JSON.stringify(['comprasDocumentos', periodId]), ['comprasDocumentos', periodId], cruce.docs);
+
+      // 2. Persistir los documentos actualizados en Supabase si el usuario tiene rol de escritura
+      const canPersist = userProfile?.rol === 'admin' || userProfile?.rol === 'operador';
+      let guardadoBD = false;
+      let errorPersistencia = null;
+
+      if (canPersist && periodId && activeCompany?.id) {
+        try {
+          const filasActualizadas = cruce.docsActualizados.map((doc) =>
+            aFilaBDCompras(doc, { periodoId, empresaId: activeCompany.id })
+          );
+          await executeParallelBatches(
+            filasActualizadas,
+            500,
+            async (chunk) => {
+              const { error } = await supabase
+                .from('detalle_compras')
+                .upsert(chunk, { onConflict: 'periodo_id,car_sunat' });
+              if (error) throw error;
+            },
+            {
+              concurrency: networkProfile.recommendedConcurrency || 4,
+              label: 'UpsertUsuariosSapCompras',
+            }
+          );
+          guardadoBD = true;
+        } catch (persistErr) {
+          console.error('No se pudo persistir Usuarios SAP en Supabase:', persistErr);
+          errorPersistencia = persistErr?.message || 'Error al guardar en base de datos';
+        }
+      }
+
+      const extraNoMatch =
+        cruce.sinCoincidenciaExcel > 0
+          ? ` (${cruce.sinCoincidenciaExcel.toLocaleString('es-PE')} del Excel no figuraban en este período)`
+          : '';
+      const notaGuardado = guardadoBD
+        ? ' Guardado en base de datos.'
+        : errorPersistencia
+          ? ` Aplicado en esta vista (no se pudo guardar en BD: ${errorPersistencia}).`
+          : ' Aplicado en esta vista y listo para exportar a Excel.';
+
+      setBannerAviso({
+        tipo: errorPersistencia ? 'warning' : 'success',
+        texto: `Excel "${file.name}" procesado: ${cruce.totalCoincidencias.toLocaleString('es-PE')} documento(s) actualizados con su Usuario SAP${extraNoMatch}.${notaGuardado}`,
+      });
+    } catch (err) {
+      console.error('Error al procesar Excel de Usuarios SAP:', err);
+      setBannerAviso({
+        tipo: 'danger',
+        texto: err?.message || 'Ocurrió un error al leer el archivo Excel de Usuarios SAP.',
+      });
+    } finally {
+      setSubiendoUsuarios(false);
+    }
+  };
 
   const handleExportar = async (alcance) => {
     const rl = checkRateLimit('excel_export_compras', { maxAttempts: 10, windowMs: 60000, lockoutMs: 60000 });
@@ -588,49 +856,185 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
             </select>
           </div>
 
-          {/* Menú de exportación a Excel (filtrado vs totalidad) */}
-          <div className="position-relative">
+          {/* Acciones de tabla: Copiar Docs SAP con error, Subir Usuarios SAP (.xlsx) y Exportar a Excel */}
+          <div className="d-flex align-items-center flex-wrap gap-2">
+            {/* Botón dividido para copiar TODOS los N° Doc. SAP con error (ignorando paginación) */}
+            <div className="position-relative btn-group">
+              <button
+                type="button"
+                disabled={todosDocs.length === 0}
+                className={`btn btn-sm d-flex align-items-center px-3 py-1.5 fw-semibold ${
+                  copiadoReciente !== null ? 'btn-success' : 'btn-outline-danger'
+                }`}
+                style={{ borderTopLeftRadius: '0.5rem', borderBottomLeftRadius: '0.5rem' }}
+                title="Copia todos los N° de documento SAP con error en todas las páginas (listo para pegar en SAP SE16N/BKPF)"
+                onClick={() => handleCopiarDocsSap('auto')}
+              >
+                {copiadoReciente !== null ? (
+                  <>
+                    <FiCheck className="me-1.5" />
+                    Copiados ({copiadoReciente.toLocaleString('es-PE')})
+                  </>
+                ) : (
+                  <>
+                    <FiCopy className="me-1.5" />
+                    Copiar Docs SAP con error (
+                    {(hayFiltrosActivos && docsSapErrorFiltrados.total > 0
+                      ? docsSapErrorFiltrados.total
+                      : docsSapErrorPeriodo.total
+                    ).toLocaleString('es-PE')}
+                    )
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                disabled={todosDocs.length === 0}
+                className={`btn btn-sm px-2 py-1.5 ${
+                  copiadoReciente !== null ? 'btn-success' : 'btn-outline-danger'
+                }`}
+                style={{ borderTopRightRadius: '0.5rem', borderBottomRightRadius: '0.5rem' }}
+                aria-label="Más opciones de copiado de documentos SAP"
+                onClick={() => {
+                  setMostrarMenuCopiar((v) => !v);
+                  setMostrarMenuExportar(false);
+                }}
+              >
+                <FiChevronDown />
+              </button>
+              {mostrarMenuCopiar && (
+                <ul
+                  className="dropdown-premium-menu show"
+                  style={{ right: 0, left: 'auto', minWidth: '350px', top: '100%' }}
+                  onMouseLeave={() => setMostrarMenuCopiar(false)}
+                >
+                  <li>
+                    <button
+                      type="button"
+                      className="dropdown-premium-item"
+                      style={{ whiteSpace: 'normal', fontSize: '0.8rem' }}
+                      disabled={docsSapErrorPeriodo.total === 0}
+                      onClick={() => handleCopiarDocsSap('error_periodo')}
+                    >
+                      <strong>Todos los N° Doc. SAP con error del período</strong> ({docsSapErrorPeriodo.total.toLocaleString('es-PE')} docs · todas las páginas)
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      className="dropdown-premium-item"
+                      style={{ whiteSpace: 'normal', fontSize: '0.8rem' }}
+                      disabled={docsSapErrorFiltrados.total === 0}
+                      onClick={() => handleCopiarDocsSap('error_filtrado')}
+                    >
+                      <strong>N° Doc. SAP con error (filtros actuales)</strong> ({docsSapErrorFiltrados.total.toLocaleString('es-PE')} docs · todas las páginas)
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      className="dropdown-premium-item"
+                      style={{ whiteSpace: 'normal', fontSize: '0.8rem' }}
+                      disabled={docsSapTodosFiltrados.total === 0}
+                      onClick={() => handleCopiarDocsSap('todos_filtrados')}
+                    >
+                      <strong>Todos los N° Doc. SAP filtrados</strong> ({docsSapTodosFiltrados.total.toLocaleString('es-PE')} docs · incluye OK y Obs.)
+                    </button>
+                  </li>
+                </ul>
+              )}
+            </div>
+
+            {/* Subida opcional del Excel de Usuarios SAP (BKPF) directo sobre el período actual */}
+            <input
+              ref={inputUsuariosSapRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="d-none"
+              onChange={handleSubirUsuariosSap}
+              disabled={subiendoUsuarios || todosDocs.length === 0}
+            />
             <button
               type="button"
-              disabled={todosDocs.length === 0 || exportando}
-              className="btn btn-outline-primary btn-sm d-flex align-items-center px-3 py-1.5 rounded-3 fw-semibold"
-              onClick={() => setMostrarMenuExportar((v) => !v)}
+              disabled={todosDocs.length === 0 || subiendoUsuarios}
+              className={`btn btn-sm d-flex align-items-center px-3 py-1.5 rounded-3 fw-semibold ${
+                totalConUsuarioSap > 0 ? 'btn-outline-success' : 'btn-outline-secondary'
+              }`}
+              title="Subir archivo Excel (.xlsx) exportado de SAP con las columnas 'Nº documento' y 'Nombre del usuario'"
+              onClick={() => inputUsuariosSapRef.current?.click()}
             >
-              <FiDownload className="me-1.5" />
-              {exportando ? 'Exportando Excel...' : 'Exportar a Excel'}
-              <FiChevronDown className="ms-1" />
+              {totalConUsuarioSap > 0 ? <FiUser className="me-1.5" /> : <FiUpload className="me-1.5" />}
+              {subiendoUsuarios
+                ? 'Cargando Usuarios SAP...'
+                : totalConUsuarioSap > 0
+                  ? `Usuarios SAP (${totalConUsuarioSap.toLocaleString('es-PE')}) · Actualizar`
+                  : 'Subir Usuarios SAP (.xlsx)'}
             </button>
-            {mostrarMenuExportar && (
-              <ul
-                className="dropdown-premium-menu show"
-                style={{ right: 0, left: 'auto', minWidth: '330px' }}
-                onMouseLeave={() => setMostrarMenuExportar(false)}
+
+            {/* Menú de exportación a Excel (filtrado vs totalidad) */}
+            <div className="position-relative">
+              <button
+                type="button"
+                disabled={todosDocs.length === 0 || exportando}
+                className="btn btn-outline-primary btn-sm d-flex align-items-center px-3 py-1.5 rounded-3 fw-semibold"
+                onClick={() => {
+                  setMostrarMenuExportar((v) => !v);
+                  setMostrarMenuCopiar(false);
+                }}
               >
-                <li>
-                  <button
-                    type="button"
-                    className="dropdown-premium-item"
-                    style={{ whiteSpace: 'normal', fontSize: '0.8rem' }}
-                    disabled={docsFiltrados.length === 0}
-                    onClick={() => handleExportar('filtrado')}
-                  >
-                    <strong>Exportar con filtros aplicados</strong> ({docsFiltrados.length.toLocaleString('es-PE')} docs · 8 hojas)
-                  </button>
-                </li>
-                <li>
-                  <button
-                    type="button"
-                    className="dropdown-premium-item"
-                    style={{ whiteSpace: 'normal', fontSize: '0.8rem' }}
-                    onClick={() => handleExportar('completo')}
-                  >
-                    <strong>Exportar totalidad de resultados</strong> ({todosDocs.length.toLocaleString('es-PE')} docs · 8 hojas)
-                  </button>
-                </li>
-              </ul>
-            )}
+                <FiDownload className="me-1.5" />
+                {exportando ? 'Exportando Excel...' : 'Exportar a Excel'}
+                <FiChevronDown className="ms-1" />
+              </button>
+              {mostrarMenuExportar && (
+                <ul
+                  className="dropdown-premium-menu show"
+                  style={{ right: 0, left: 'auto', minWidth: '330px' }}
+                  onMouseLeave={() => setMostrarMenuExportar(false)}
+                >
+                  <li>
+                    <button
+                      type="button"
+                      className="dropdown-premium-item"
+                      style={{ whiteSpace: 'normal', fontSize: '0.8rem' }}
+                      disabled={docsFiltrados.length === 0}
+                      onClick={() => handleExportar('filtrado')}
+                    >
+                      <strong>Exportar con filtros aplicados</strong> ({docsFiltrados.length.toLocaleString('es-PE')} docs · 8 hojas)
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      className="dropdown-premium-item"
+                      style={{ whiteSpace: 'normal', fontSize: '0.8rem' }}
+                      onClick={() => handleExportar('completo')}
+                    >
+                      <strong>Exportar totalidad de resultados</strong> ({todosDocs.length.toLocaleString('es-PE')} docs · 8 hojas)
+                    </button>
+                  </li>
+                </ul>
+              )}
+            </div>
           </div>
         </div>
+
+        {bannerAviso && (
+          <div
+            className={`alert alert-${bannerAviso.tipo} d-flex align-items-center justify-content-between gap-2 py-2 px-3 mb-3 border-0 rounded-3`}
+            style={{ fontSize: '0.82rem' }}
+          >
+            <div>{bannerAviso.texto}</div>
+            <button
+              type="button"
+              className="btn btn-sm btn-link text-reset p-0 flex-shrink-0"
+              aria-label="Cerrar aviso"
+              onClick={() => setBannerAviso(null)}
+            >
+              <FiX />
+            </button>
+          </div>
+        )}
 
         {/* 7.C Filtros — Fila 1 */}
         <div className="row g-2 mb-2">
@@ -711,7 +1115,40 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
         </div>
 
         {/* 7.C Filtros — Fila 2 */}
-        <div className="row g-2 mb-3">
+        <div className="row g-2 mb-2">
+          <div className="col-lg-3">
+            <div className="input-group">
+              <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.8rem' }}>
+                N° Doc. SAP
+              </span>
+              <input
+                type="text"
+                className="form-control form-control-premium font-mono"
+                placeholder="Ej. 1900014801"
+                value={docSapInput}
+                onChange={(e) => setDocSapInput(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="col-lg-3">
+            <select
+              className="form-select form-control-premium"
+              value={filtros.usuarioSap}
+              onChange={(e) => actualizarFiltro({ usuarioSap: e.target.value })}
+            >
+              <option value="ALL">
+                Usuario SAP: Todos{usuariosSapDisponibles.length > 0 ? ` (${usuariosSapDisponibles.length})` : ''}
+              </option>
+              <option value="SIN_USUARIO">Sin usuario SAP asignado</option>
+              {usuariosSapDisponibles.map((usr) => (
+                <option key={usr} value={usr}>
+                  {usr}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="col-lg-3">
             <select
               className="form-select form-control-premium"
@@ -727,7 +1164,7 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
             </select>
           </div>
 
-          <div className="col-lg-2">
+          <div className="col-lg-3">
             <div className="input-group">
               <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.8rem' }}>
                 Serie
@@ -741,8 +1178,11 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
               />
             </div>
           </div>
+        </div>
 
-          <div className="col-lg-2">
+        {/* 7.C Filtros — Fila 3 */}
+        <div className="row g-2 mb-3">
+          <div className="col-lg-3">
             <div className="input-group">
               <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.8rem' }}>
                 Desde
@@ -756,7 +1196,7 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
             </div>
           </div>
 
-          <div className="col-lg-2">
+          <div className="col-lg-3">
             <div className="input-group">
               <span className="input-group-text border" style={{ backgroundColor: '#F8FAFC', borderColor: 'var(--border-color)', color: '#64748B', fontSize: '0.8rem' }}>
                 Hasta
@@ -770,11 +1210,11 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
             </div>
           </div>
 
-          <div className="col-lg-3">
+          <div className="col-lg-6 d-flex justify-content-end">
             <button
               type="button"
               disabled={!hayFiltrosActivos}
-              className="btn btn-outline-secondary w-100 h-100 d-flex align-items-center justify-content-center py-1.5 rounded-3 fw-semibold"
+              className="btn btn-outline-secondary px-4 h-100 d-flex align-items-center justify-content-center py-1.5 rounded-3 fw-semibold"
               style={{ fontSize: '0.82rem' }}
               onClick={limpiarTodosLosFiltros}
             >
@@ -809,6 +1249,8 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
               <table className="table table-hover table-dense align-middle text-nowrap mb-0">
                 <thead>
                   <tr>
+                    <th>N° Doc. SAP</th>
+                    <th>Usuario SAP</th>
                     <th>RUC Proveedor</th>
                     <th>Razón Social</th>
                     <th>Tipo Doc.</th>
@@ -834,7 +1276,7 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
                 <tbody>
                   {isVirtualized && topPaddingHeight > 0 && (
                     <tr aria-hidden="true">
-                      <td colSpan={20} style={{ height: `${topPaddingHeight}px`, padding: 0, border: 0 }} />
+                      <td colSpan={22} style={{ height: `${topPaddingHeight}px`, padding: 0, border: 0 }} />
                     </tr>
                   )}
                   {filasVirtualizadas.map((d) => (
@@ -844,11 +1286,12 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
                       onSelectDoc={setDocSeleccionado}
                       onFilterResultado={filtrarPorResultado}
                       onFilterCodigo={seleccionarSoloCodigo}
+                      onFilterUsuario={filtrarPorUsuarioSap}
                     />
                   ))}
                   {isVirtualized && bottomPaddingHeight > 0 && (
                     <tr aria-hidden="true">
-                      <td colSpan={20} style={{ height: `${bottomPaddingHeight}px`, padding: 0, border: 0 }} />
+                      <td colSpan={22} style={{ height: `${bottomPaddingHeight}px`, padding: 0, border: 0 }} />
                     </tr>
                   )}
                 </tbody>

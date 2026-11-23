@@ -443,3 +443,238 @@ export function parsearSunatCompras(texto) {
 
   return cerrarResultado(res);
 }
+
+// ---------------------------------------------------------------------------
+// Usuarios SAP Compras (Excel opcional — exportación BKPF / SE16N de SAP).
+// Columnas clave:
+//  - "Nº documento" / "N° documento" / "N° de documento" / "BELNR"
+//  - "Nombre del usuario" / "Usuario" / "Creado por" / "USNAM"
+// Columnas informativas opcionales:
+//  - "Código transacción", "Fe.contabilización", "Texto cab.documento",
+//    "Sociedad", "Referencia", "Fecha de entrada".
+// ---------------------------------------------------------------------------
+const normalizarCabeceraExcelSap = (h) =>
+  String(h ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[º°.,_/\-\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * Normaliza un número de documento SAP eliminando espacios y sufijos decimales ".0"
+ * que Excel puede introducir cuando lee el campo como numérico.
+ */
+export function normalizarDocSap(raw) {
+  let s = String(raw ?? '').trim().replace(/\s+/g, '');
+  if (!s) return '';
+  if (/^\d+\.0+$/.test(s)) {
+    s = s.replace(/\.0+$/, '');
+  }
+  return s.toUpperCase();
+}
+
+/**
+ * Clave secundaria sin ceros a la izquierda para fallback cuando Excel elimina
+ * ceros iniciales en números de documento SAP puramente numéricos.
+ */
+export function claveDocSapSinCeros(raw) {
+  const norm = normalizarDocSap(raw);
+  if (!norm) return '';
+  if (/^\d+$/.test(norm)) {
+    return norm.replace(/^0+(?=\d)/, '');
+  }
+  return norm;
+}
+
+const ALIAS_COL_DOC_SAP = new Set([
+  'n documento',
+  'no documento',
+  'nro documento',
+  'numero documento',
+  'numero de documento',
+  'n de documento',
+  'nro de documento',
+  'no de documento',
+  'documento sap',
+  'n documento sap',
+  'nro documento sap',
+  'numero documento sap',
+  'n doc sap',
+  'nro doc sap',
+  'doc sap',
+  'doc contable',
+  'belnr',
+]);
+
+const ALIAS_COL_USUARIO_SAP = new Set([
+  'nombre del usuario',
+  'nombre de usuario',
+  'nombre usuario',
+  'usuario',
+  'usuario sap',
+  'creado por',
+  'usnam',
+]);
+
+const ALIAS_COL_TRANSACCION_SAP = new Set([
+  'codigo transaccion',
+  'codigo de transaccion',
+  'cod transaccion',
+  'transaccion',
+  'tcode',
+]);
+
+const ALIAS_COL_FECHA_CONTAB = new Set([
+  'fe contabilizacion',
+  'fecha contabilizacion',
+  'fecha de contabilizacion',
+  'budat',
+]);
+
+const ALIAS_COL_TEXTO_CAB = new Set([
+  'texto cab documento',
+  'texto cabecera documento',
+  'texto cabecera',
+  'texto cab',
+  'bktxt',
+]);
+
+const ALIAS_COL_SOCIEDAD = new Set(['sociedad', 'bukrs']);
+const ALIAS_COL_REFERENCIA = new Set(['referencia', 'xblnr']);
+
+function buscarColumnaPorAlias(columnas, aliasSet, fallbackIncludes = []) {
+  const exact = columnas.find((c) => aliasSet.has(normalizarCabeceraExcelSap(c)));
+  if (exact) return exact;
+  for (const needle of fallbackIncludes) {
+    const found = columnas.find((c) => normalizarCabeceraExcelSap(c).includes(needle));
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Parsea las filas de un archivo Excel (.xlsx / .xls) exportado de SAP
+ * que relaciona "Nº documento" con "Nombre del usuario".
+ */
+export function parsearUsuariosSapCompras(filas = []) {
+  const res = nuevoResultado('USUARIOS_SAP');
+  res.formato = 'Excel (.xlsx / .xls)';
+
+  if (!Array.isArray(filas) || filas.length === 0) {
+    res.estado = 'error';
+    res.mensaje = 'El archivo Excel no contiene filas de datos.';
+    return res;
+  }
+
+  // Recolectar todas las claves de cabecera presentes en las primeras filas
+  const colSet = new Set();
+  for (let i = 0; i < Math.min(filas.length, 5); i++) {
+    if (filas[i] && typeof filas[i] === 'object') {
+      for (const k of Object.keys(filas[i])) colSet.add(k);
+    }
+  }
+  const columnas = [...colSet];
+
+  const colDoc = buscarColumnaPorAlias(columnas, ALIAS_COL_DOC_SAP, ['n documento', 'nro documento', 'numero documento', 'belnr']);
+  const colUsuario = buscarColumnaPorAlias(columnas, ALIAS_COL_USUARIO_SAP, ['nombre del usuario', 'nombre de usuario', 'usuario']);
+
+  if (!colDoc) res.columnasFaltantes.push('Nº documento');
+  if (!colUsuario) res.columnasFaltantes.push('Nombre del usuario');
+
+  if (res.columnasFaltantes.length > 0) {
+    res.estado = 'error';
+    res.mensaje = `Faltan columnas obligatorias en el Excel de SAP: ${res.columnasFaltantes.join(', ')}.`;
+    return res;
+  }
+
+  const colTransaccion = buscarColumnaPorAlias(columnas, ALIAS_COL_TRANSACCION_SAP, ['transaccion']);
+  const colFechaContab = buscarColumnaPorAlias(columnas, ALIAS_COL_FECHA_CONTAB, ['contabilizacion']);
+  const colTextoCab = buscarColumnaPorAlias(columnas, ALIAS_COL_TEXTO_CAB, ['texto cab']);
+  const colSociedad = buscarColumnaPorAlias(columnas, ALIAS_COL_SOCIEDAD);
+  const colReferencia = buscarColumnaPorAlias(columnas, ALIAS_COL_REFERENCIA);
+
+  const vistos = new Map();
+  let sinUsuario = 0;
+
+  filas.forEach((f, idx) => {
+    const nLinea = idx + 2; // fila 1 = cabecera
+    if (!f || typeof f !== 'object') {
+      res.lineasVacias += 1;
+      return;
+    }
+
+    const docSap = normalizarDocSap(f[colDoc]);
+    const usuario = String(f[colUsuario] ?? '').trim();
+
+    if (!docSap && !usuario) {
+      res.lineasVacias += 1;
+      return;
+    }
+
+    res.totalLineas += 1;
+    res.registrosLeidos += 1;
+
+    if (!docSap) {
+      registrarErrorTipo(res, nLinea, 'Nº documento', f[colDoc]);
+      return;
+    }
+
+    if (!usuario) {
+      sinUsuario += 1;
+    }
+
+    const registro = {
+      linea: nLinea,
+      doc_sap: docSap,
+      doc_sap_sin_ceros: claveDocSapSinCeros(docSap),
+      usuario_sap: usuario,
+      transaccion_sap: colTransaccion ? String(f[colTransaccion] ?? '').trim() : '',
+      fecha_contabilizacion: colFechaContab ? String(f[colFechaContab] ?? '').trim() : '',
+      texto_cabecera: colTextoCab ? limpiarTextoDescriptivo(f[colTextoCab]) : '',
+      sociedad: colSociedad ? String(f[colSociedad] ?? '').trim() : '',
+      referencia: colReferencia ? String(f[colReferencia] ?? '').trim() : '',
+    };
+
+    const previo = vistos.get(docSap);
+    if (previo) {
+      let dup = res.duplicados.find((d) => d.clave === docSap);
+      if (!dup) {
+        dup = {
+          clave: docSap,
+          claveLegible: docSap,
+          folio: docSap,
+          ruc: '',
+          lineas: [previo.linea],
+        };
+        res.duplicados.push(dup);
+      }
+      dup.lineas.push(nLinea);
+      // Si el registro previo no tenía usuario pero este sí, conservar el usuario válido
+      if (!previo.usuario_sap && registro.usuario_sap) {
+        previo.usuario_sap = registro.usuario_sap;
+      }
+    } else {
+      vistos.set(docSap, registro);
+      res.registros.push(registro);
+    }
+  });
+
+  if (sinUsuario > 0) {
+    res.advertencias.push(`${sinUsuario} fila(s) no tienen "Nombre del usuario" informado.`);
+  }
+
+  res.registrosValidos = res.registros.length;
+  if (res.registrosValidos === 0) {
+    res.estado = 'error';
+    res.mensaje = 'No se encontraron registros válidos con N° de documento SAP en el archivo Excel.';
+  } else if (res.totalErroresTipo || res.duplicados.length || res.advertencias.length) {
+    res.estado = 'advertencia';
+    res.mensaje = `${res.registrosValidos.toLocaleString('es-PE')} documentos SAP con usuario leídos (con observaciones menores).`;
+  } else {
+    res.mensaje = `${res.registrosValidos.toLocaleString('es-PE')} documentos SAP con usuario leídos correctamente.`;
+  }
+
+  return res;
+}

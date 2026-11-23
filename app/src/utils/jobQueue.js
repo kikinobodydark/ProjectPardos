@@ -9,7 +9,7 @@ import { traceAsync } from './telemetry.js';
 import { decodificarTexto, parsearSapVentas, parsearSunatVentas, parsearCortesias } from './ventas/lectores.js';
 import { conciliarVentas } from './ventas/motor.js';
 import { aFilaBD } from './ventas/persistencia.js';
-import { parsearSapCompras, parsearSunatCompras } from './compras/lectores.js';
+import { parsearSapCompras, parsearSunatCompras, parsearUsuariosSapCompras } from './compras/lectores.js';
 import { conciliarCompras } from './compras/motor.js';
 import { aFilaBDCompras } from './compras/persistencia.js';
 
@@ -99,37 +99,58 @@ let workerPoolFailed = false;
 let workerReqId = 0;
 const pendingWorkerCallbacks = new Map();
 
+function createWorkerSlot(index) {
+  const w = new Worker(new URL('../workers/reconciliationWorker.js', import.meta.url), {
+    type: 'module',
+  });
+  const slot = { worker: w, busyCount: 0, index, pendingIds: new Set() };
+  w.onmessage = (event) => {
+    slot.busyCount = Math.max(0, slot.busyCount - 1);
+    const { id, ok, result, error } = event.data || {};
+    slot.pendingIds.delete(id);
+    const pending = pendingWorkerCallbacks.get(id);
+    if (!pending) return;
+    pendingWorkerCallbacks.delete(id);
+    if (ok) pending.resolve(result);
+    else pending.reject(new Error(error || 'Error en Web Worker de conciliación'));
+  };
+  w.onerror = (err) => {
+    slot.busyCount = 0;
+    // Aislar el fallo únicamente a las promesas pendientes de este worker
+    for (const id of slot.pendingIds) {
+      const pending = pendingWorkerCallbacks.get(id);
+      if (pending) {
+        pendingWorkerCallbacks.delete(id);
+        pending.reject(err instanceof Error ? err : new Error(err?.message || 'Fallo inesperado en Web Worker'));
+      }
+    }
+    slot.pendingIds.clear();
+    try {
+      w.terminate();
+    } catch {
+      // ignore terminate error
+    }
+    // Reemplazar automáticamente el slot caído sin inhabilitar el resto del pool
+    try {
+      workerPool[index] = createWorkerSlot(index);
+    } catch {
+      workerPool[index] = null;
+    }
+  };
+  return slot;
+}
+
 function initWorkerPool() {
   if (typeof window === 'undefined' || typeof Worker === 'undefined' || workerPoolFailed) {
     return false;
   }
-  if (workerPoolInitialized && workerPool.length > 0) {
+  if (workerPoolInitialized && workerPool.some(Boolean)) {
     return true;
   }
   try {
+    workerPool.length = 0;
     for (let i = 0; i < WORKER_POOL_SIZE; i++) {
-      const w = new Worker(new URL('../workers/reconciliationWorker.js', import.meta.url), {
-        type: 'module',
-      });
-      const slot = { worker: w, busyCount: 0, index: i };
-      w.onmessage = (event) => {
-        slot.busyCount = Math.max(0, slot.busyCount - 1);
-        const { id, ok, result, error } = event.data || {};
-        const pending = pendingWorkerCallbacks.get(id);
-        if (!pending) return;
-        pendingWorkerCallbacks.delete(id);
-        if (ok) pending.resolve(result);
-        else pending.reject(new Error(error || 'Error en Web Worker de conciliación'));
-      };
-      w.onerror = (err) => {
-        slot.busyCount = 0;
-        for (const [, p] of pendingWorkerCallbacks.entries()) {
-          p.reject(err);
-        }
-        pendingWorkerCallbacks.clear();
-        workerPoolFailed = true;
-      };
-      workerPool.push(slot);
+      workerPool.push(createWorkerSlot(i));
     }
     workerPoolInitialized = true;
     return true;
@@ -140,11 +161,13 @@ function initWorkerPool() {
 }
 
 function pickLeastBusyWorker() {
-  if (!initWorkerPool() || workerPool.length === 0) return null;
-  let best = workerPool[0];
-  for (let i = 1; i < workerPool.length; i++) {
-    if (workerPool[i].busyCount < best.busyCount) {
-      best = workerPool[i];
+  if (!initWorkerPool()) return null;
+  let best = null;
+  for (let i = 0; i < workerPool.length; i++) {
+    const slot = workerPool[i];
+    if (!slot) continue;
+    if (!best || slot.busyCount < best.busyCount) {
+      best = slot;
     }
   }
   return best;
@@ -159,6 +182,7 @@ export async function runCpuTaskInWorker(action, payload, transferList = []) {
     if (slot) {
       const id = ++workerReqId;
       slot.busyCount += 1;
+      slot.pendingIds.add(id);
       return new Promise((resolve, reject) => {
         pendingWorkerCallbacks.set(id, { resolve, reject });
         try {
@@ -255,9 +279,12 @@ export function executeCpuTaskFallback(action, payload) {
       res.codificacion = codificacion;
       return res;
     }
+    case 'PARSE_USUARIOS_SAP_COMPRAS': {
+      return parsearUsuariosSapCompras(payload.filas);
+    }
     case 'CONCILIAR_COMPRAS_V2': {
-      const { sap, sunat, metaBD } = payload;
-      const resultado = conciliarCompras({ sap, sunat });
+      const { sap, sunat, usuariosSap = null, metaBD } = payload;
+      const resultado = conciliarCompras({ sap, sunat, usuariosSap });
       if (metaBD) {
         resultado.filasParaInsertar = resultado.docs.map((d) => aFilaBDCompras(d, metaBD));
       }

@@ -185,33 +185,25 @@ CREATE TABLE IF NOT EXISTS public.local_series (
     CONSTRAINT uq_local_series_empresa_tipo_serie UNIQUE (empresa_id, tipo_doc_pago, serie)
 );
 
--- 9. Índices para Optimización
-CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_id ON public.detalle_ventas (periodo_id);
+-- 9. Índices para Optimización (sin duplicados ni GIN sin uso)
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_empresa_id ON public.detalle_ventas (empresa_id);
-CREATE INDEX IF NOT EXISTS idx_detalle_ventas_car_sunat ON public.detalle_ventas (car_sunat);
-CREATE INDEX IF NOT EXISTS idx_detalle_ventas_errores_json_gin ON public.detalle_ventas USING gin (errores_json);
-CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_id ON public.detalle_compras (periodo_id);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_empresa_id ON public.detalle_compras (empresa_id);
-CREATE INDEX IF NOT EXISTS idx_detalle_compras_car_sunat ON public.detalle_compras (car_sunat);
-CREATE INDEX IF NOT EXISTS idx_periodos_carga_empresa_id ON public.periodos_carga (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_periodos_carga_usuario_id ON public.periodos_carga (usuario_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_empresa_id ON public.usuarios (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_estudio_id ON public.usuarios (estudio_id);
 CREATE INDEX IF NOT EXISTS idx_empresas_estudio_id ON public.empresas (estudio_id);
 CREATE INDEX IF NOT EXISTS idx_usuario_empresas_empresa_id ON public.usuario_empresas (empresa_id);
-CREATE INDEX IF NOT EXISTS idx_auditoria_estudio_id ON public.auditoria (estudio_id);
+CREATE INDEX IF NOT EXISTS idx_auditoria_estudio_fecha ON public.auditoria (estudio_id, fecha_hora DESC);
 
--- 10. Índices Compuestos para Paginación, Ordenamiento y Consultas sin N+1
-CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_orden
-  ON public.detalle_ventas (periodo_id, fecha_emision, serie, correlativo);
+-- 10. Índices Compuestos para Paginación Determinista, Ordenamiento y Consultas sin N+1
+CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_orden_id
+  ON public.detalle_ventas (periodo_id, fecha_emision, serie, correlativo, id);
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_estado
   ON public.detalle_ventas (periodo_id, estado_validacion);
-CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_orden
-  ON public.detalle_compras (periodo_id, fecha_emision, serie, correlativo);
+CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_orden_id
+  ON public.detalle_compras (periodo_id, fecha_emision, serie, correlativo, id);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_estado
   ON public.detalle_compras (periodo_id, estado_validacion);
-CREATE INDEX IF NOT EXISTS idx_detalle_compras_errores_json_gin
-  ON public.detalle_compras USING gin (errores_json);
 CREATE INDEX IF NOT EXISTS idx_periodos_carga_empresa_modulo_estado
   ON public.periodos_carga (empresa_id, modulo, estado, fecha_carga DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_locales_empresa_empresa_nombre

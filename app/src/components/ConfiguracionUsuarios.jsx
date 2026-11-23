@@ -9,11 +9,8 @@ import {
   logSuspiciousActivity,
 } from '../utils/security';
 import { SkeletonTable } from './SkeletonLoader';
+import { COLS_EMPRESA, COLS_USUARIOS_LISTA } from '../utils/dbColumns';
 import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock } from 'react-icons/fi';
-
-const COLS_EMPRESA = 'id, ruc, razon_social, activo, estudio_id';
-const COLS_USUARIOS_LISTA =
-  'id, nombre, rol, activo, estudio_id, empresa_id, usuario_empresas(empresa_id, empresas(razon_social))';
 
 const ConfiguracionUsuarios = memo(function ConfiguracionUsuarios({ activeCompany, userProfile }) {
   const [csrfToken] = useState(() => getOrCreateCsrfToken());

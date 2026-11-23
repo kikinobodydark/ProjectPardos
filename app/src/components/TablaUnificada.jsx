@@ -54,6 +54,7 @@ const TablaUnificada = memo(function TablaUnificada({
         initialFilter={initialFilter}
         onFilterReset={onFilterReset}
         activeCompany={activeCompany}
+        userProfile={userProfile}
       />
     </Suspense>
   );

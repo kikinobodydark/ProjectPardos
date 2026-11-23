@@ -1,7 +1,12 @@
 import React, { useState, useMemo, useEffect, memo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
-import { checkRateLimit, logSuspiciousActivity } from '../utils/security';
+import {
+  getOrCreateCsrfToken,
+  verifyCsrfToken,
+  checkRateLimit,
+  logSuspiciousActivity,
+} from '../utils/security';
 import { clearPersistedQueryCache } from '../utils/queryPersister';
 import { SkeletonTable } from './SkeletonLoader';
 import { FiClock, FiUser, FiArrowRight, FiTrash2, FiRefreshCw } from 'react-icons/fi';
@@ -30,7 +35,9 @@ const HistorialCargas = memo(function HistorialCargas({
   userProfile,
 }) {
   const queryClient = useQueryClient();
-  const canDelete = !userProfile || userProfile.rol === 'admin' || userProfile.rol === 'operador';
+  const [csrfToken] = useState(() => getOrCreateCsrfToken());
+  const isAdmin = userProfile?.rol === 'admin';
+  const canDelete = userProfile?.rol === 'admin' || userProfile?.rol === 'operador';
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState(15);
   const [clearingAll, setClearingAll] = useState(false);
@@ -89,22 +96,37 @@ const HistorialCargas = memo(function HistorialCargas({
       if (error) throw error;
 
       await clearPersistedQueryCache();
+      queryClient.invalidateQueries({ queryKey: ['ventasDocumentos'] });
+      queryClient.invalidateQueries({ queryKey: ['comprasDocumentos'] });
+      queryClient.invalidateQueries({ queryKey: ['periods'] });
       refetch();
       if (onDeletePeriod) {
         onDeletePeriod(periodoId);
       }
     } catch (err) {
-      console.error('Error al eliminar período:', err);
+      if (import.meta.env.DEV) console.error('Error al eliminar período:', err);
       alert(`Error al eliminar: ${err.message}`);
     }
   };
 
   const handleClearAllModules = async () => {
-    if (!canDelete || !activeCompany?.id) return;
-    const ok = window.confirm(
-      '¿Está seguro de que desea eliminar TODA la data de Ventas y Compras de esta empresa para comenzar de nuevo? Esta acción borrará todos los períodos y comprobantes conciliados.'
+    if (!isAdmin || !activeCompany?.id) {
+      logSuspiciousActivity('INTENTO_VACIAR_HISTORIAL_NO_ADMIN', { empresaId: activeCompany?.id });
+      return;
+    }
+    if (!verifyCsrfToken(csrfToken)) {
+      alert('Token CSRF inválido. Recarga la sesión.');
+      return;
+    }
+    const rl = checkRateLimit('clear_all_periods', { maxAttempts: 2, windowMs: 60000, lockoutMs: 120000 });
+    if (!rl.allowed) {
+      alert(rl.message);
+      return;
+    }
+    const rucConfirm = window.prompt(
+      `ACCIÓN DESTRUCTIVA IRREVERSIBLE\n\n¿Deseas eliminar TODA la data de Ventas y Compras de ${activeCompany.razon_social} (RUC ${activeCompany.ruc})?\n\nEscribe exactamente el RUC (${activeCompany.ruc}) para confirmar:`
     );
-    if (!ok) return;
+    if (rucConfirm === null || rucConfirm.trim() !== activeCompany.ruc) return;
 
     setClearingAll(true);
     try {
@@ -116,12 +138,15 @@ const HistorialCargas = memo(function HistorialCargas({
       if (error) throw error;
 
       await clearPersistedQueryCache();
+      queryClient.invalidateQueries({ queryKey: ['ventasDocumentos'] });
+      queryClient.invalidateQueries({ queryKey: ['comprasDocumentos'] });
+      queryClient.invalidateQueries({ queryKey: ['periods'] });
       await refetch();
       if (onDeletePeriod) {
         onDeletePeriod(null);
       }
     } catch (err) {
-      console.error('Error al limpiar todos los períodos:', err);
+      if (import.meta.env.DEV) console.error('Error al limpiar todos los períodos:', err);
       alert(`Error al limpiar datos: ${err.message}`);
     } finally {
       setClearingAll(false);
@@ -177,7 +202,7 @@ const HistorialCargas = memo(function HistorialCargas({
             <FiRefreshCw className={isLoading ? 'spin' : ''} />
             <span>Actualizar</span>
           </button>
-          {canDelete && history.length > 0 && (
+          {isAdmin && history.length > 0 && (
             <button
               type="button"
               onClick={handleClearAllModules}

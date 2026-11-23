@@ -6,6 +6,7 @@ import {
   verifyCsrfToken,
   checkRateLimit,
   validateUploadedFile,
+  validateFileMagicBytes,
 } from '../utils/security';
 import {
   runCpuTaskInWorker,
@@ -39,12 +40,19 @@ const CargaArchivos = memo(function CargaArchivos({
   const [sapFile, setSapFile] = useState(null);
   const [sunatFile, setSunatFile] = useState(null);
   const [cortesiasFile, setCortesiasFile] = useState(null);
+  const [usuariosSapFile, setUsuariosSapFile] = useState(null);
 
   // Resultados de validación de lectura previa (Ventas y Compras - procesados en Pool de Web Workers)
   const [lecturaSap, setLecturaSap] = useState(null);
   const [lecturaSunat, setLecturaSunat] = useState(null);
   const [lecturaCortesias, setLecturaCortesias] = useState(null);
-  const [detalleAbierto, setDetalleAbierto] = useState({ sap: false, sunat: false, cortesias: false });
+  const [lecturaUsuariosSap, setLecturaUsuariosSap] = useState(null);
+  const [detalleAbierto, setDetalleAbierto] = useState({
+    sap: false,
+    sunat: false,
+    cortesias: false,
+    usuariosSap: false,
+  });
 
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -67,6 +75,10 @@ const CargaArchivos = memo(function CargaArchivos({
 
   const readExcelFile = async (file) => {
     const buffer = await readFileAsArrayBuffer(file);
+    const sigCheck = validateFileMagicBytes(buffer, 'excel');
+    if (!sigCheck.valid) {
+      throw new Error(sigCheck.error);
+    }
     const XLSX = await import('xlsx');
     const data = new Uint8Array(buffer);
     const workbook = XLSX.read(data, { type: 'array' });
@@ -82,7 +94,8 @@ const CargaArchivos = memo(function CargaArchivos({
     setErrorMsg('');
     setSuccessMsg('');
 
-    const check = validateUploadedFile(file, type === 'cortesias' ? 'excel' : 'txt');
+    const esExcel = type === 'cortesias' || type === 'usuariosSap';
+    const check = validateUploadedFile(file, esExcel ? 'excel' : 'txt');
     if (!check.valid) {
       setErrorMsg(check.error);
       e.target.value = '';
@@ -93,6 +106,8 @@ const CargaArchivos = memo(function CargaArchivos({
       if (type === 'sap') {
         setSapFile(file);
         const buffer = await readFileAsArrayBuffer(file);
+        const sigCheck = validateFileMagicBytes(buffer, 'txt');
+        if (!sigCheck.valid) throw new Error(sigCheck.error);
         const action = esVentas ? 'PARSE_SAP_VENTAS' : 'PARSE_SAP_COMPRAS';
         const res = await runCpuTaskInWorker(action, { buffer }, [buffer]);
         setLecturaSap(res);
@@ -100,26 +115,38 @@ const CargaArchivos = memo(function CargaArchivos({
       } else if (type === 'sunat') {
         setSunatFile(file);
         const buffer = await readFileAsArrayBuffer(file);
+        const sigCheck = validateFileMagicBytes(buffer, 'txt');
+        if (!sigCheck.valid) throw new Error(sigCheck.error);
         const action = esVentas ? 'PARSE_SUNAT_VENTAS' : 'PARSE_SUNAT_COMPRAS';
         const res = await runCpuTaskInWorker(action, { buffer }, [buffer]);
-        if (activeCompany?.ruc && res.rucDetectado && res.rucDetectado !== activeCompany.ruc) {
-          res.advertencias.push(
-            `El RUC del archivo (${res.rucDetectado}) difiere de la empresa activa (${activeCompany.ruc}).`
-          );
-          if (res.estado === 'ok') res.estado = 'advertencia';
-        }
-        setLecturaSunat(res);
-        if (res.periodoDetectado && !periodo) setPeriodo(res.periodoDetectado);
+        const nextRes =
+          activeCompany?.ruc && res.rucDetectado && res.rucDetectado !== activeCompany.ruc
+            ? {
+                ...res,
+                advertencias: [
+                  ...(res.advertencias || []),
+                  `El RUC del archivo (${res.rucDetectado}) difiere de la empresa activa (${activeCompany.ruc}).`,
+                ],
+                estado: res.estado === 'ok' ? 'advertencia' : res.estado,
+              }
+            : res;
+        setLecturaSunat(nextRes);
+        if (nextRes.periodoDetectado && !periodo) setPeriodo(nextRes.periodoDetectado);
       } else if (type === 'cortesias' && esVentas) {
         setCortesiasFile(file);
         const filas = await readExcelFile(file);
         const res = await runCpuTaskInWorker('PARSE_CORTESIAS', { filas });
         setLecturaCortesias(res);
+      } else if (type === 'usuariosSap' && !esVentas) {
+        setUsuariosSapFile(file);
+        const filas = await readExcelFile(file);
+        const res = await runCpuTaskInWorker('PARSE_USUARIOS_SAP_COMPRAS', { filas });
+        setLecturaUsuariosSap(res);
       }
     } catch (err) {
       const fallo = {
         estado: 'error',
-        formato: type === 'cortesias' ? 'Excel (.xlsx / .xls)' : 'TXT delimitado por "|"',
+        formato: esExcel ? 'Excel (.xlsx / .xls)' : 'TXT delimitado por "|"',
         mensaje: err.message || 'No se pudo leer el archivo.',
         registrosValidos: 0,
         registrosLeidos: 0,
@@ -135,6 +162,7 @@ const CargaArchivos = memo(function CargaArchivos({
       if (type === 'sap') setLecturaSap(fallo);
       if (type === 'sunat') setLecturaSunat(fallo);
       if (type === 'cortesias') setLecturaCortesias(fallo);
+      if (type === 'usuariosSap') setLecturaUsuariosSap(fallo);
     }
     e.target.value = '';
   };
@@ -144,12 +172,14 @@ const CargaArchivos = memo(function CargaArchivos({
     if (type === 'sap') { setSapFile(null); setLecturaSap(null); }
     if (type === 'sunat') { setSunatFile(null); setLecturaSunat(null); }
     if (type === 'cortesias') { setCortesiasFile(null); setLecturaCortesias(null); }
+    if (type === 'usuariosSap') { setUsuariosSapFile(null); setLecturaUsuariosSap(null); }
   };
 
   const sapValido = !!sapFile && lecturaSap && lecturaSap.estado !== 'error' && lecturaSap.registrosValidos > 0;
   const sunatValido = !!sunatFile && lecturaSunat && lecturaSunat.estado !== 'error' && lecturaSunat.registrosValidos > 0;
   const cortesiasInvalido = esVentas && !!cortesiasFile && lecturaCortesias && lecturaCortesias.estado === 'error';
-  const botonHabilitado = sapValido && sunatValido && !cortesiasInvalido && !loading;
+  const usuariosSapInvalido = !esVentas && !!usuariosSapFile && lecturaUsuariosSap && lecturaUsuariosSap.estado === 'error';
+  const botonHabilitado = sapValido && sunatValido && !cortesiasInvalido && !usuariosSapInvalido && !loading;
 
   const handleProcess = async (e) => {
     e.preventDefault();
@@ -175,6 +205,10 @@ const CargaArchivos = memo(function CargaArchivos({
       setErrorMsg('El archivo opcional de cortesías presenta errores de estructura. Reemplácelo o quítelo antes de procesar.');
       return;
     }
+    if (!esVentas && usuariosSapInvalido) {
+      setErrorMsg('El archivo opcional de usuarios SAP presenta errores de estructura. Reemplácelo o quítelo antes de procesar.');
+      return;
+    }
 
     const periodoFinal = (periodo || lecturaSunat?.periodoDetectado || lecturaSap?.periodoDetectado || '').trim();
     if (periodoFinal.length !== 6 || !/^\d+$/.test(periodoFinal)) {
@@ -197,27 +231,64 @@ const CargaArchivos = memo(function CargaArchivos({
       return;
     }
 
+    // Guardia de RUC: evitar cargar accidentalmente archivos SUNAT de otra empresa
+    if (activeCompany?.ruc && lecturaSunat?.rucDetectado && lecturaSunat.rucDetectado !== activeCompany.ruc) {
+      const confirmarRuc = window.confirm(
+        `ADVERTENCIA DE SEGURIDAD CONTABLE\n\nEl archivo SUNAT pertenece al RUC ${lecturaSunat.rucDetectado}, pero la empresa activa es ${activeCompany.razon_social} (RUC ${activeCompany.ruc}).\n\n¿Estás seguro de continuar y guardar estos comprobantes bajo ${activeCompany.razon_social}?`
+      );
+      if (!confirmarRuc) {
+        setErrorMsg(
+          `Carga cancelada: el RUC del archivo SUNAT (${lecturaSunat.rucDetectado}) no coincide con la empresa activa (${activeCompany.ruc}).`
+        );
+        return;
+      }
+    }
+
     setLoading(true);
     setProgressPct(5);
     const chunkSize = networkProfile.recommendedBatchSize || 1500;
     const concurrency = networkProfile.recommendedConcurrency || 4;
+    const diaPadded = String(diaNum).padStart(2, '0');
+    // Versión temporal negativa en staging para NO borrar la carga previa válida hasta confirmar todos los lotes
+    const stagingVersion = -Math.max(1, (Date.now() % 1_000_000_000) + Math.floor(Math.random() * 1000));
+
+    const publicarPeriodoAtomico = async (periodId) => {
+      const { error: finErr } = await supabase.rpc('finalizar_periodo_carga', {
+        p_periodo_id: periodId,
+        p_target_version: versionNum,
+      });
+      if (!finErr) return;
+
+      const msg = finErr.message || '';
+      const rpcMissing =
+        finErr.code === '42883' ||
+        finErr.code === 'PGRST202' ||
+        msg.includes('Could not find the function');
+      if (!rpcMissing) throw finErr;
+
+      // Fallback si la RPC aún no ha sido migrada en la BD remota
+      await supabase
+        .from('periodos_carga')
+        .delete()
+        .neq('id', periodId)
+        .eq('empresa_id', activeCompany.id)
+        .eq('periodo', periodoFinal)
+        .eq('dia', diaPadded)
+        .eq('version', versionNum)
+        .eq('modulo', activeModule);
+
+      const { error: updErr } = await supabase
+        .from('periodos_carga')
+        .update({ version: versionNum, estado: 'completado' })
+        .eq('id', periodId);
+      if (updErr) throw updErr;
+    };
 
     try {
       if (esVentas) {
-        const diaPadded = String(diaNum).padStart(2, '0');
         setStatusText('Conciliando comprobantes y preparando período...');
 
-        // Limpiar cualquier intento previo incompleto o versión idéntica para evitar error de clave duplicada
-        await supabase
-          .from('periodos_carga')
-          .delete()
-          .eq('empresa_id', activeCompany.id)
-          .eq('periodo', periodoFinal)
-          .eq('dia', diaPadded)
-          .eq('version', versionNum)
-          .eq('modulo', activeModule);
-
-        // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera del período en Supabase
+        // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera en staging
         const [conciliacionRes, periodRes] = await Promise.all([
           runCpuTaskInWorker('CONCILIAR_VENTAS', {
             sap: lecturaSap.registros,
@@ -231,7 +302,7 @@ const CargaArchivos = memo(function CargaArchivos({
               usuario_id: userProfile.id,
               periodo: periodoFinal,
               dia: diaPadded,
-              version: versionNum,
+              version: stagingVersion,
               estado: 'procesando',
               modulo: activeModule,
             })
@@ -267,7 +338,6 @@ const CargaArchivos = memo(function CargaArchivos({
                 p_filas: chunk,
               });
               if (rpcErr) {
-                // Fallback a insert directo si la RPC no estuviera disponible
                 const { error: insertErr } = await supabase.from('detalle_ventas').insert(chunk);
                 if (insertErr) throw insertErr;
               }
@@ -281,14 +351,17 @@ const CargaArchivos = memo(function CargaArchivos({
               label: 'BulkRpcVentas',
             }
           );
+
+          await publicarPeriodoAtomico(periodId);
         } catch (insertErr) {
-          await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
+          // Limpiar únicamente el período en staging para preservar cualquier carga previa válida
+          await supabase.from('periodos_carga').delete().eq('id', periodId);
           throw insertErr;
         }
 
-        await supabase.from('periodos_carga').update({ estado: 'completado' }).eq('id', periodId);
         setProgressPct(100);
         queryClient.setQueryData(['ventasDocumentos', periodId], docs);
+        idbSetQuery(JSON.stringify(['ventasDocumentos', periodId]), ['ventasDocumentos', periodId], docs);
 
         setSuccessMsg(
           `¡Validación completada! Se conciliaron ${docs.length.toLocaleString('es-PE')} comprobantes únicos del período ${periodoFinal}.`
@@ -300,27 +373,17 @@ const CargaArchivos = memo(function CargaArchivos({
         setLecturaSunat(null);
         setLecturaCortesias(null);
 
-        onProcessComplete(periodId, `${periodoFinal} (Día: ${String(diaNum).padStart(2, '0')}, v${versionNum})`);
+        onProcessComplete(periodId, `${periodoFinal} (Día: ${diaPadded}, v${versionNum})`);
       } else {
-        // Flujo de Compras (únicamente TXT SAP y TXT SUNAT — sin LOG SIRE):
-        const diaPadded = String(diaNum).padStart(2, '0');
+        // Flujo de Compras (TXT SAP + TXT SUNAT + Excel opcional de usuarios SAP):
         setStatusText('Conciliando comprobantes de Compras (SAP vs. SUNAT) y preparando período...');
 
-        // Limpiar cualquier intento previo incompleto o versión idéntica para evitar error de clave duplicada
-        await supabase
-          .from('periodos_carga')
-          .delete()
-          .eq('empresa_id', activeCompany.id)
-          .eq('periodo', periodoFinal)
-          .eq('dia', diaPadded)
-          .eq('version', versionNum)
-          .eq('modulo', activeModule);
-
-        // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera del período en Supabase
+        // 1. Lanzar la conciliación en el Worker AL MISMO TIEMPO que se crea la cabecera en staging
         const [conciliacionRes, periodRes] = await Promise.all([
           runCpuTaskInWorker('CONCILIAR_COMPRAS_V2', {
             sap: lecturaSap.registros,
             sunat: lecturaSunat.registros,
+            usuariosSap: lecturaUsuariosSap?.registros || null,
           }),
           supabase
             .from('periodos_carga')
@@ -329,7 +392,7 @@ const CargaArchivos = memo(function CargaArchivos({
               usuario_id: userProfile.id,
               periodo: periodoFinal,
               dia: diaPadded,
-              version: versionNum,
+              version: stagingVersion,
               estado: 'procesando',
               modulo: activeModule,
             })
@@ -378,12 +441,14 @@ const CargaArchivos = memo(function CargaArchivos({
               label: 'BulkRpcCompras',
             }
           );
+
+          await publicarPeriodoAtomico(periodId);
         } catch (insertErr) {
-          await supabase.from('periodos_carga').update({ estado: 'error' }).eq('id', periodId);
+          // Limpiar únicamente el período en staging para preservar cualquier carga previa válida
+          await supabase.from('periodos_carga').delete().eq('id', periodId);
           throw insertErr;
         }
 
-        await supabase.from('periodos_carga').update({ estado: 'completado' }).eq('id', periodId);
         setProgressPct(100);
         queryClient.setQueryData(['comprasDocumentos', periodId], docs);
         idbSetQuery(JSON.stringify(['comprasDocumentos', periodId]), ['comprasDocumentos', periodId], docs);
@@ -393,12 +458,14 @@ const CargaArchivos = memo(function CargaArchivos({
         );
         setSapFile(null);
         setSunatFile(null);
+        setUsuariosSapFile(null);
         setLecturaSap(null);
         setLecturaSunat(null);
+        setLecturaUsuariosSap(null);
         onProcessComplete(periodId, `${periodoFinal} (Día: ${diaPadded}, v${versionNum})`);
       }
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       setErrorMsg(err.message || 'Ocurrió un error inesperado al procesar y guardar la validación.');
     } finally {
       setLoading(false);
@@ -610,7 +677,7 @@ const CargaArchivos = memo(function CargaArchivos({
       <p className="text-muted mb-4" style={{ fontSize: '0.86rem' }}>
         {esVentas
           ? 'Cargue los archivos TXT exportados de SAP y SUNAT del período a conciliar y, opcionalmente, el archivo Excel de cortesías.'
-          : 'Cargue únicamente los archivos TXT exportados de SAP y SUNAT correspondientes al mismo período contable. La conciliación se realiza por RUC + Tipo de documento + Serie + Correlativo.'}
+          : 'Cargue los archivos TXT exportados de SAP y SUNAT del mismo período contable y, opcionalmente, el Excel de usuarios SAP (también puede subirlo luego desde la tabla de Conciliación). La conciliación se realiza por RUC + Tipo de documento + Serie + Correlativo.'}
       </p>
 
       {errorMsg && (
@@ -838,7 +905,7 @@ const CargaArchivos = memo(function CargaArchivos({
               obligatorio: true,
               file: sapFile,
               lectura: lecturaSap,
-              colClass: 'col-lg-6 col-md-6',
+              colClass: 'col-lg-4 col-md-6',
             })}
             {renderTarjetaArchivo({
               tipo: 'sunat',
@@ -849,7 +916,18 @@ const CargaArchivos = memo(function CargaArchivos({
               obligatorio: true,
               file: sunatFile,
               lectura: lecturaSunat,
-              colClass: 'col-lg-6 col-md-6',
+              colClass: 'col-lg-4 col-md-6',
+            })}
+            {renderTarjetaArchivo({
+              tipo: 'usuariosSap',
+              inputId: 'input-usuarios-sap',
+              accept: '.xlsx,.xls',
+              titulo: '3. Usuarios SAP (opcional)',
+              subtitulo: 'Excel SAP (Nº documento y Nombre del usuario)',
+              obligatorio: false,
+              file: usuariosSapFile,
+              lectura: lecturaUsuariosSap,
+              colClass: 'col-lg-4 col-md-6',
             })}
           </div>
         )}
