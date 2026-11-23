@@ -101,6 +101,22 @@ const ModalDetalleDocumentoCompras = memo(function ModalDetalleDocumentoCompras(
               <div className="text-muted mt-1" style={{ fontSize: '0.8rem' }}>
                 Clave de validación:{' '}
                 <strong className="font-mono text-dark">{doc.clave_legible}</strong>
+                {(doc.sap?.doc_interno || doc.nro_doc_sap) && (
+                  <span className="ms-3">
+                    N° Doc. SAP:{' '}
+                    <strong className="font-mono text-primary">
+                      {doc.sap?.doc_interno || doc.nro_doc_sap}
+                    </strong>
+                  </span>
+                )}
+                {(doc.sap?.usuario_sap || doc.usuario_sap) && (
+                  <span className="ms-3">
+                    Usuario SAP:{' '}
+                    <strong className="font-mono text-dark">
+                      {doc.sap?.usuario_sap || doc.usuario_sap}
+                    </strong>
+                  </span>
+                )}
                 {doc.sap?.linea && (
                   <span className="ms-3">
                     Origen SAP: <strong className="font-mono">línea {doc.sap.linea}</strong>
@@ -266,6 +282,44 @@ const ModalDetalleDocumentoCompras = memo(function ModalDetalleDocumentoCompras(
                             )}
                           </td>
                         </tr>
+                        <tr>
+                          <td className="fw-semibold">N° Documento SAP</td>
+                          <td className="font-mono fw-semibold text-primary">
+                            {doc.en_sap ? (doc.sap?.doc_interno || doc.nro_doc_sap || '—') : '—'}
+                          </td>
+                          <td className="text-muted">—</td>
+                          <td className="text-center">
+                            <span className="text-muted">SAP</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="fw-semibold">Usuario SAP</td>
+                          <td className="font-mono fw-semibold">
+                            {doc.en_sap ? (doc.sap?.usuario_sap || doc.usuario_sap || '—') : '—'}
+                            {doc.sap?.transaccion_sap && (
+                              <span className="badge ms-2" style={{ backgroundColor: '#EEF2FF', color: '#3730A3', fontSize: '0.68rem' }}>
+                                {doc.sap.transaccion_sap}
+                              </span>
+                            )}
+                          </td>
+                          <td className="text-muted">
+                            {doc.sap?.fecha_contabilizacion ? `Contab.: ${doc.sap.fecha_contabilizacion}` : '—'}
+                          </td>
+                          <td className="text-center">
+                            <span className="text-muted">SAP</span>
+                          </td>
+                        </tr>
+                        {doc.sap?.texto_cabecera && (
+                          <tr>
+                            <td className="fw-semibold">Texto Cab. SAP</td>
+                            <td colSpan={2} style={{ whiteSpace: 'normal' }}>
+                              {doc.sap.texto_cabecera}
+                            </td>
+                            <td className="text-center">
+                              <span className="text-muted">Info</span>
+                            </td>
+                          </tr>
+                        )}
                         <tr>
                           <td className="fw-semibold">Razón Social</td>
                           <td className={diffNombre ? 'text-warning fw-semibold' : ''} style={{ whiteSpace: 'normal' }}>

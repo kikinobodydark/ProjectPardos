@@ -4,7 +4,7 @@
 // - Estrategia Network-First con fallback a caché para navegación HTML
 // - Ignora peticiones dinámicas a Supabase Auth / REST para preservar seguridad
 // ============================================================================
-const CACHE_NAME = 'conciliatributo-static-v2';
+const CACHE_NAME = 'conciliatributo-static-v3';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -13,6 +13,13 @@ const PRECACHE_ASSETS = [
   '/logo-pardos.webp',
   '/logo-pardos.avif',
 ];
+
+const IMMUTABLE_PUBLIC_FILES = new Set([
+  '/favicon.svg',
+  '/icons.svg',
+  '/logo-pardos.webp',
+  '/logo-pardos.avif',
+]);
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -38,15 +45,20 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
-  // Nunca cachear llamadas a Supabase ni APIs externas
-  if (url.hostname.includes('supabase.co') || url.pathname.startsWith('/rest/') || url.pathname.startsWith('/auth/')) {
+  // Nunca cachear el propio service worker ni llamadas a Supabase/APIs externas
+  if (
+    url.pathname === '/sw.js' ||
+    url.hostname.includes('supabase.co') ||
+    url.pathname.startsWith('/rest/') ||
+    url.pathname.startsWith('/auth/')
+  ) {
     return;
   }
 
-  // Archivos estáticos inmutables (/assets/, imágenes WebP/AVIF/SVG, fuentes) -> Cache-First
+  // Solo assets con hash (/assets/) e iconos/logos explícitos -> Cache-First
   const isStaticAsset =
     url.pathname.startsWith('/assets/') ||
-    /\.(webp|avif|svg|png|woff2?|css|js)(\?.*)?$/i.test(url.pathname);
+    IMMUTABLE_PUBLIC_FILES.has(url.pathname);
 
   if (isStaticAsset) {
     event.respondWith(

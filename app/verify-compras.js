@@ -21,8 +21,9 @@ import {
   decodificarTexto,
   parsearSapCompras,
   parsearSunatCompras,
+  parsearUsuariosSapCompras,
 } from './src/utils/compras/lectores.js';
-import { conciliarCompras } from './src/utils/compras/motor.js';
+import { conciliarCompras, enriquecerComprasConUsuariosSap } from './src/utils/compras/motor.js';
 import { validarDocumentoCompras } from './src/utils/compras/reglas.js';
 import { aFilaBDCompras, desdeFilaBDCompras } from './src/utils/compras/persistencia.js';
 import {
@@ -30,6 +31,7 @@ import {
   filtrarDocumentosCompras,
   calcularIndicadoresCompras,
   construirDatosExcelCompras,
+  obtenerDocsSapParaCopiar,
 } from './src/utils/compras/reportes.js';
 import { runCpuTaskInWorker } from './src/utils/jobQueue.js';
 
@@ -134,23 +136,23 @@ function lineaSunat({
 {
   const sapTxt = [
     // Doc 1: OK (Factura tipo 1 -> 01, ceros en serie 0001 y correlativo 00000045; SUNAT viene con "45")
-    lineaSap({ ruc: '20100047218', tipo: '1', serie: '0001', corr: '00000045', fecha: '02/06/2026', base: '200.00', igv: '36.00', valorAdq: '10.00', otros: '4.00', total: '250.00', nombre: 'PROVEEDOR OK SAC' }),
+    lineaSap({ cuo: '1900014801', ruc: '20100047218', tipo: '1', serie: '0001', corr: '00000045', fecha: '02/06/2026', base: '200.00', igv: '36.00', valorAdq: '10.00', otros: '4.00', total: '250.00', nombre: 'PROVEEDOR OK SAC' }),
     // Duplicado intencional del Doc 1 en SAP (debe ser detectado como duplicado y no duplicar filas en resultados)
-    lineaSap({ ruc: '20100047218', tipo: '01', serie: '0001', corr: '00000045', fecha: '02/06/2026', base: '200.00', igv: '36.00', valorAdq: '10.00', otros: '4.00', total: '250.00', nombre: 'PROVEEDOR OK SAC' }),
+    lineaSap({ cuo: '1900014801', ruc: '20100047218', tipo: '01', serie: '0001', corr: '00000045', fecha: '02/06/2026', base: '200.00', igv: '36.00', valorAdq: '10.00', otros: '4.00', total: '250.00', nombre: 'PROVEEDOR OK SAC' }),
     // Doc 2: Nota de Crédito (tipo 7 -> 07) OK
-    lineaSap({ ruc: '20100047218', tipo: '07', serie: 'FC01', corr: '00000010', fecha: '05/06/2026', base: '-50.00', igv: '-9.00', total: '-59.00', nombre: 'PROVEEDOR OK SAC' }),
+    lineaSap({ cuo: '1900014802', ruc: '20100047218', tipo: '07', serie: 'FC01', corr: '00000010', fecha: '05/06/2026', base: '-50.00', igv: '-9.00', total: '-59.00', nombre: 'PROVEEDOR OK SAC' }),
     // Doc 3: Nota de Débito (tipo 9 -> 09) OK
-    lineaSap({ ruc: '20100047218', tipo: '9', serie: 'FD01', corr: '00000002', fecha: '06/06/2026', base: '10.00', igv: '1.80', total: '11.80', nombre: 'PROVEEDOR OK SAC' }),
+    lineaSap({ cuo: '1900014803', ruc: '20100047218', tipo: '9', serie: 'FD01', corr: '00000002', fecha: '06/06/2026', base: '10.00', igv: '1.80', total: '11.80', nombre: 'PROVEEDOR OK SAC' }),
     // Doc 4: Tipo 14 (Recibo servicios públicos) SOLO EN SAP -> Excepción: debe ser OK (SIN ERROR 6 ni ERROR 8)
-    lineaSap({ ruc: '20100017491', tipo: '14', serie: 'S001', corr: '00998877', fecha: '07/06/2026', base: '300.00', igv: '54.00', total: '354.00', nombre: 'TELEFONICA DEL PERU SAA' }),
+    lineaSap({ cuo: '1900014804', ruc: '20100017491', tipo: '14', serie: 'S001', corr: '00998877', fecha: '07/06/2026', base: '300.00', igv: '54.00', total: '354.00', nombre: 'TELEFONICA DEL PERU SAA' }),
     // Doc 5: Acumulación múltiple -> ERROR 1 (Base), ERROR 2 (IGV), ERROR 3 (Valor Adq), ERROR 4 (Otros), ERROR 5 (Total), ERROR 7 (Fecha) y OBS 2 (Tipo ID distinto)
-    lineaSap({ ruc: '20222222222', tipo: '01', serie: 'F002', corr: '00000100', fecha: '10/06/2026', tipoId: '1', base: '100.01', igv: '18.02', valorAdq: '5.50', otros: '2.00', total: '125.53', nombre: 'PROVEEDOR DIFERENCIAS SAC' }),
+    lineaSap({ cuo: '1900014518', ruc: '20222222222', tipo: '01', serie: 'F002', corr: '00000100', fecha: '10/06/2026', tipoId: '1', base: '100.01', igv: '18.02', valorAdq: '5.50', otros: '2.00', total: '125.53', nombre: 'PROVEEDOR DIFERENCIAS SAC' }),
     // Doc 6: NO EXISTE EN SUNAT (ERROR 6)
-    lineaSap({ ruc: '20333333333', tipo: '01', serie: 'F003', corr: '00000200', fecha: '11/06/2026', base: '500.00', igv: '90.00', total: '590.00', nombre: 'PROVEEDOR SOLO SAP EIRL' }),
+    lineaSap({ cuo: '1900014519', ruc: '20333333333', tipo: '01', serie: 'F003', corr: '00000200', fecha: '11/06/2026', base: '500.00', igv: '90.00', total: '590.00', nombre: 'PROVEEDOR SOLO SAP EIRL' }),
     // Doc 7: Tipo de documento incorrecto (03 Boleta -> ERROR 8) presente en ambos
-    lineaSap({ ruc: '20444444444', tipo: '03', serie: 'B001', corr: '00000300', fecha: '12/06/2026', base: '80.00', igv: '14.40', total: '94.40', nombre: 'PROVEEDOR BOLETA SAC' }),
+    lineaSap({ cuo: '001900014520', ruc: '20444444444', tipo: '03', serie: 'B001', corr: '00000300', fecha: '12/06/2026', base: '80.00', igv: '14.40', total: '94.40', nombre: 'PROVEEDOR BOLETA SAC' }),
     // Doc 8: CON OBSERVACIONES únicamente (OBS 2: tipo identidad SAP=4 vs SUNAT=6, importes y fecha OK)
-    lineaSap({ ruc: '20555555555', tipo: '01', serie: 'F005', corr: '00000400', fecha: '13/06/2026', tipoId: '4', base: '100.00', igv: '18.00', total: '118.00', nombre: 'PROVEEDOR OBS ID SAC' }),
+    lineaSap({ cuo: '1900014521', ruc: '20555555555', tipo: '01', serie: 'F005', corr: '00000400', fecha: '13/06/2026', tipoId: '4', base: '100.00', igv: '18.00', total: '118.00', nombre: 'PROVEEDOR OBS ID SAC' }),
   ].join('\n');
 
   const sunatTxt = [
@@ -325,6 +327,112 @@ function lineaSunat({
   assert.strictEqual(sapConSunat.estado, 'error', 'Debe rechazar TXT SUNAT cargado en casilla SAP');
   const sunatConSap = parsearSunatCompras(sapTxt);
   assert.strictEqual(sunatConSap.estado, 'error', 'Debe rechazar TXT SAP cargado en casilla SUNAT');
+
+  // 10. Verificar N° de documento SAP, copiado total con error (ignorando paginación) y cruce con Excel de Usuarios SAP
+  assert.strictEqual(d1.nro_doc_sap, '1900014801', 'Debe exponer N° documento SAP del campo 2 del TXT');
+  assert.strictEqual(d5.sap.doc_interno, '1900014518');
+
+  // Copiado de TODOS los N° doc SAP con error (Doc 5, Doc 6 y Doc 7 -> 3 docs; excluye OK y OBS 1/OBS 2)
+  const copiaErrores = obtenerDocsSapParaCopiar(docs, { soloConError: true });
+  assert.strictEqual(copiaErrores.total, 3, 'Debe extraer exactamente los 3 N° doc SAP con error');
+  assert.deepStrictEqual(copiaErrores.lista, ['1900014518', '1900014519', '001900014520']);
+  assert.strictEqual(copiaErrores.texto, '1900014518\n1900014519\n001900014520');
+
+  // Copiado de todos los N° doc SAP (8 docs con SAP, excluyendo Doc 9 que solo existe en SUNAT)
+  const copiaTodos = obtenerDocsSapParaCopiar(docs, { soloConError: false });
+  assert.strictEqual(copiaTodos.total, 8, 'Debe extraer los 8 N° doc SAP totales');
+
+  // Parseo de Excel de Usuarios SAP con las cabeceras exactas de SAP BKPF (Imagen 2)
+  const filasExcelSap = [
+    {
+      Sociedad: '1013',
+      'Nº documento': '1900014518',
+      Referencia: '01-0F002-00000100',
+      Ejercicio: '2026',
+      'Fecha de documento': '10/06/2026',
+      'Fe.contabilización': '11/06/2026',
+      'Nombre del usuario': 'ASIS-CON-04',
+      'Código transacción': 'MIRO',
+      'Texto cab.documento': 'PROVEEDOR DIFERENCIAS',
+    },
+    {
+      Sociedad: '1013',
+      'Nº documento': '1900014519.0', // Simula formato numérico decimal de Excel
+      'Fe.contabilización': '12/06/2026',
+      'Nombre del usuario': 'PRAC-CON-01',
+      'Código transacción': 'FB60',
+      'Texto cab.documento': 'SOLO EN SAP',
+    },
+    {
+      Sociedad: '1013',
+      'Nº documento': '1900014520', // Sin ceros a la izquierda; SAP TXT tenía 001900014520
+      'Fe.contabilización': '12/06/2026',
+      'Nombre del usuario': 'NSOTO',
+      'Código transacción': 'FB60',
+    },
+    {
+      Sociedad: '1013',
+      'Nº documento': '9999999999', // No existe en este período
+      'Nombre del usuario': 'BTACUNAN',
+    },
+  ];
+
+  const resExcelUsr = parsearUsuariosSapCompras(filasExcelSap);
+  assert.strictEqual(resExcelUsr.estado, 'ok', 'Excel SAP BKPF válido debe parsear sin error');
+  assert.strictEqual(resExcelUsr.registrosValidos, 4);
+
+  // Rechazo si falta columna obligatoria
+  const resExcelInvalido = parsearUsuariosSapCompras([{ Sociedad: '1013', Referencia: 'ABC' }]);
+  assert.strictEqual(resExcelInvalido.estado, 'error', 'Debe rechazar Excel sin Nº documento / Nombre del usuario');
+
+  // Enriquecimiento post-conciliación sobre docs existentes (flujo en ConciliacionCompras)
+  const cruce = enriquecerComprasConUsuariosSap(docs, resExcelUsr.registros);
+  assert.strictEqual(cruce.totalCoincidencias, 3, 'Debe cruzar los 3 docs (incluyendo fallback sin ceros a la izquierda)');
+  assert.strictEqual(cruce.sinCoincidenciaExcel, 1, 'Debe reportar 1 doc del Excel sin coincidencia en el período');
+
+  const d5Enr = cruce.docs.find((d) => d.nro_doc_sap === '1900014518');
+  const d6Enr = cruce.docs.find((d) => d.nro_doc_sap === '1900014519');
+  const d7Enr = cruce.docs.find((d) => d.nro_doc_sap === '001900014520');
+  assert.strictEqual(d5Enr.usuario_sap, 'ASIS-CON-04');
+  assert.strictEqual(d5Enr.sap.transaccion_sap, 'MIRO');
+  assert.strictEqual(d6Enr.usuario_sap, 'PRAC-CON-01');
+  assert.strictEqual(d7Enr.usuario_sap, 'NSOTO');
+
+  // Persistencia ida y vuelta de N° Documento SAP + Usuario SAP en detalle_compras
+  const filaEnr = aFilaBDCompras(d5Enr, { periodoId: 'p-1', empresaId: 'e-1' });
+  const recEnr = desdeFilaBDCompras({ ...filaEnr, id: 'id-enr' });
+  assert.strictEqual(recEnr.nro_doc_sap, '1900014518');
+  assert.strictEqual(recEnr.usuario_sap, 'ASIS-CON-04');
+  assert.strictEqual(recEnr.sap.transaccion_sap, 'MIRO');
+  assert.strictEqual(recEnr.sap.texto_cabecera, 'PROVEEDOR DIFERENCIAS');
+
+  // Nuevos filtros: docSap y usuarioSap
+  assert.strictEqual(filtrarDocumentosCompras(cruce.docs, { ...FILTROS_INICIALES_COMPRAS, docSap: '14518' }).length, 1);
+  assert.strictEqual(filtrarDocumentosCompras(cruce.docs, { ...FILTROS_INICIALES_COMPRAS, usuarioSap: 'ASIS-CON-04' }).length, 1);
+  assert.strictEqual(filtrarDocumentosCompras(cruce.docs, { ...FILTROS_INICIALES_COMPRAS, usuarioSap: 'SIN_USUARIO' }).length, 6);
+
+  // Exportación Excel con N° Documento SAP, Usuario SAP y resumen por usuario
+  const hojasEnr = construirDatosExcelCompras(cruce.docs);
+  const filaD5Excel = hojasEnr['Con Diferencias'].find((r) => r['N° Documento SAP'] === '1900014518');
+  assert.ok(filaD5Excel, 'La hoja Con Diferencias debe incluir la columna N° Documento SAP');
+  assert.strictEqual(filaD5Excel['Usuario SAP'], 'ASIS-CON-04');
+  assert.ok(
+    hojasEnr['Resumen General'].some((r) => r.Indicador === 'Usuario SAP: ASIS-CON-04' && r.Cantidad === 1),
+    'Resumen General debe incluir desglose de documentos con error por Usuario SAP'
+  );
+
+  // Worker fallback: PARSE_USUARIOS_SAP_COMPRAS + CONCILIAR_COMPRAS_V2 con usuariosSap
+  const wUsr = await runCpuTaskInWorker('PARSE_USUARIOS_SAP_COMPRAS', { filas: filasExcelSap });
+  const wConcConUsr = await runCpuTaskInWorker('CONCILIAR_COMPRAS_V2', {
+    sap: wSap.registros,
+    sunat: wSunat.registros,
+    usuariosSap: wUsr.registros,
+  });
+  assert.strictEqual(
+    wConcConUsr.docs.find((d) => d.nro_doc_sap === '1900014518')?.usuario_sap,
+    'ASIS-CON-04',
+    'Worker CONCILIAR_COMPRAS_V2 debe aplicar el cruce opcional de Usuarios SAP'
+  );
 }
 
-console.log('✓ Todas las pruebas del módulo de Compras (8 errores, 3 observaciones, tipo 14, clave única, duplicados, persistencia, Excel y Worker) pasaron con éxito.');
+console.log('✓ Todas las pruebas del módulo de Compras (8 errores, 3 observaciones, tipo 14, clave única, duplicados, N° Doc SAP, Usuarios SAP Excel, copiado total, persistencia, Excel y Worker) pasaron con éxito.');

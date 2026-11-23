@@ -7,8 +7,7 @@
 // 5. Pre-conexión DNS/TLS temprana para minimizar latencia hacia la base de datos
 // ============================================================================
 import { createClient } from '@supabase/supabase-js';
-import { getOrCreateCsrfToken } from './security';
-import { createInstrumentedFetch } from './telemetry';
+import { createInstrumentedFetch } from './telemetry.js';
 
 const supabaseUrl =
   (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_SUPABASE_POOLER_URL || import.meta.env?.VITE_SUPABASE_URL)) ||
@@ -86,10 +85,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     fetch: instrumentedSupabaseFetch,
     headers: {
       'X-Client-Info': 'conciliatributo-web',
-      'X-Requested-With': 'XMLHttpRequest',
-      'X-Connection-Mode': 'pooler-transaction',
-      'Accept-Encoding': 'br, gzip, deflate',
-      'X-CSRF-Token': typeof window !== 'undefined' ? getOrCreateCsrfToken() : '',
     },
   },
 });

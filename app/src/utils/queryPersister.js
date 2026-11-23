@@ -31,8 +31,12 @@ const SYNC_QUERY_PREFIXES = new Set([
 
 const IDB_QUERY_PREFIXES = new Set([
   'ventasDocumentos',
+  'comprasDocumentos',
   'reconciliation',
 ]);
+
+let activeSyncEntries = {};
+let activeSyncSaveTimer = null;
 
 function openIdb() {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
@@ -104,6 +108,8 @@ export async function idbGetQuery(queryHash) {
 }
 
 export async function clearPersistedQueryCache() {
+  clearTimeout(activeSyncSaveTimer);
+  activeSyncEntries = {};
   if (typeof sessionStorage !== 'undefined') {
     sessionStorage.removeItem(SESSION_CACHE_KEY);
   }
@@ -173,8 +179,7 @@ export function setupQueryPersistence(queryClient) {
   });
 
   // 3. Suscribirse a actualizaciones exitosas del QueryCache para persistirlas
-  let syncSaveTimer = null;
-  const syncEntries = (() => {
+  activeSyncEntries = (() => {
     try {
       const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
       return raw ? JSON.parse(raw) : {};
@@ -192,22 +197,22 @@ export function setupQueryPersistence(queryClient) {
 
     if (event.type === 'removed') {
       if (SYNC_QUERY_PREFIXES.has(prefix)) {
-        delete syncEntries[query.queryHash];
+        delete activeSyncEntries[query.queryHash];
       }
       return;
     }
 
     if (event.type === 'updated' && query.state.status === 'success' && query.state.data !== undefined) {
       if (SYNC_QUERY_PREFIXES.has(prefix)) {
-        syncEntries[query.queryHash] = {
+        activeSyncEntries[query.queryHash] = {
           queryKey,
           data: query.state.data,
           updatedAt: query.state.dataUpdatedAt || Date.now(),
         };
-        clearTimeout(syncSaveTimer);
-        syncSaveTimer = setTimeout(() => {
+        clearTimeout(activeSyncSaveTimer);
+        activeSyncSaveTimer = setTimeout(() => {
           try {
-            sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(syncEntries));
+            sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(activeSyncEntries));
           } catch {
             // Si excede cuota, limpiar entradas antiguas
           }

@@ -9,11 +9,14 @@
 // 6. Registro de actividad sospechosa y auditoría de seguridad en servidor
 // 7. Expiración e invalidación de enlaces de recuperación y sesiones inactivas
 // ============================================================================
-import { supabase } from './supabaseClient';
+import { supabase } from './supabaseClient.js';
+import { sanitizeExcelCell, sanitizeExcelRow } from './excelSanitizer.js';
 
-// 1. Límites de tamaño de archivo (15 MB para TXT contables, 5 MB para Excel de cortesías)
+export { sanitizeExcelCell, sanitizeExcelRow };
+
+// 1. Límites de tamaño de archivo (15 MB para TXT contables, 10 MB para Excel opcionales)
 export const MAX_TXT_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB
-export const MAX_EXCEL_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+export const MAX_EXCEL_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 // 2. Expiración de enlaces de recuperación (15 minutos) y timeout de sesión inactiva (30 minutos)
 export const RECOVERY_LINK_MAX_AGE_MS = 15 * 60 * 1000;
@@ -222,24 +225,41 @@ export function sanitizeTextInput(input, maxLength = 250) {
 }
 
 /**
- * Previene inyección de fórmulas en exportaciones Excel / CSV (CSV Injection / Formula Injection).
- * Si un valor de texto comienza con =, +, -, @, Tab o CR, antepone una comilla simple.
+ * Valida la firma binaria (magic bytes) de un ArrayBuffer antes de parsearlo:
+ *  - 'txt': rechaza ejecutables/archivos binarios con bytes NUL o firmas ZIP/PE/ELF/PDF.
+ *  - 'excel': exige firma ZIP (.xlsx -> PK\x03\x04) o Compound Binary (.xls -> D0 CF 11 E0).
  */
-export function sanitizeExcelCell(val) {
-  if (typeof val !== 'string') return val;
-  if (/^[=+\-@\t\r]/.test(val)) {
-    return `'${val}`;
+export function validateFileMagicBytes(buffer, kind = 'txt') {
+  if (!buffer || buffer.byteLength === 0) {
+    return { valid: false, error: 'El archivo está vacío o no pudo leerse.' };
   }
-  return val;
-}
+  const bytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 512));
 
-export function sanitizeExcelRow(rowObj) {
-  if (!rowObj || typeof rowObj !== 'object') return rowObj;
-  const clean = {};
-  for (const [k, v] of Object.entries(rowObj)) {
-    clean[k] = sanitizeExcelCell(v);
+  if (kind === 'excel') {
+    const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+    const isOle2 =
+      bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;
+    if (!isZip && !isOle2) {
+      logSuspiciousActivity('ARCHIVO_MAGIC_BYTES_EXCEL_INVALIDO', { headerHex: Array.from(bytes.slice(0, 4)).join(',') });
+      return { valid: false, error: 'El contenido del archivo no corresponde a un libro Excel válido (.xlsx / .xls).' };
+    }
+    return { valid: true, error: null };
   }
-  return clean;
+
+  // TXT: bloquear binarios disfrazados (bytes NUL o cabeceras ejecutables/PDF/ZIP)
+  const hasNullByte = bytes.includes(0x00);
+  const isBinarySig =
+    (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) || // MZ (PE/EXE)
+    (bytes.length >= 4 && bytes[0] === 0x7f && bytes[1] === 0x45 && bytes[2] === 0x4c && bytes[3] === 0x46) || // ELF
+    (bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) || // PDF
+    (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04); // ZIP
+
+  if (hasNullByte || isBinarySig) {
+    logSuspiciousActivity('ARCHIVO_MAGIC_BYTES_TXT_BINARIO', { headerHex: Array.from(bytes.slice(0, 4)).join(',') });
+    return { valid: false, error: 'El archivo seleccionado contiene datos binarios no permitidos para un reporte TXT.' };
+  }
+
+  return { valid: true, error: null };
 }
 
 /**

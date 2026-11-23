@@ -34,7 +34,7 @@ const ConfiguracionLocales = memo(function ConfiguracionLocales({
 }) {
   const queryClient = useQueryClient();
   const [csrfToken] = useState(() => getOrCreateCsrfToken());
-  const isAdmin = !userProfile || userProfile?.rol === 'admin';
+  const isAdmin = userProfile?.rol === 'admin';
 
   const [selectedEmpresaId, setSelectedEmpresaId] = useState(
     () => activeCompany?.id || companies[0]?.id || ''
@@ -122,6 +122,25 @@ const ConfiguracionLocales = memo(function ConfiguracionLocales({
 
   const saveMutation = useMutation({
     mutationFn: async (payload) => {
+      // Guardar local y series en una única transacción atómica vía RPC
+      const { error: rpcErr } = await supabase.rpc('guardar_local_con_series', {
+        p_local_id: payload.id || null,
+        p_empresa_id: payload.empresaId,
+        p_nombre: payload.nombre,
+        p_activo: payload.activo,
+        p_series: payload.seriesRows,
+      });
+
+      if (!rpcErr) return;
+
+      // Fallback solo si la RPC aún no ha sido migrada en la BD remota
+      const msg = rpcErr.message || '';
+      const rpcMissing =
+        rpcErr.code === '42883' ||
+        rpcErr.code === 'PGRST202' ||
+        msg.includes('Could not find the function');
+      if (!rpcMissing) throw rpcErr;
+
       let localId = payload.id;
 
       if (localId) {
@@ -135,7 +154,6 @@ const ConfiguracionLocales = memo(function ConfiguracionLocales({
           .eq('id', localId);
         if (updErr) throw updErr;
 
-        // Reemplazar las series del local para reflejar adiciones, ediciones y eliminaciones
         const { error: delErr } = await supabase
           .from('local_series')
           .delete()

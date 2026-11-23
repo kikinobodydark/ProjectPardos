@@ -10,6 +10,7 @@ import {
 } from './utils/security';
 import { useNetworkProfile } from './utils/networkProfile';
 import { clearPersistedQueryCache } from './utils/queryPersister';
+import { COLS_USUARIO_PERFIL, COLS_EMPRESA, COLS_PERIODO } from './utils/dbColumns';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
 import { SkeletonAppShell, SkeletonDashboard, SkeletonTable } from './components/SkeletonLoader';
@@ -25,12 +26,6 @@ const HistorialCargas = lazy(() => import('./components/HistorialCargas'));
 const ConfiguracionEmpresas = lazy(() => import('./components/ConfiguracionEmpresas'));
 const ConfiguracionLocales = lazy(() => import('./components/ConfiguracionLocales'));
 const ConfiguracionUsuarios = lazy(() => import('./components/ConfiguracionUsuarios'));
-
-// Columnas estrictamente necesarias por consulta (evita SELECT *)
-const COLS_USUARIO_PERFIL =
-  'id, nombre, rol, activo, empresa_id, estudio_id, empresas!usuarios_empresa_id_fkey(id, ruc, razon_social, activo, estudio_id)';
-const COLS_EMPRESA = 'id, ruc, razon_social, activo, estudio_id';
-const COLS_PERIODO = 'id, empresa_id, periodo, dia, version, fecha_carga, estado, modulo';
 
 export default function App() {
   const queryClient = useQueryClient();
@@ -139,25 +134,33 @@ export default function App() {
     }
   }, [selectedLocalId]);
 
-  // Limpiar almacenamiento si cambia el usuario de la sesión para evitar fugas de estado
+  // Limpiar almacenamiento y caché persistente (React Query + IndexedDB) si cambia el usuario
   useEffect(() => {
     if (session?.user?.id) {
       const savedUserId = sessionStorage.getItem('userId');
-      if (savedUserId !== session.user.id) {
+      if (savedUserId && savedUserId !== session.user.id) {
         sessionStorage.removeItem('activeModule');
         sessionStorage.removeItem('activeTab');
         sessionStorage.removeItem('activeCompany');
+        sessionStorage.removeItem('activePeriodId');
+        sessionStorage.removeItem('activePeriodLabel');
+        sessionStorage.removeItem('activeLocalId');
         localStorage.removeItem('activeModule');
         localStorage.removeItem('activeTab');
         localStorage.removeItem('activeCompany');
         localStorage.removeItem('userId');
-        sessionStorage.setItem('userId', session.user.id);
+        queryClient.clear();
+        clearPersistedQueryCache();
         setActiveModule(null);
         setActiveTab('dashboard');
         setActiveCompany(null);
+        setPeriodId(null);
+        setActivePeriod('');
+        setSelectedLocalId('ALL');
       }
+      sessionStorage.setItem('userId', session.user.id);
     }
-  }, [session?.user?.id]);
+  }, [session?.user?.id, queryClient]);
 
   // 1. Query del perfil de usuario (pide solo columnas requeridas)
   const { data: userProfile, isLoading: profileLoading } = useQuery({
@@ -415,15 +418,21 @@ export default function App() {
         setActiveCompany(null);
         setPeriodId(null);
         setActivePeriod('');
+        setSelectedLocalId('ALL');
         sessionStorage.removeItem('activeModule');
         sessionStorage.removeItem('activeTab');
         sessionStorage.removeItem('activeCompany');
+        sessionStorage.removeItem('activePeriodId');
+        sessionStorage.removeItem('activePeriodLabel');
+        sessionStorage.removeItem('activeLocalId');
         sessionStorage.removeItem('userId');
+        queryClient.clear();
+        clearPersistedQueryCache();
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [queryClient]);
 
   // Pre-poblar caché del perfil al iniciar sesión para evitar consulta duplicada
   const handleLoginSuccess = useCallback(

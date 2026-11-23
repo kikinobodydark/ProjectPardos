@@ -41,17 +41,20 @@ WITH (security_invoker = true) AS
     count(*) FILTER (
       WHERE (nro_identidad_sap IS NOT NULL OR nombre_sap IS NOT NULL)
         AND (nro_identidad_sunat IS NOT NULL OR nombre_sunat IS NOT NULL)
+        AND upper(COALESCE(nombre_sap, '')) <> 'ANULADO'
         AND (
           abs(COALESCE(base_sap, 0) - COALESCE(base_sunat, 0)) > 0.05
           OR abs(COALESCE(igv_sap, 0) - COALESCE(igv_sunat, 0)) > 0.05
           OR abs(COALESCE(exonerado_sap, 0) - COALESCE(exonerado_sunat, 0)) > 0.05
           OR abs(COALESCE(inafecto_sap, 0) - COALESCE(inafecto_sunat, 0)) > 0.05
+          OR abs(COALESCE(otros_sap, 0) - COALESCE(otros_sunat, 0)) > 0.05
           OR abs(COALESCE(total_sap, 0) - COALESCE(total_sunat, 0)) > 0.05
         )
     ) AS dif_importes_registros,
     count(*) FILTER (
       WHERE (nro_identidad_sap IS NOT NULL OR nombre_sap IS NOT NULL)
         AND (nro_identidad_sunat IS NOT NULL OR nombre_sunat IS NOT NULL)
+        AND upper(COALESCE(nombre_sap, '')) <> 'ANULADO'
         AND (
           COALESCE(tipo_identidad_sap, '') <> COALESCE(tipo_identidad_sunat, '')
           OR COALESCE(nro_identidad_sap, '') <> COALESCE(nro_identidad_sunat, '')
@@ -85,7 +88,21 @@ WITH (security_invoker = true) AS
     sum(exonerado_sap) - sum(exonerado_sunat) AS diff_exonerado,
     sum(inafecto_sap) - sum(inafecto_sunat) AS diff_inafecto,
     sum(otros_sap) - sum(otros_sunat) AS diff_otros,
-    sum(total_sap) - sum(total_sunat) AS diff_total
+    sum(total_sap) - sum(total_sunat) AS diff_total,
+    count(*) FILTER (WHERE nro_identidad_sap IS NOT NULL OR nombre_sap IS NOT NULL) AS total_sap,
+    count(*) FILTER (WHERE nro_identidad_sunat IS NOT NULL OR nombre_sunat IS NOT NULL) AS total_sunat,
+    count(*) FILTER (
+      WHERE (nro_identidad_sap IS NOT NULL OR nombre_sap IS NOT NULL)
+        AND (nro_identidad_sunat IS NOT NULL OR nombre_sunat IS NOT NULL)
+    ) AS coincidentes_registros,
+    count(*) FILTER (
+      WHERE (nro_identidad_sap IS NOT NULL OR nombre_sap IS NOT NULL)
+        AND nro_identidad_sunat IS NULL AND nombre_sunat IS NULL
+    ) AS solo_sap_registros,
+    count(*) FILTER (
+      WHERE (nro_identidad_sunat IS NOT NULL OR nombre_sunat IS NOT NULL)
+        AND nro_identidad_sap IS NULL AND nombre_sap IS NULL
+    ) AS solo_sunat_registros
    FROM public.detalle_compras
   GROUP BY periodo_id;
 

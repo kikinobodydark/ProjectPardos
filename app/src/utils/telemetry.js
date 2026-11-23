@@ -291,7 +291,8 @@ export function createInstrumentedFetch({
         const response = await baseFetch(finalUrl, {
           ...init,
           headers,
-          keepalive: method !== 'POST' || finalUrl.includes('rpc'),
+          // Nunca usar keepalive: true en POST/PUT/PATCH (límite estricto de 64 KB en Chromium)
+          keepalive: method === 'GET' || method === 'HEAD',
         });
         span.end({
           status: response.ok ? 'OK' : 'HTTP_ERROR',

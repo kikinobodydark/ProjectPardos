@@ -5,6 +5,7 @@
 // ============================================================================
 import { validarDocumentoCompras } from './reglas.js';
 import { compararCorrelativosCompras, construirClaveLegible } from './documento.js';
+import { normalizarDocSap, claveDocSapSinCeros } from './lectores.js';
 
 const datosSistema = (r) => ({
   linea: r.linea ?? null,
@@ -23,17 +24,102 @@ const datosSistema = (r) => ({
   otros: r.otros ?? 0,
   total: r.total ?? 0,
   car_sunat: r.car_sunat ?? null,
-  doc_interno: r.doc_interno ?? null,
+  doc_interno: r.doc_interno ? normalizarDocSap(r.doc_interno) : null,
+  usuario_sap: r.usuario_sap ?? null,
+  transaccion_sap: r.transaccion_sap ?? null,
+  fecha_contabilizacion: r.fecha_contabilizacion ?? null,
+  texto_cabecera: r.texto_cabecera ?? null,
   duplicado_en_origen: !!r.duplicado_en_origen,
   lineas_duplicadas: r.lineas_duplicadas || null,
 });
 
 /**
- * Concilia los registros normalizados de SAP y SUNAT del módulo de Compras.
- * @param {{ sap: object[], sunat: object[] }} entrada
+ * Construye índices rápido (exacto y sin ceros a la izquierda) para cruzar
+ * N° de documento SAP contra el Excel opcional de usuarios SAP.
+ */
+function construirIndiceUsuariosSap(usuariosSap = []) {
+  const exacto = new Map();
+  const sinCeros = new Map();
+  for (const u of usuariosSap || []) {
+    const clave = normalizarDocSap(u.doc_sap);
+    if (!clave) continue;
+    if (!exacto.has(clave)) exacto.set(clave, u);
+    const kSin = u.doc_sap_sin_ceros || claveDocSapSinCeros(clave);
+    if (kSin && !sinCeros.has(kSin)) sinCeros.set(kSin, u);
+  }
+  return { exacto, sinCeros };
+}
+
+/**
+ * Enriquecimiento inmutable de documentos conciliados de Compras con el Excel
+ * opcional de Usuarios SAP, cruzando por N° de documento SAP (`doc.sap.doc_interno`).
+ * Devuelve los documentos actualizados y estadísticas exactas del cruce.
+ */
+export function enriquecerComprasConUsuariosSap(docs = [], usuariosSap = []) {
+  if (!Array.isArray(usuariosSap) || usuariosSap.length === 0) {
+    return {
+      docs,
+      docsActualizados: [],
+      totalCoincidencias: 0,
+      totalConDocSap: docs.filter((d) => d.en_sap && d.sap?.doc_interno).length,
+      totalExcel: 0,
+      sinCoincidenciaExcel: 0,
+    };
+  }
+
+  const { exacto, sinCeros } = construirIndiceUsuariosSap(usuariosSap);
+  const clavesExcelUsadas = new Set();
+  const docsActualizados = [];
+  let totalConDocSap = 0;
+
+  const nuevosDocs = docs.map((d) => {
+    const docSap = d.en_sap ? normalizarDocSap(d.sap?.doc_interno || d.nro_doc_sap) : '';
+    if (!docSap) return d;
+    totalConDocSap += 1;
+
+    const match = exacto.get(docSap) || sinCeros.get(claveDocSapSinCeros(docSap));
+    if (!match) return d;
+
+    clavesExcelUsadas.add(normalizarDocSap(match.doc_sap));
+    const usuarioFinal = match.usuario_sap || d.sap?.usuario_sap || null;
+    const transaccionFinal = match.transaccion_sap || d.sap?.transaccion_sap || null;
+    const fechaContabFinal = match.fecha_contabilizacion || d.sap?.fecha_contabilizacion || null;
+    const textoCabFinal = match.texto_cabecera || d.sap?.texto_cabecera || null;
+
+    const actualizado = {
+      ...d,
+      nro_doc_sap: docSap,
+      usuario_sap: usuarioFinal || '',
+      sap: {
+        ...d.sap,
+        doc_interno: docSap,
+        usuario_sap: usuarioFinal,
+        transaccion_sap: transaccionFinal,
+        fecha_contabilizacion: fechaContabFinal,
+        texto_cabecera: textoCabFinal,
+      },
+    };
+    docsActualizados.push(actualizado);
+    return actualizado;
+  });
+
+  return {
+    docs: nuevosDocs,
+    docsActualizados,
+    totalCoincidencias: docsActualizados.length,
+    totalConDocSap,
+    totalExcel: exacto.size,
+    sinCoincidenciaExcel: Math.max(0, exacto.size - clavesExcelUsadas.size),
+  };
+}
+
+/**
+ * Concilia los registros normalizados de SAP y SUNAT del módulo de Compras,
+ * y opcionalmente enriquece con el archivo Excel de Usuarios SAP.
+ * @param {{ sap: object[], sunat: object[], usuariosSap?: object[] | null }} entrada
  * @returns {{ docs: object[] }}
  */
-export function conciliarCompras({ sap = [], sunat = [] }) {
+export function conciliarCompras({ sap = [], sunat = [], usuariosSap = null }) {
   const mapa = new Map();
 
   const obtener = (r) => {
@@ -48,6 +134,8 @@ export function conciliarCompras({ sap = [], sunat = [] }) {
         serie: r.serie || '',
         correlativo: r.correlativo || '',
         fecha_emision: r.fecha_emision || null,
+        nro_doc_sap: '',
+        usuario_sap: '',
         sap: null,
         sunat: null,
         en_sap: false,
@@ -80,6 +168,8 @@ export function conciliarCompras({ sap = [], sunat = [] }) {
     const d = obtener(r);
     d.sap = datosSistema(r);
     d.en_sap = true;
+    d.nro_doc_sap = d.sap.doc_interno || '';
+    d.usuario_sap = d.sap.usuario_sap || '';
     if (!d.ruc_proveedor && r.nro_identidad) d.ruc_proveedor = r.nro_identidad;
     if (!d.razon_social && r.nombre) d.razon_social = r.nombre;
     if (!d.fecha_emision && r.fecha_emision) d.fecha_emision = r.fecha_emision;
@@ -90,7 +180,12 @@ export function conciliarCompras({ sap = [], sunat = [] }) {
     d.clave_legible = construirClaveLegible(d.ruc_proveedor, d.tipo_doc_pago, d.serie, d.correlativo);
   }
 
-  const docs = [...mapa.values()];
+  let docs = [...mapa.values()];
+
+  // 2.5 Cruzar opcionalmente con el Excel de Usuarios SAP por N° de documento SAP
+  if (Array.isArray(usuariosSap) && usuariosSap.length > 0) {
+    docs = enriquecerComprasConUsuariosSap(docs, usuariosSap).docs;
+  }
 
   // 3. Ejecutar todas las validaciones de errores (1..8) y observaciones (1..3)
   for (const d of docs) {

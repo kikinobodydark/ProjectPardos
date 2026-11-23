@@ -16,27 +16,14 @@ import {
   descripcionTipoIdentidadCompras,
 } from './catalogos.js';
 import { centimosADecimal } from '../ventas/montos.js';
-
-// Protección contra CSV / Excel Formula Injection (misma regla que security.js, sin acoplar supabaseClient)
-function sanitizeExcelCell(val) {
-  if (typeof val !== 'string') return val;
-  if (/^[=+\-@\t\r]/.test(val)) return `'${val}`;
-  return val;
-}
-
-function sanitizeExcelRow(rowObj) {
-  if (!rowObj || typeof rowObj !== 'object') return rowObj;
-  const clean = {};
-  for (const [k, v] of Object.entries(rowObj)) {
-    clean[k] = sanitizeExcelCell(v);
-  }
-  return clean;
-}
+import { sanitizeExcelRow } from '../excelSanitizer.js';
 
 export const FILTROS_INICIALES_COMPRAS = {
   busqueda: '',
   ruc: '',
   razonSocial: '',
+  docSap: '',
+  usuarioSap: 'ALL',  // ALL | SIN_USUARIO | <usuario>
   resultado: 'ALL',   // ALL | OK | CON_DIFERENCIAS | CON_OBSERVACIONES | NO_EXISTE_SUNAT | NO_EXISTE_SAP
   tipoError: 'ALL',   // ALL | ERROR 1 .. ERROR 8
   tipoObs: 'ALL',     // ALL | OBS 1 .. OBS 3
@@ -53,6 +40,8 @@ export function filtrarDocumentosCompras(docs, f = FILTROS_INICIALES_COMPRAS) {
   const q = (f.busqueda || '').trim().toLowerCase();
   const rucQ = (f.ruc || '').trim().toLowerCase();
   const razonQ = (f.razonSocial || '').trim().toLowerCase();
+  const docSapQ = (f.docSap || '').trim().toLowerCase();
+  const usuarioSapQ = (f.usuarioSap || 'ALL').trim();
   const serieQ = (f.serie || '').trim().toUpperCase();
   const codigosSet = f.codigos?.length ? new Set(f.codigos) : null;
 
@@ -71,6 +60,20 @@ export function filtrarDocumentosCompras(docs, f = FILTROS_INICIALES_COMPRAS) {
 
     if (f.tipoDoc && f.tipoDoc !== 'ALL' && d.tipo_doc_pago !== f.tipoDoc) return false;
     if (serieQ && !String(d.serie || '').toUpperCase().includes(serieQ)) return false;
+
+    if (docSapQ) {
+      const nroDocSap = String(d.sap?.doc_interno || d.nro_doc_sap || '').toLowerCase();
+      if (!nroDocSap.includes(docSapQ)) return false;
+    }
+
+    if (usuarioSapQ && usuarioSapQ !== 'ALL') {
+      const usr = String(d.sap?.usuario_sap || d.usuario_sap || '').trim();
+      if (usuarioSapQ === 'SIN_USUARIO') {
+        if (usr !== '') return false;
+      } else if (usr.toLowerCase() !== usuarioSapQ.toLowerCase()) {
+        return false;
+      }
+    }
 
     if (rucQ) {
       const rucs = [d.ruc_proveedor, d.sap?.nro_identidad, d.sunat?.nro_identidad]
@@ -102,6 +105,10 @@ export function filtrarDocumentosCompras(docs, f = FILTROS_INICIALES_COMPRAS) {
     if (q) {
       const texto = [
         d.clave_legible,
+        d.sap?.doc_interno,
+        d.nro_doc_sap,
+        d.sap?.usuario_sap,
+        d.usuario_sap,
         d.ruc_proveedor,
         d.sap?.nro_identidad,
         d.sunat?.nro_identidad,
@@ -119,6 +126,29 @@ export function filtrarDocumentosCompras(docs, f = FILTROS_INICIALES_COMPRAS) {
 
     return true;
   });
+}
+
+/**
+ * Extrae la lista completa y deduplicada de N° de documento SAP para copiar al
+ * portapapeles (uno por línea, listo para "Selección múltiple -> Portapapeles"
+ * en SAP SE16N / BKPF), ignorando cualquier paginación de la tabla.
+ */
+export function obtenerDocsSapParaCopiar(docs = [], { soloConError = true } = {}) {
+  const vistos = new Set();
+  const lista = [];
+  for (const d of docs) {
+    if (!d?.en_sap) continue;
+    if (soloConError && !(d.codigosError && d.codigosError.length > 0)) continue;
+    const nro = String(d.sap?.doc_interno || d.nro_doc_sap || '').trim();
+    if (!nro || vistos.has(nro)) continue;
+    vistos.add(nro);
+    lista.push(nro);
+  }
+  return {
+    lista,
+    texto: lista.join('\n'),
+    total: lista.length,
+  };
 }
 
 /**
@@ -222,6 +252,8 @@ export function filaExcelCompras(d) {
 
   return sanitizeExcelRow({
     'Clave de Validación': d.clave_legible,
+    'N° Documento SAP': d.en_sap ? (d.sap?.doc_interno || d.nro_doc_sap || '') : '',
+    'Usuario SAP': d.en_sap ? (d.sap?.usuario_sap || d.usuario_sap || '') : '',
     'RUC Proveedor': d.ruc_proveedor || '',
     'Razón Social': d.razon_social || '',
     'Tipo Documento': descripcionTipoDocCompras(d.tipo_doc_pago),
@@ -261,6 +293,27 @@ export function filaExcelCompras(d) {
 export function construirDatosExcelCompras(docs) {
   const ind = calcularIndicadoresCompras(docs);
 
+  const usuariosConError = new Map();
+  for (const d of docs) {
+    const usr = d.en_sap ? (d.sap?.usuario_sap || d.usuario_sap || '').trim() : '';
+    if (usr && d.codigosError.length > 0) {
+      usuariosConError.set(usr, (usuariosConError.get(usr) || 0) + 1);
+    }
+  }
+  const filasUsuariosError =
+    usuariosConError.size > 0
+      ? [
+          { Indicador: '', Cantidad: '' },
+          { Indicador: '--- DOCUMENTOS CON ERROR POR USUARIO SAP ---', Cantidad: '' },
+          ...[...usuariosConError.entries()]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(([usuario, cantidad]) => ({
+              Indicador: `Usuario SAP: ${usuario}`,
+              Cantidad: cantidad,
+            })),
+        ]
+      : [];
+
   const resumenIndicadores = [
     { Indicador: 'Total documentos únicos (SAP ∪ SUNAT)', Cantidad: ind.totalUnicos },
     { Indicador: 'Total documentos en SAP', Cantidad: ind.totalSap },
@@ -288,6 +341,7 @@ export function construirDatosExcelCompras(docs) {
         Cantidad: centimosADecimal(s - u),
       };
     }),
+    ...filasUsuariosError,
   ].map(sanitizeExcelRow);
 
   const detalleErrores = [];
@@ -297,6 +351,8 @@ export function construirDatosExcelCompras(docs) {
       detalleErrores.push(
         sanitizeExcelRow({
           'Clave de Validación': d.clave_legible,
+          'N° Documento SAP': d.en_sap ? (d.sap?.doc_interno || d.nro_doc_sap || '') : '',
+          'Usuario SAP': d.en_sap ? (d.sap?.usuario_sap || d.usuario_sap || '') : '',
           'RUC Proveedor': d.ruc_proveedor || '',
           'Razón Social': d.razon_social || '',
           'Tipo Documento': descripcionTipoDocCompras(d.tipo_doc_pago),

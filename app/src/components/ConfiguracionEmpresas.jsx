@@ -8,42 +8,15 @@ import {
   sanitizeTextInput,
   logSuspiciousActivity,
 } from '../utils/security';
-import { executeParallelBatches } from '../utils/jobQueue';
-import { fetchAllSupabasePages, SUPABASE_MAX_SELECT_ROWS } from '../utils/supabasePagination';
+import { COLS_EMPRESA } from '../utils/dbColumns';
 import { clearPersistedQueryCache } from '../utils/queryPersister';
 import { SkeletonTable } from './SkeletonLoader';
 import { FiEdit2, FiTrash2, FiCheck, FiAlertTriangle, FiLock } from 'react-icons/fi';
-import { isValidIdentityNumber, isRecordAnulado } from '../utils/validations';
-
-const COLS_EMPRESA = 'id, ruc, razon_social, activo, estudio_id';
-const COLS_REVALIDACION = [
-  'id',
-  'tipo_identidad_sap',
-  'nro_identidad_sap',
-  'nombre_sap',
-  'tipo_identidad_sunat',
-  'nro_identidad_sunat',
-  'nombre_sunat',
-  'base_sap',
-  'igv_sap',
-  'total_sap',
-  'base_sunat',
-  'igv_sunat',
-  'total_sunat',
-  'exonerado_sap',
-  'exonerado_sunat',
-  'inafecto_sap',
-  'inafecto_sunat',
-  'otros_sap',
-  'otros_sunat',
-  'estado_validacion',
-  'errores_json',
-].join(',');
 
 const ConfiguracionEmpresas = memo(function ConfiguracionEmpresas({ activeCompany, userProfile }) {
   const queryClient = useQueryClient();
   const [csrfToken] = useState(() => getOrCreateCsrfToken());
-  const isAdmin = !userProfile || userProfile?.rol === 'admin';
+  const isAdmin = userProfile?.rol === 'admin';
 
   // Formulario
   const [editingId, setEditingId] = useState(null);
@@ -54,29 +27,46 @@ const ConfiguracionEmpresas = memo(function ConfiguracionEmpresas({ activeCompan
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const [revalLoading, setRevalLoading] = useState(false);
-  const [revalSuccess, setRevalSuccess] = useState('');
-  const [revalError, setRevalError] = useState('');
+  const [cleanSuccess, setCleanSuccess] = useState('');
+  const [cleanError, setCleanError] = useState('');
   const [cleanLoading, setCleanLoading] = useState(false);
 
-  const handleCleanAllModulesData = async () => {
-    if (!verifyCsrfToken(csrfToken)) {
-      setRevalError('Token CSRF inválido. Recarga la sesión.');
+  const handleCleanActiveCompanyData = async () => {
+    if (!isAdmin) {
+      logSuspiciousActivity('INTENTO_VACIAR_EMPRESA_NO_ADMIN', { userId: userProfile?.id });
       return;
     }
-    const ok = window.confirm(
-      '¿Estás seguro de que deseas eliminar TODA la data de los módulos de Ventas y Compras (todas las cargas y comprobantes) para comenzar de nuevo? Las empresas y usuarios se conservarán.'
+    if (!verifyCsrfToken(csrfToken)) {
+      setCleanError('Token CSRF inválido. Recarga la sesión.');
+      return;
+    }
+    const rl = checkRateLimit('admin_clean_company_data', { maxAttempts: 3, windowMs: 60000, lockoutMs: 120000 });
+    if (!rl.allowed) {
+      setCleanError(rl.message);
+      return;
+    }
+    if (!activeCompany?.id) {
+      setCleanError('No hay una empresa activa seleccionada.');
+      return;
+    }
+
+    const rucConfirm = window.prompt(
+      `ACCIÓN DESTRUCTIVA IRREVERSIBLE\n\nSe eliminarán TODOS los períodos y comprobantes de Ventas y Compras únicamente de la empresa:\n${activeCompany.razon_social} (RUC ${activeCompany.ruc}).\n\nPara confirmar, escribe exactamente el RUC (${activeCompany.ruc}):`
     );
-    if (!ok) return;
+    if (rucConfirm === null) return;
+    if (rucConfirm.trim() !== activeCompany.ruc) {
+      setCleanError('Confirmación cancelada: el RUC ingresado no coincide con la empresa activa.');
+      return;
+    }
 
     setCleanLoading(true);
-    setRevalSuccess('');
-    setRevalError('');
+    setCleanSuccess('');
+    setCleanError('');
     try {
       const { error } = await supabase
         .from('periodos_carga')
         .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000');
+        .eq('empresa_id', activeCompany.id);
 
       if (error) throw error;
 
@@ -84,12 +74,15 @@ const ConfiguracionEmpresas = memo(function ConfiguracionEmpresas({ activeCompan
       queryClient.invalidateQueries({ queryKey: ['periods'] });
       queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
       queryClient.invalidateQueries({ queryKey: ['ventasDocumentos'] });
+      queryClient.invalidateQueries({ queryKey: ['comprasDocumentos'] });
       queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
 
-      setRevalSuccess('Se eliminaron todos los períodos y comprobantes de los módulos de Ventas y Compras correctamente.');
+      setCleanSuccess(
+        `Se eliminaron todos los períodos y comprobantes de Ventas y Compras de ${activeCompany.razon_social} (${activeCompany.ruc}).`
+      );
     } catch (err) {
-      setRevalError(err.message || 'Ocurrió un error al limpiar la data de los módulos.');
+      setCleanError(err.message || 'Ocurrió un error al limpiar la data de la empresa.');
     } finally {
       setCleanLoading(false);
     }
@@ -192,148 +185,6 @@ const ConfiguracionEmpresas = memo(function ConfiguracionEmpresas({ activeCompan
       </div>
     );
   }
-
-  /**
-   * Revalidación optimizada:
-   * 1. Pide solo las columnas necesarias (COLS_REVALIDACION)
-   * 2. Descarga detalle_ventas y detalle_compras en paralelo
-   * 3. Elimina las consultas N+1 agrupando actualizaciones en la cola de trabajo en paralelo
-   */
-  const handleRevalidateAll = async () => {
-    if (!verifyCsrfToken(csrfToken)) {
-      setRevalError('Token CSRF inválido. Recarga la sesión.');
-      return;
-    }
-    const rl = checkRateLimit('revalidate_all', { maxAttempts: 2, windowMs: 60000, lockoutMs: 60000 });
-    if (!rl.allowed) {
-      setRevalError(rl.message);
-      return;
-    }
-
-    setRevalLoading(true);
-    setRevalSuccess('');
-    setRevalError('');
-    try {
-      const fetchTableRows = (tableName) =>
-        fetchAllSupabasePages({
-          pageSize: SUPABASE_MAX_SELECT_ROWS,
-          concurrency: 4,
-          label: `RevalFetch_${tableName}`,
-          fetchPage: (from, to, withCount) =>
-            supabase
-              .from(tableName)
-              .select(COLS_REVALIDACION, withCount ? { count: 'exact' } : undefined)
-              .order('id', { ascending: true })
-              .range(from, to),
-        });
-
-      // Descargar ambas tablas en paralelo
-      const [ventasRows, comprasRows] = await Promise.all([
-        fetchTableRows('detalle_ventas'),
-        fetchTableRows('detalle_compras'),
-      ]);
-
-      let totalAnalyzed = ventasRows.length + comprasRows.length;
-      const updatesToRun = [];
-
-      const evaluateTable = (tableName, rows) => {
-        for (const row of rows) {
-          const errors = [...(row.errores_json || [])];
-          if (errors.some((e) => e && typeof e === 'object')) {
-            continue;
-          }
-
-          const cleanErrors = errors.filter(
-            (e) =>
-              typeof e === 'string' &&
-              !e.startsWith('OBS 6:') &&
-              !e.startsWith('Identidad SAP no cumple') &&
-              !e.startsWith('OBS 7:') &&
-              !e.startsWith('Identidad SUNAT no cumple')
-          );
-
-          const isNoExisteSAP = row.nro_identidad_sap === null && row.nombre_sap === null;
-          if (!isNoExisteSAP && row.tipo_identidad_sap !== null && row.nro_identidad_sap !== null) {
-            if (!isValidIdentityNumber(row.tipo_identidad_sap, row.nro_identidad_sap)) {
-              if (tableName === 'detalle_compras') {
-                cleanErrors.push('OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)');
-              } else {
-                cleanErrors.push('OBS 6: NÚMERO DE IDENTIDAD SAP INCORRECTO');
-                cleanErrors.push(`Identidad SAP no cumple con longitud/formato para tipo ${row.tipo_identidad_sap}: ${row.nro_identidad_sap}`);
-              }
-            }
-          }
-
-          const isNoExisteSUNAT = row.nro_identidad_sunat === null && row.nombre_sunat === null;
-          if (!isNoExisteSUNAT && row.tipo_identidad_sunat !== null && row.nro_identidad_sunat !== null) {
-            if (!isValidIdentityNumber(row.tipo_identidad_sunat, row.nro_identidad_sunat)) {
-              if (tableName === 'detalle_compras') {
-                cleanErrors.push('OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)');
-              } else {
-                cleanErrors.push('OBS 7: NÚMERO DE IDENTIDAD SUNAT INCORRECTO');
-                cleanErrors.push(`Identidad SUNAT no cumple con longitud/formato para tipo ${row.tipo_identidad_sunat}: ${row.nro_identidad_sunat}`);
-              }
-            }
-          }
-
-          const isAnulado = isRecordAnulado(row);
-          let newStatus = 'OK';
-
-          if (!isAnulado) {
-            const hasError = cleanErrors.some((e) => e.startsWith('ERROR '));
-            const hasObs = cleanErrors.some((e) => e.startsWith('OBS ') || e.startsWith('SIRE Alerta') || e.startsWith('SIRE:'));
-            if (hasError) newStatus = 'ERROR';
-            else if (hasObs) newStatus = 'OBSERVADO';
-          }
-
-          const statusChanged = row.estado_validacion !== newStatus;
-          const errorsChanged = JSON.stringify(row.errores_json || []) !== JSON.stringify(cleanErrors);
-
-          if (statusChanged || errorsChanged) {
-            updatesToRun.push({
-              tableName,
-              id: row.id,
-              estado_validacion: newStatus,
-              errores_json: cleanErrors,
-            });
-          }
-        }
-      };
-
-      evaluateTable('detalle_ventas', ventasRows);
-      evaluateTable('detalle_compras', comprasRows);
-
-      // Ejecutar actualizaciones en paralelo controlado mediante la cola de trabajo (sin bloqueo secuencial N+1)
-      if (updatesToRun.length > 0) {
-        await executeParallelBatches(
-          updatesToRun,
-          25,
-          async (batch) => {
-            await Promise.all(
-              batch.map((u) =>
-                supabase
-                  .from(u.tableName)
-                  .update({ estado_validacion: u.estado_validacion, errores_json: u.errores_json })
-                  .eq('id', u.id)
-                  .then(({ error }) => {
-                    if (error) throw error;
-                  })
-              )
-            );
-          },
-          { concurrency: 4, label: 'RevalidateBatch' }
-        );
-      }
-
-      setRevalSuccess(
-        `Revalidación completada. Se analizaron ${totalAnalyzed} registros en paralelo y se actualizaron ${updatesToRun.length} con discrepancias de identidad.`
-      );
-    } catch (err) {
-      setRevalError(err.message || 'Ocurrió un error al revalidar los registros.');
-    } finally {
-      setRevalLoading(false);
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -571,68 +422,42 @@ const ConfiguracionEmpresas = memo(function ConfiguracionEmpresas({ activeCompan
         <div className="card-premium p-4">
           <h5 className="mb-2 fw-bold" style={{ color: 'var(--color-text)' }}>Mantenimiento y Calidad de Datos</h5>
           <p className="text-muted mb-3" style={{ fontSize: '0.88rem' }}>
-            Ejecuta diagnósticos y actualizaciones masivas en los registros de conciliación.
+            Acciones administrativas acotadas a la empresa activa para garantizar aislamiento de datos.
           </p>
 
-          {revalSuccess && (
+          {cleanSuccess && (
             <div className="alert alert-success py-2 px-3 mb-3 border-0 rounded-3 animate-fade-in" style={{ fontSize: '0.85rem' }}>
-              <FiCheck className="me-2" /> {revalSuccess}
+              <FiCheck className="me-2" /> {cleanSuccess}
             </div>
           )}
 
-          {revalError && (
+          {cleanError && (
             <div className="alert alert-danger py-2 px-3 mb-3 border-0 rounded-3 animate-fade-in" style={{ fontSize: '0.85rem' }}>
-              <FiAlertTriangle className="me-2" /> {revalError}
+              <FiAlertTriangle className="me-2" /> {cleanError}
             </div>
           )}
 
           <div
             className="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between p-3 rounded-3 gap-3"
-            style={{ backgroundColor: 'rgba(241, 245, 249, 0.7)', border: '1px solid var(--border-color)' }}
-          >
-            <div>
-              <h6 className="fw-bold mb-1" style={{ color: 'var(--color-text)' }}>Revalidación Masiva de Números de Identidad</h6>
-              <small className="text-muted">
-                Vuelve a evaluar todos los registros históricos de SAP y SUNAT contra la longitud de dígitos correcta de DNI (8), RUC (11) y CE (9).
-              </small>
-            </div>
-            <button
-              type="button"
-              onClick={handleRevalidateAll}
-              disabled={revalLoading || cleanLoading}
-              className="btn btn-warning px-4 py-2 rounded-3 fw-bold d-flex align-items-center"
-              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
-            >
-              {revalLoading ? (
-                <>
-                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                  Procesando en lotes...
-                </>
-              ) : (
-                'Revalidar Historial'
-              )}
-            </button>
-          </div>
-
-          <div
-            className="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between p-3 rounded-3 gap-3 mt-3"
             style={{ backgroundColor: 'rgba(220, 38, 38, 0.05)', border: '1px solid rgba(220, 38, 38, 0.2)' }}
           >
             <div>
-              <h6 className="fw-bold mb-1 text-danger">Limpiar Toda la Data de Ventas y Compras</h6>
+              <h6 className="fw-bold mb-1 text-danger">
+                Limpiar Data de Ventas y Compras — {activeCompany?.razon_social || 'Empresa Activa'}
+              </h6>
               <small className="text-muted">
-                Elimina todos los períodos cargados y sus comprobantes en <strong>detalle_ventas</strong> y <strong>detalle_compras</strong> (conservando empresas y usuarios) para comenzar de nuevo desde cero.
+                Elimina únicamente los períodos cargados y sus comprobantes en <strong>detalle_ventas</strong> y <strong>detalle_compras</strong> de la empresa seleccionada (RUC <strong>{activeCompany?.ruc || '—'}</strong>). Requiere confirmar escribiendo el RUC.
               </small>
             </div>
             <button
               type="button"
-              onClick={handleCleanAllModulesData}
-              disabled={cleanLoading || revalLoading}
+              onClick={handleCleanActiveCompanyData}
+              disabled={cleanLoading || !activeCompany?.id}
               className="btn btn-danger px-4 py-2 rounded-3 fw-bold d-flex align-items-center"
               style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               <FiTrash2 className="me-2" />
-              {cleanLoading ? 'Eliminando data...' : 'Vaciar Ventas y Compras'}
+              {cleanLoading ? 'Eliminando data...' : 'Vaciar Empresa Activa'}
             </button>
           </div>
         </div>

@@ -8,10 +8,8 @@ import {
   sanitizeTextInput,
 } from '../utils/security';
 import OptimizedImage from './OptimizedImage';
+import { COLS_USUARIO_PERFIL } from '../utils/dbColumns';
 import { FiMail, FiLock, FiAlertCircle, FiArrowRight, FiShield } from 'react-icons/fi';
-
-const COLS_USUARIO_PERFIL =
-  'id, nombre, rol, activo, empresa_id, estudio_id, empresas!usuarios_empresa_id_fkey(id, ruc, razon_social, activo, estudio_id)';
 
 const Login = memo(function Login({ onLoginSuccess, initialBanner = '' }) {
   const [email, setEmail] = useState('');
