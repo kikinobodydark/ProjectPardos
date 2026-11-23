@@ -633,6 +633,10 @@ CREATE OR REPLACE FUNCTION public.finalizar_periodo_carga(
 ) RETURNS UUID AS $$
 DECLARE
     v_row public.periodos_carga%ROWTYPE;
+    v_total INTEGER := 0;
+    v_ok INTEGER := 0;
+    v_obs INTEGER := 0;
+    v_err INTEGER := 0;
 BEGIN
     IF p_target_version IS NULL OR p_target_version < 1 THEN
         RAISE EXCEPTION 'La versión objetivo debe ser un entero positivo.';
@@ -647,6 +651,26 @@ BEGIN
         RAISE EXCEPTION 'No autorizado para finalizar este período de carga.';
     END IF;
 
+    IF v_row.modulo = 'compras' THEN
+        SELECT
+            count(*)::integer,
+            count(*) FILTER (WHERE estado_validacion = 'OK')::integer,
+            count(*) FILTER (WHERE estado_validacion = 'OBSERVADO')::integer,
+            count(*) FILTER (WHERE estado_validacion = 'ERROR')::integer
+        INTO v_total, v_ok, v_obs, v_err
+        FROM public.detalle_compras
+        WHERE periodo_id = p_periodo_id;
+    ELSE
+        SELECT
+            count(*)::integer,
+            count(*) FILTER (WHERE estado_validacion = 'OK')::integer,
+            count(*) FILTER (WHERE estado_validacion = 'OBSERVADO')::integer,
+            count(*) FILTER (WHERE estado_validacion = 'ERROR')::integer
+        INTO v_total, v_ok, v_obs, v_err
+        FROM public.detalle_ventas
+        WHERE periodo_id = p_periodo_id;
+    END IF;
+
     DELETE FROM public.periodos_carga
     WHERE id <> p_periodo_id
       AND empresa_id = v_row.empresa_id
@@ -656,12 +680,226 @@ BEGIN
       AND modulo = v_row.modulo;
 
     UPDATE public.periodos_carga
-    SET version = p_target_version, estado = 'completado'
+    SET
+        version = p_target_version,
+        estado = 'completado',
+        total_registros = COALESCE(v_total, 0),
+        ok_registros = COALESCE(v_ok, 0),
+        observado_registros = COALESCE(v_obs, 0),
+        error_registros = COALESCE(v_err, 0)
     WHERE id = p_periodo_id;
 
     RETURN p_periodo_id;
 END;
 $$ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public SET statement_timeout = '30s';
+
+CREATE OR REPLACE FUNCTION public.obtener_lote_ventas_keyset(
+    p_periodo_id UUID,
+    p_min_id UUID DEFAULT NULL,
+    p_max_id UUID DEFAULT NULL,
+    p_after_id UUID DEFAULT NULL,
+    p_limit INTEGER DEFAULT 5000
+) RETURNS JSONB AS $$
+DECLARE
+    v_limit INTEGER := LEAST(GREATEST(COALESCE(p_limit, 5000), 1), 5000);
+    v_lower UUID := COALESCE(p_min_id, '00000000-0000-0000-0000-000000000000'::uuid);
+    v_upper UUID := COALESCE(p_max_id, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid);
+    v_result JSONB;
+BEGIN
+    IF p_after_id IS NOT NULL THEN
+        SELECT COALESCE(jsonb_agg(sub.row_data ORDER BY sub.row_id), '[]'::jsonb)
+        INTO v_result
+        FROM (
+            SELECT
+                dv.id AS row_id,
+                jsonb_build_object(
+                    'id', dv.id,
+                    'car_sunat', dv.car_sunat,
+                    'serie', dv.serie,
+                    'correlativo', dv.correlativo,
+                    'fecha_emision', dv.fecha_emision,
+                    'tipo_doc_pago', dv.tipo_doc_pago,
+                    'tipo_identidad_sap', dv.tipo_identidad_sap,
+                    'nro_identidad_sap', dv.nro_identidad_sap,
+                    'nombre_sap', dv.nombre_sap,
+                    'base_sap', dv.base_sap,
+                    'igv_sap', dv.igv_sap,
+                    'exonerado_sap', dv.exonerado_sap,
+                    'inafecto_sap', dv.inafecto_sap,
+                    'otros_sap', dv.otros_sap,
+                    'total_sap', dv.total_sap,
+                    'tipo_identidad_sunat', dv.tipo_identidad_sunat,
+                    'nro_identidad_sunat', dv.nro_identidad_sunat,
+                    'nombre_sunat', dv.nombre_sunat,
+                    'base_sunat', dv.base_sunat,
+                    'igv_sunat', dv.igv_sunat,
+                    'exonerado_sunat', dv.exonerado_sunat,
+                    'inafecto_sunat', dv.inafecto_sunat,
+                    'otros_sunat', dv.otros_sunat,
+                    'total_sunat', dv.total_sunat,
+                    'tipo_pago_sire', dv.tipo_pago_sire,
+                    'op_gratuitas', dv.op_gratuitas,
+                    'estado_validacion', dv.estado_validacion,
+                    'errores_json', dv.errores_json
+                ) AS row_data
+            FROM public.detalle_ventas dv
+            WHERE dv.periodo_id = p_periodo_id
+              AND dv.id > p_after_id
+              AND dv.id <= v_upper
+            ORDER BY dv.id ASC
+            LIMIT v_limit
+        ) sub;
+    ELSE
+        SELECT COALESCE(jsonb_agg(sub.row_data ORDER BY sub.row_id), '[]'::jsonb)
+        INTO v_result
+        FROM (
+            SELECT
+                dv.id AS row_id,
+                jsonb_build_object(
+                    'id', dv.id,
+                    'car_sunat', dv.car_sunat,
+                    'serie', dv.serie,
+                    'correlativo', dv.correlativo,
+                    'fecha_emision', dv.fecha_emision,
+                    'tipo_doc_pago', dv.tipo_doc_pago,
+                    'tipo_identidad_sap', dv.tipo_identidad_sap,
+                    'nro_identidad_sap', dv.nro_identidad_sap,
+                    'nombre_sap', dv.nombre_sap,
+                    'base_sap', dv.base_sap,
+                    'igv_sap', dv.igv_sap,
+                    'exonerado_sap', dv.exonerado_sap,
+                    'inafecto_sap', dv.inafecto_sap,
+                    'otros_sap', dv.otros_sap,
+                    'total_sap', dv.total_sap,
+                    'tipo_identidad_sunat', dv.tipo_identidad_sunat,
+                    'nro_identidad_sunat', dv.nro_identidad_sunat,
+                    'nombre_sunat', dv.nombre_sunat,
+                    'base_sunat', dv.base_sunat,
+                    'igv_sunat', dv.igv_sunat,
+                    'exonerado_sunat', dv.exonerado_sunat,
+                    'inafecto_sunat', dv.inafecto_sunat,
+                    'otros_sunat', dv.otros_sunat,
+                    'total_sunat', dv.total_sunat,
+                    'tipo_pago_sire', dv.tipo_pago_sire,
+                    'op_gratuitas', dv.op_gratuitas,
+                    'estado_validacion', dv.estado_validacion,
+                    'errores_json', dv.errores_json
+                ) AS row_data
+            FROM public.detalle_ventas dv
+            WHERE dv.periodo_id = p_periodo_id
+              AND dv.id >= v_lower
+              AND dv.id <= v_upper
+            ORDER BY dv.id ASC
+            LIMIT v_limit
+        ) sub;
+    END IF;
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = pg_catalog, public SET statement_timeout = '30s';
+
+CREATE OR REPLACE FUNCTION public.obtener_lote_compras_keyset(
+    p_periodo_id UUID,
+    p_min_id UUID DEFAULT NULL,
+    p_max_id UUID DEFAULT NULL,
+    p_after_id UUID DEFAULT NULL,
+    p_limit INTEGER DEFAULT 5000
+) RETURNS JSONB AS $$
+DECLARE
+    v_limit INTEGER := LEAST(GREATEST(COALESCE(p_limit, 5000), 1), 5000);
+    v_lower UUID := COALESCE(p_min_id, '00000000-0000-0000-0000-000000000000'::uuid);
+    v_upper UUID := COALESCE(p_max_id, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid);
+    v_result JSONB;
+BEGIN
+    IF p_after_id IS NOT NULL THEN
+        SELECT COALESCE(jsonb_agg(sub.row_data ORDER BY sub.row_id), '[]'::jsonb)
+        INTO v_result
+        FROM (
+            SELECT
+                dc.id AS row_id,
+                jsonb_build_object(
+                    'id', dc.id,
+                    'car_sunat', dc.car_sunat,
+                    'ruc_proveedor', dc.ruc_proveedor,
+                    'serie', dc.serie,
+                    'correlativo', dc.correlativo,
+                    'fecha_emision', dc.fecha_emision,
+                    'tipo_doc_pago', dc.tipo_doc_pago,
+                    'tipo_identidad_sap', dc.tipo_identidad_sap,
+                    'nro_identidad_sap', dc.nro_identidad_sap,
+                    'nombre_sap', dc.nombre_sap,
+                    'base_sap', dc.base_sap,
+                    'igv_sap', dc.igv_sap,
+                    'exonerado_sap', dc.exonerado_sap,
+                    'inafecto_sap', dc.inafecto_sap,
+                    'otros_sap', dc.otros_sap,
+                    'total_sap', dc.total_sap,
+                    'tipo_identidad_sunat', dc.tipo_identidad_sunat,
+                    'nro_identidad_sunat', dc.nro_identidad_sunat,
+                    'nombre_sunat', dc.nombre_sunat,
+                    'base_sunat', dc.base_sunat,
+                    'igv_sunat', dc.igv_sunat,
+                    'exonerado_sunat', dc.exonerado_sunat,
+                    'inafecto_sunat', dc.inafecto_sunat,
+                    'otros_sunat', dc.otros_sunat,
+                    'total_sunat', dc.total_sunat,
+                    'estado_validacion', dc.estado_validacion,
+                    'errores_json', dc.errores_json
+                ) AS row_data
+            FROM public.detalle_compras dc
+            WHERE dc.periodo_id = p_periodo_id
+              AND dc.id > p_after_id
+              AND dc.id <= v_upper
+            ORDER BY dc.id ASC
+            LIMIT v_limit
+        ) sub;
+    ELSE
+        SELECT COALESCE(jsonb_agg(sub.row_data ORDER BY sub.row_id), '[]'::jsonb)
+        INTO v_result
+        FROM (
+            SELECT
+                dc.id AS row_id,
+                jsonb_build_object(
+                    'id', dc.id,
+                    'car_sunat', dc.car_sunat,
+                    'ruc_proveedor', dc.ruc_proveedor,
+                    'serie', dc.serie,
+                    'correlativo', dc.correlativo,
+                    'fecha_emision', dc.fecha_emision,
+                    'tipo_doc_pago', dc.tipo_doc_pago,
+                    'tipo_identidad_sap', dc.tipo_identidad_sap,
+                    'nro_identidad_sap', dc.nro_identidad_sap,
+                    'nombre_sap', dc.nombre_sap,
+                    'base_sap', dc.base_sap,
+                    'igv_sap', dc.igv_sap,
+                    'exonerado_sap', dc.exonerado_sap,
+                    'inafecto_sap', dc.inafecto_sap,
+                    'otros_sap', dc.otros_sap,
+                    'total_sap', dc.total_sap,
+                    'tipo_identidad_sunat', dc.tipo_identidad_sunat,
+                    'nro_identidad_sunat', dc.nro_identidad_sunat,
+                    'nombre_sunat', dc.nombre_sunat,
+                    'base_sunat', dc.base_sunat,
+                    'igv_sunat', dc.igv_sunat,
+                    'exonerado_sunat', dc.exonerado_sunat,
+                    'inafecto_sunat', dc.inafecto_sunat,
+                    'otros_sunat', dc.otros_sunat,
+                    'total_sunat', dc.total_sunat,
+                    'estado_validacion', dc.estado_validacion,
+                    'errores_json', dc.errores_json
+                ) AS row_data
+            FROM public.detalle_compras dc
+            WHERE dc.periodo_id = p_periodo_id
+              AND dc.id >= v_lower
+              AND dc.id <= v_upper
+            ORDER BY dc.id ASC
+            LIMIT v_limit
+        ) sub;
+    END IF;
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = pg_catalog, public SET statement_timeout = '30s';
 
 CREATE OR REPLACE FUNCTION public.guardar_local_con_series(
     p_local_id UUID,
@@ -729,6 +967,8 @@ REVOKE EXECUTE ON FUNCTION public.registrar_evento_seguridad(TEXT, JSONB) FROM P
 REVOKE EXECUTE ON FUNCTION public.insertar_lote_ventas(UUID, UUID, JSONB) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.insertar_lote_compras(UUID, UUID, JSONB) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.finalizar_periodo_carga(UUID, INTEGER) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.obtener_lote_ventas_keyset(UUID, UUID, UUID, UUID, INTEGER) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.obtener_lote_compras_keyset(UUID, UUID, UUID, UUID, INTEGER) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.guardar_local_con_series(UUID, UUID, TEXT, BOOLEAN, JSONB) FROM PUBLIC, anon;
 
 GRANT EXECUTE ON FUNCTION public.get_user_estudio() TO authenticated;
@@ -743,6 +983,8 @@ GRANT EXECUTE ON FUNCTION public.registrar_evento_seguridad(TEXT, JSONB) TO auth
 GRANT EXECUTE ON FUNCTION public.insertar_lote_ventas(UUID, UUID, JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.insertar_lote_compras(UUID, UUID, JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.finalizar_periodo_carga(UUID, INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.obtener_lote_ventas_keyset(UUID, UUID, UUID, UUID, INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.obtener_lote_compras_keyset(UUID, UUID, UUID, UUID, INTEGER) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.guardar_local_con_series(UUID, UUID, TEXT, BOOLEAN, JSONB) TO authenticated;
 
 -- ==========================================

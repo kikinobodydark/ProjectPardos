@@ -6,7 +6,7 @@ import { useLocalesEmpresa, coincideConLocal } from '../utils/useLocalesEmpresa'
 import TarjetasIndicadoresVentas from './ventas/TarjetasIndicadoresVentas';
 import TarjetasIndicadoresCompras from './compras/TarjetasIndicadoresCompras';
 import SelectorLocal from './SelectorLocal';
-import { SkeletonDashboard } from './SkeletonLoader';
+import { SkeletonDashboard, LoadErrorAlert } from './SkeletonLoader';
 import { INCIDENCIAS } from '../utils/ventas/catalogos';
 import { REPORTES_ESPECIFICOS, calcularIndicadores, exportarExcelVentas } from '../utils/ventas/reportes';
 import { formatoMonto, dentroDeTolerancia } from '../utils/ventas/montos';
@@ -53,7 +53,14 @@ const DashboardVentas = memo(function DashboardVentas({
   activeCompany, periodId, activePeriod, onNavigateToReconciliation,
   selectedLocalId = 'ALL', onChangeLocalId,
 }) {
-  const { data: todosDocs = [], isLoading } = useDocumentosVentas(periodId, true);
+  const {
+    data: todosDocs = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+    loadProgress,
+  } = useDocumentosVentas(periodId, true);
   const { localesActivos, indiceLocales, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
   const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
 
@@ -141,7 +148,13 @@ const DashboardVentas = memo(function DashboardVentas({
       </div>
 
       {isLoading ? (
-        <SkeletonDashboard kpiCount={10} />
+        <SkeletonDashboard kpiCount={10} progress={loadProgress} />
+      ) : isError ? (
+        <LoadErrorAlert
+          title="No se pudo cargar el resumen de Ventas"
+          error={error}
+          onRetry={refetch}
+        />
       ) : (
         <>
           {/* 10 Indicadores Generales (Sección 3.B) */}
@@ -345,7 +358,14 @@ const DashboardCompras = memo(function DashboardCompras({
   activePeriod,
   onNavigateToReconciliation,
 }) {
-  const { data: docs = [], isLoading } = useDocumentosCompras(periodId, true);
+  const {
+    data: docs = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+    loadProgress,
+  } = useDocumentosCompras(periodId, true);
   const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
 
   const ind = useMemo(() => calcularIndicadoresCompras(docs), [docs]);
@@ -390,7 +410,13 @@ const DashboardCompras = memo(function DashboardCompras({
       </div>
 
       {isLoading ? (
-        <SkeletonDashboard kpiCount={7} />
+        <SkeletonDashboard kpiCount={7} progress={loadProgress} />
+      ) : isError ? (
+        <LoadErrorAlert
+          title="No se pudo cargar el resumen de Compras"
+          error={error}
+          onRetry={refetch}
+        />
       ) : (
         <>
           {/* 7 Indicadores Generales (Sección 7.A) */}

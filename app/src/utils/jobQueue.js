@@ -8,10 +8,11 @@
 import { traceAsync } from './telemetry.js';
 import { decodificarTexto, parsearSapVentas, parsearSunatVentas, parsearCortesias } from './ventas/lectores.js';
 import { conciliarVentas } from './ventas/motor.js';
-import { aFilaBD } from './ventas/persistencia.js';
+import { aFilaBD, desdeFilaBD } from './ventas/persistencia.js';
+import { enriquecerSecuenciasEnDocs } from './ventas/reglas.js';
 import { parsearSapCompras, parsearSunatCompras, parsearUsuariosSapCompras } from './compras/lectores.js';
 import { conciliarCompras } from './compras/motor.js';
-import { aFilaBDCompras } from './compras/persistencia.js';
+import { aFilaBDCompras, desdeFilaBDCompras } from './compras/persistencia.js';
 
 export class JobQueue {
   constructor({ concurrency = 4 } = {}) {
@@ -62,8 +63,11 @@ export const globalJobQueue = new JobQueue({ concurrency: 4 });
  * de trabajo, reportando progreso tras cada lote completado y abortando lotes
  * pendientes si alguno falla para evitar escrituras huérfanas tras un error.
  */
-export async function executeParallelBatches(items, batchSize, workerFn, { concurrency = 2, onProgress, label = 'BatchJob' } = {}) {
+export async function executeParallelBatches(items, batchSize, workerFn, { concurrency = 2, onProgress, label = 'BatchJob', signal } = {}) {
   if (!items || items.length === 0) return [];
+  if (signal?.aborted) {
+    throw new DOMException('Operación cancelada.', 'AbortError');
+  }
   const chunks = [];
   for (let i = 0; i < items.length; i += batchSize) {
     chunks.push({ index: chunks.length, slice: items.slice(i, i + batchSize) });
@@ -76,9 +80,12 @@ export async function executeParallelBatches(items, batchSize, workerFn, { concu
 
   const promises = chunks.map((chunk) =>
     queue.enqueue(`${label}#${chunk.index + 1}`, async () => {
-      if (aborted) return null;
+      if (aborted || signal?.aborted) return null;
       try {
         const res = await workerFn(chunk.slice, chunk.index);
+        if (signal?.aborted) {
+          throw new DOMException('Operación cancelada.', 'AbortError');
+        }
         processedItems += chunk.slice.length;
         if (onProgress) {
           onProgress(processedItems, items.length);
@@ -95,7 +102,11 @@ export async function executeParallelBatches(items, batchSize, workerFn, { concu
   );
 
   try {
-    return await Promise.all(promises);
+    const results = await Promise.all(promises);
+    if (signal?.aborted) {
+      throw new DOMException('Operación cancelada.', 'AbortError');
+    }
+    return results;
   } catch (err) {
     throw firstError || err;
   }
@@ -309,6 +320,44 @@ export function executeCpuTaskFallback(action, payload) {
     case 'SERIALIZE_FILAS_COMPRAS': {
       const { docsChunk, metaBD } = payload;
       return docsChunk.map((d) => aFilaBDCompras(d, metaBD));
+    }
+    case 'HYDRATE_VENTAS_DOCS': {
+      const filas = Array.isArray(payload?.filas) ? payload.filas : [];
+      if (filas.length === 0) return [];
+      filas.sort((a, b) => {
+        const fa = a.fecha_emision || '';
+        const fb = b.fecha_emision || '';
+        if (fa !== fb) return fa < fb ? -1 : 1;
+        const sa = a.serie || '';
+        const sb = b.serie || '';
+        if (sa !== sb) return sa < sb ? -1 : 1;
+        const ca = a.correlativo || '';
+        const cb = b.correlativo || '';
+        if (ca !== cb) return ca < cb ? -1 : 1;
+        const ia = a.id || '';
+        const ib = b.id || '';
+        return ia < ib ? -1 : ia > ib ? 1 : 0;
+      });
+      return enriquecerSecuenciasEnDocs(filas.map(desdeFilaBD));
+    }
+    case 'HYDRATE_COMPRAS_DOCS': {
+      const filas = Array.isArray(payload?.filas) ? payload.filas : [];
+      if (filas.length === 0) return [];
+      filas.sort((a, b) => {
+        const fa = a.fecha_emision || '';
+        const fb = b.fecha_emision || '';
+        if (fa !== fb) return fa < fb ? -1 : 1;
+        const sa = a.serie || '';
+        const sb = b.serie || '';
+        if (sa !== sb) return sa < sb ? -1 : 1;
+        const ca = a.correlativo || '';
+        const cb = b.correlativo || '';
+        if (ca !== cb) return ca < cb ? -1 : 1;
+        const ia = a.id || '';
+        const ib = b.id || '';
+        return ia < ib ? -1 : ia > ib ? 1 : 0;
+      });
+      return filas.map(desdeFilaBDCompras);
     }
     default:
       throw new Error(`Acción de worker desconocida: ${action}`);

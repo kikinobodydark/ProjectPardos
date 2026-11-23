@@ -502,6 +502,7 @@ const CargaArchivos = memo(function CargaArchivos({
 
         setProgressPct(100);
         queryClient.setQueryData(['ventasDocumentos', periodId], docs);
+        queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
         idbSetQuery(JSON.stringify(['ventasDocumentos', periodId]), ['ventasDocumentos', periodId], docs);
 
         setSuccessMsg(
@@ -596,6 +597,7 @@ const CargaArchivos = memo(function CargaArchivos({
 
         setProgressPct(100);
         queryClient.setQueryData(['comprasDocumentos', periodId], docs);
+        queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
         idbSetQuery(JSON.stringify(['comprasDocumentos', periodId]), ['comprasDocumentos', periodId], docs);
 
         setSuccessMsg(

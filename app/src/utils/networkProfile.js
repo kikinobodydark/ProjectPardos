@@ -30,6 +30,9 @@ export function getNetworkProfile() {
       recommendedPageSize: simulatedOverride.isSlowNetwork || simulatedOverride.isMobile ? 15 : 20,
       recommendedBatchSize: simulatedOverride.isSlowNetwork ? 250 : 500,
       recommendedConcurrency: simulatedOverride.isSlowNetwork ? 1 : 2,
+      recommendedReadPageSize: simulatedOverride.isSlowNetwork ? 500 : 1000,
+      recommendedReadRpcLimit: simulatedOverride.isSlowNetwork ? 2000 : 5000,
+      recommendedReadConcurrency: simulatedOverride.isSlowNetwork ? 2 : 4,
     };
   }
 
@@ -63,6 +66,9 @@ export function getNetworkProfile() {
     recommendedPageSize: isSlowNetwork || isMobile ? 15 : 20,
     recommendedBatchSize: isSlowNetwork ? 250 : 500,
     recommendedConcurrency: isSlowNetwork ? 1 : 2,
+    recommendedReadPageSize: isSlowNetwork ? 500 : 1000,
+    recommendedReadRpcLimit: isSlowNetwork ? 2000 : 5000,
+    recommendedReadConcurrency: isSlowNetwork ? 2 : 4,
   };
 }
 

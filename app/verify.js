@@ -513,7 +513,10 @@ console.log('\n=== 3. PRUEBAS DE OPTIMIZACIÓN DE RENDIMIENTO Y REDES LENTAS ===
   assert.ok(fs.existsSync(path.resolve('./public/logo-pardos.webp')), 'Debe existir logo-pardos.webp');
   assert.ok(fs.existsSync(path.resolve('./public/logo-pardos.avif')), 'Debe existir logo-pardos.avif');
   const viewsSql = fs.readFileSync(path.resolve('../supabase/views.sql'), 'utf-8');
-  assert.ok(viewsSql.includes('LEFT JOIN public.v_resumen_ventas'), 'v_historial_cargas debe usar LEFT JOIN pre-agregado sin subconsultas N+1');
+  assert.ok(
+    viewsSql.includes('pc.total_registros') && viewsSql.includes('LEFT JOIN LATERAL'),
+    'v_historial_cargas debe leer conteos cacheados en periodos_carga con fallback LATERAL acotado por periodo_id'
+  );
 }
 
 console.log('✓ Todas las pruebas de rendimiento, telemetría, pool, workers, virtualización y redes lentas pasaron con éxito.');

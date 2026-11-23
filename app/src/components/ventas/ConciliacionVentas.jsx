@@ -16,7 +16,7 @@ import ModalDetalleDocumentoVentas from './ModalDetalleDocumentoVentas';
 import ReportesEspecificosVentas from './ReportesEspecificosVentas';
 import PanelSaltosSecuenciaVentas from './PanelSaltosSecuenciaVentas';
 import SelectorLocal from '../SelectorLocal';
-import { SkeletonTable } from '../SkeletonLoader';
+import { SkeletonTable, LoadProgressBanner, LoadErrorAlert } from '../SkeletonLoader';
 import { useVirtualList } from '../../utils/useVirtualList';
 import { useNetworkProfile } from '../../utils/networkProfile';
 import {
@@ -169,7 +169,14 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
   periodId, activePeriod, initialFilter, onFilterReset, activeCompany,
   selectedLocalId = 'ALL', onChangeLocalId,
 }) {
-  const { data: todosDocs = [], isLoading } = useDocumentosVentas(periodId, true);
+  const {
+    data: todosDocs = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+    loadProgress,
+  } = useDocumentosVentas(periodId, true);
   const { localesActivos, indiceLocales, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
   const networkProfile = useNetworkProfile();
 
@@ -766,7 +773,16 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
 
         {/* Contenido principal: Skeleton de carga, Tabla de 20 columnas o los 12 Reportes Específicos */}
         {isLoading ? (
-          <SkeletonTable rows={10} columns={10} title="Cargando comprobantes conciliados..." />
+          <>
+            <LoadProgressBanner progress={loadProgress} />
+            <SkeletonTable rows={10} columns={10} title="Cargando comprobantes conciliados..." />
+          </>
+        ) : isError ? (
+          <LoadErrorAlert
+            title="No se pudieron cargar los comprobantes de Ventas"
+            error={error}
+            onRetry={refetch}
+          />
         ) : vistaActiva === 'reportes' ? (
           <ReportesEspecificosVentas
             docs={docsFiltrados}

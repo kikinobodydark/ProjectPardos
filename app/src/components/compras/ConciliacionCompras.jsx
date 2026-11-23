@@ -26,7 +26,7 @@ import {
 } from 'react-icons/fi';
 import { useDocumentosCompras } from './useDocumentosCompras';
 import ModalDetalleDocumentoCompras from './ModalDetalleDocumentoCompras';
-import { SkeletonTable } from '../SkeletonLoader';
+import { SkeletonTable, LoadProgressBanner, LoadErrorAlert } from '../SkeletonLoader';
 import { useVirtualList } from '../../utils/useVirtualList';
 import { useNetworkProfile } from '../../utils/networkProfile';
 import { checkRateLimit, validateUploadedFile } from '../../utils/security';
@@ -290,7 +290,14 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   userProfile,
 }) {
   const queryClient = useQueryClient();
-  const { data: todosDocs = [], isLoading } = useDocumentosCompras(periodId, true);
+  const {
+    data: todosDocs = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+    loadProgress,
+  } = useDocumentosCompras(periodId, true);
   const networkProfile = useNetworkProfile();
   const inputUsuariosSapRef = useRef(null);
 
@@ -1192,7 +1199,16 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
 
         {/* 7.B Tabla de Conciliación de Compras (20 columnas + virtualización) */}
         {isLoading ? (
-          <SkeletonTable rows={10} columns={10} title="Cargando documentos conciliados de Compras..." />
+          <>
+            <LoadProgressBanner progress={loadProgress} />
+            <SkeletonTable rows={10} columns={10} title="Cargando documentos conciliados de Compras..." />
+          </>
+        ) : isError ? (
+          <LoadErrorAlert
+            title="No se pudieron cargar los documentos de Compras"
+            error={error}
+            onRetry={refetch}
+          />
         ) : totalRegistros === 0 ? (
           <div
             className="text-center py-5 rounded-3"
