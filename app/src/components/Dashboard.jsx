@@ -20,7 +20,7 @@ import {
 } from '../utils/compras/reportes';
 
 const Dashboard = memo(function Dashboard({
-  activeCompany, periodId, activePeriod, onNavigateToReconciliation, activeModule,
+  activeCompany, periodId, activePeriod, activePeriodObj = null, onNavigateToReconciliation, activeModule,
   selectedLocalId = 'ALL', onChangeLocalId,
 }) {
   if (activeModule !== 'compras') {
@@ -29,6 +29,7 @@ const Dashboard = memo(function Dashboard({
         activeCompany={activeCompany}
         periodId={periodId}
         activePeriod={activePeriod}
+        activePeriodObj={activePeriodObj}
         onNavigateToReconciliation={onNavigateToReconciliation}
         selectedLocalId={selectedLocalId}
         onChangeLocalId={onChangeLocalId}
@@ -39,6 +40,7 @@ const Dashboard = memo(function Dashboard({
     <DashboardCompras
       periodId={periodId}
       activePeriod={activePeriod}
+      activePeriodObj={activePeriodObj}
       onNavigateToReconciliation={onNavigateToReconciliation}
     />
   );
@@ -50,24 +52,47 @@ export default Dashboard;
 // Dashboard del módulo de Ventas (Secciones 3.B, 8, 9, 11 y 13)
 // ============================================================================
 const DashboardVentas = memo(function DashboardVentas({
-  activeCompany, periodId, activePeriod, onNavigateToReconciliation,
+  activeCompany, periodId, activePeriod, activePeriodObj = null, onNavigateToReconciliation,
   selectedLocalId = 'ALL', onChangeLocalId,
 }) {
+  const localId = selectedLocalId || 'ALL';
+  const [solicitoExportar, setSolicitoExportar] = useState(false);
+
+  const resumenServidor =
+    localId === 'ALL' && activePeriodObj?.resumen_json && typeof activePeriodObj.resumen_json.totalUnicos === 'number'
+      ? activePeriodObj.resumen_json
+      : null;
+
+  // Si ya tenemos el resumen precalculado en periodos_carga y no se filtró por local,
+  // evitar descargar 120k+ filas solo para mostrar el Dashboard (< 50 ms)
+  const necesitaDocsCompletos = !resumenServidor || localId !== 'ALL' || solicitoExportar;
+
   const {
     data: todosDocs = [],
-    isLoading,
+    isLoading: docsLoading,
     isError,
     error,
     refetch,
     loadProgress,
-  } = useDocumentosVentas(periodId, true);
+  } = useDocumentosVentas(periodId, necesitaDocsCompletos);
   const { localesActivos, indiceLocales, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
   const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
 
-  const localId = selectedLocalId || 'ALL';
   const setLocalId = (val) => {
     if (onChangeLocalId) onChangeLocalId(val);
   };
+
+  // Exportar automáticamente cuando el usuario pidió exportar y terminaron de cargar los docs
+  useEffect(() => {
+    if (solicitoExportar && !docsLoading && todosDocs.length > 0) {
+      setSolicitoExportar(false);
+      const filtrados =
+        localId === 'ALL' || localesActivos.length === 0
+          ? todosDocs
+          : todosDocs.filter((d) => coincideConLocal(d, localId, indiceLocales));
+      exportarExcelVentas({ tipo: 'completo', docs: filtrados, todosDocs: filtrados, periodo: activePeriod || 'periodo' });
+    }
+  }, [solicitoExportar, docsLoading, todosDocs, localId, localesActivos.length, indiceLocales, activePeriod]);
 
   // Solo reiniciar si ya cargaron los locales de la empresa y el local elegido ya no existe
   useEffect(() => {
@@ -87,7 +112,12 @@ const DashboardVentas = memo(function DashboardVentas({
     return todosDocs.filter((d) => coincideConLocal(d, localId, indiceLocales));
   }, [todosDocs, localId, localesActivos.length, indiceLocales]);
 
-  const ind = useMemo(() => calcularIndicadores(docs), [docs]);
+  const ind = useMemo(() => {
+    if (resumenServidor && todosDocs.length === 0) return resumenServidor;
+    return calcularIndicadores(docs);
+  }, [resumenServidor, todosDocs.length, docs]);
+
+  const isLoading = !resumenServidor && docsLoading;
 
   const irAConciliacion = (payload) => {
     if (!onNavigateToReconciliation) return;
@@ -129,12 +159,18 @@ const DashboardVentas = memo(function DashboardVentas({
           />
           <button
             type="button"
-            disabled={docs.length === 0}
+            disabled={(ind.totalUnicos === 0 && docs.length === 0) || solicitoExportar}
             className="dashboard-action-btn dashboard-action-btn--secondary"
-            onClick={() => exportarExcelVentas({ tipo: 'completo', docs, todosDocs: docs, periodo: activePeriod || 'periodo' })}
+            onClick={() => {
+              if (docs.length > 0) {
+                exportarExcelVentas({ tipo: 'completo', docs, todosDocs: docs, periodo: activePeriod || 'periodo' });
+              } else {
+                setSolicitoExportar(true);
+              }
+            }}
           >
             <FiDownload />
-            <span>Exportar Libro Completo</span>
+            <span>{solicitoExportar ? 'Preparando Excel...' : 'Exportar Libro Completo'}</span>
           </button>
           <button
             type="button"
@@ -160,7 +196,7 @@ const DashboardVentas = memo(function DashboardVentas({
           {/* 10 Indicadores Generales (Sección 3.B) */}
           <TarjetasIndicadoresVentas
             indicadores={ind}
-            totalSinFiltro={docs.length}
+            totalSinFiltro={ind.totalUnicos}
             onSelectKpi={(id, filtro) => irAConciliacion({ vista: 'tabla', kpi: id, filtros: filtro })}
           />
 
@@ -356,19 +392,38 @@ const DashboardVentas = memo(function DashboardVentas({
 const DashboardCompras = memo(function DashboardCompras({
   periodId,
   activePeriod,
+  activePeriodObj = null,
   onNavigateToReconciliation,
 }) {
+  const [solicitoExportar, setSolicitoExportar] = useState(false);
+  const resumenServidor =
+    activePeriodObj?.resumen_json && typeof activePeriodObj.resumen_json.totalUnicos === 'number'
+      ? activePeriodObj.resumen_json
+      : null;
+
   const {
     data: docs = [],
-    isLoading,
+    isLoading: docsLoading,
     isError,
     error,
     refetch,
     loadProgress,
-  } = useDocumentosCompras(periodId, true);
+  } = useDocumentosCompras(periodId, !resumenServidor || solicitoExportar);
   const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
 
-  const ind = useMemo(() => calcularIndicadoresCompras(docs), [docs]);
+  useEffect(() => {
+    if (solicitoExportar && !docsLoading && docs.length > 0) {
+      setSolicitoExportar(false);
+      exportarExcelCompras({ docs, alcance: 'completo', periodo: activePeriod || 'periodo' });
+    }
+  }, [solicitoExportar, docsLoading, docs, activePeriod]);
+
+  const ind = useMemo(() => {
+    if (resumenServidor && docs.length === 0) return resumenServidor;
+    return calcularIndicadoresCompras(docs);
+  }, [resumenServidor, docs]);
+
+  const isLoading = !resumenServidor && docsLoading;
 
   const irAConciliacion = (payload) => {
     if (!onNavigateToReconciliation) return;
@@ -391,12 +446,18 @@ const DashboardCompras = memo(function DashboardCompras({
         <div className="d-flex align-items-center flex-wrap gap-2">
           <button
             type="button"
-            disabled={docs.length === 0}
+            disabled={(ind.totalUnicos === 0 && docs.length === 0) || solicitoExportar}
             className="dashboard-action-btn dashboard-action-btn--secondary dashboard-action-btn--compras"
-            onClick={() => exportarExcelCompras({ docs, alcance: 'completo', periodo: activePeriod || 'periodo' })}
+            onClick={() => {
+              if (docs.length > 0) {
+                exportarExcelCompras({ docs, alcance: 'completo', periodo: activePeriod || 'periodo' });
+              } else {
+                setSolicitoExportar(true);
+              }
+            }}
           >
             <FiDownload />
-            <span>Exportar Excel Completo</span>
+            <span>{solicitoExportar ? 'Preparando Excel...' : 'Exportar Excel Completo'}</span>
           </button>
           <button
             type="button"
@@ -422,7 +483,7 @@ const DashboardCompras = memo(function DashboardCompras({
           {/* 7 Indicadores Generales (Sección 7.A) */}
           <TarjetasIndicadoresCompras
             indicadores={ind}
-            totalSinFiltro={docs.length}
+            totalSinFiltro={ind.totalUnicos}
             onSelectKpi={(id, filtro) => irAConciliacion({ kpi: id, filtros: filtro })}
           />
 

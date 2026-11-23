@@ -58,7 +58,7 @@ export function loadThirdPartyStylesheet(href) {
 
   const promise = new Promise((resolve) => {
     runAfterPageIdle(() => {
-      const existing = document.querySelector(`link[href="${href}"]`);
+      const existing = document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
       if (existing) {
         resolve(existing);
         return;

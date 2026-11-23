@@ -13,7 +13,9 @@ import {
   executeParallelBatches,
 } from '../utils/jobQueue';
 import { aFilaBDRpc } from '../utils/ventas/persistencia';
+import { calcularIndicadores } from '../utils/ventas/reportes';
 import { aFilaBDComprasRpc } from '../utils/compras/persistencia';
+import { calcularIndicadoresCompras } from '../utils/compras/reportes';
 import { idbSetQuery } from '../utils/queryPersister';
 import { useNetworkProfile } from '../utils/networkProfile';
 import {
@@ -519,6 +521,14 @@ const CargaArchivos = memo(function CargaArchivos({
         queryClient.setQueryData(['ventasDocumentos', periodId], docs);
         queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
         idbSetQuery(JSON.stringify(['ventasDocumentos', periodId]), ['ventasDocumentos', periodId], docs);
+        try {
+          supabase.rpc('guardar_resumen_periodo', {
+            p_periodo_id: periodId,
+            p_resumen: calcularIndicadores(docs),
+          }).then(() => {}).catch(() => {});
+        } catch {
+          // Ignorar error opcional de caché de resumen
+        }
 
         setSuccessMsg(
           `¡Validación completada! Se conciliaron ${docs.length.toLocaleString('es-PE')} comprobantes únicos del período ${periodoFinal}.`
@@ -607,6 +617,14 @@ const CargaArchivos = memo(function CargaArchivos({
         queryClient.setQueryData(['comprasDocumentos', periodId], docs);
         queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
         idbSetQuery(JSON.stringify(['comprasDocumentos', periodId]), ['comprasDocumentos', periodId], docs);
+        try {
+          supabase.rpc('guardar_resumen_periodo', {
+            p_periodo_id: periodId,
+            p_resumen: calcularIndicadoresCompras(docs),
+          }).then(() => {}).catch(() => {});
+        } catch {
+          // Ignorar error opcional de caché de resumen
+        }
 
         setSuccessMsg(
           `¡Conciliación de Compras completada! Se validaron ${docs.length.toLocaleString('es-PE')} documentos únicos del período ${periodoFinal}.`

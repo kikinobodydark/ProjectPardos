@@ -4,7 +4,7 @@
 // - Estrategia Network-First con fallback a caché para navegación HTML
 // - Ignora peticiones dinámicas a Supabase Auth / REST para preservar seguridad
 // ============================================================================
-const CACHE_NAME = 'conciliatributo-static-v3';
+const CACHE_NAME = 'conciliatributo-static-v4';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -44,6 +44,11 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
+
+  // Ignorar esquemas no HTTP(S) como chrome-extension://, edge://, data:, blob:
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return;
+  }
 
   // Nunca cachear el propio service worker ni llamadas a Supabase/APIs externas
   if (

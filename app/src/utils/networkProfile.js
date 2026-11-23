@@ -33,8 +33,8 @@ export function getNetworkProfile() {
       recommendedBulkUploadBatchSize: simulatedOverride.isSlowNetwork ? 500 : 2000,
       recommendedBulkUploadConcurrency: simulatedOverride.isSlowNetwork ? 1 : 4,
       recommendedReadPageSize: simulatedOverride.isSlowNetwork ? 500 : 1000,
-      recommendedReadRpcLimit: simulatedOverride.isSlowNetwork ? 2000 : 5000,
-      recommendedReadConcurrency: simulatedOverride.isSlowNetwork ? 2 : 4,
+      recommendedReadRpcLimit: simulatedOverride.isSlowNetwork ? 1500 : 2500,
+      recommendedReadConcurrency: simulatedOverride.isSlowNetwork ? 1 : 2,
     };
   }
 
@@ -71,8 +71,8 @@ export function getNetworkProfile() {
     recommendedBulkUploadBatchSize: isSlowNetwork ? 500 : 2000,
     recommendedBulkUploadConcurrency: isSlowNetwork ? 1 : 4,
     recommendedReadPageSize: isSlowNetwork ? 500 : 1000,
-    recommendedReadRpcLimit: isSlowNetwork ? 2000 : 5000,
-    recommendedReadConcurrency: isSlowNetwork ? 2 : 4,
+    recommendedReadRpcLimit: isSlowNetwork ? 1500 : 2500,
+    recommendedReadConcurrency: isSlowNetwork ? 1 : 2,
   };
 }
 
