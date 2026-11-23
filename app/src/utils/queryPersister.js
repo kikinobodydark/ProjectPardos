@@ -17,7 +17,7 @@ const IDB_NAME = 'conciliatributo_rq_idb_v4';
 const IDB_STORE = 'queries';
 const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutos de validez de caché
 const MAX_IDB_ENTRIES = 2; // Conservar a lo sumo los 2 lotes más recientes
-const MAX_IDB_DOCS_COUNT = 120000; // Evitar congelar el hilo principal con structuredClone > 120k docs
+const MAX_IDB_DOCS_COUNT = 500000; // Soporta períodos masivos (120k-500k docs) para F5 instantáneo sin re-descargar
 export const IDB_DOCS_CACHE_VERSION = 2;
 let legacyIdbCleaned = false;
 

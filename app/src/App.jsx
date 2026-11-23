@@ -571,6 +571,7 @@ export default function App() {
               activeCompany={activeCompany}
               periodId={periodId}
               activePeriod={activePeriod}
+              activePeriodObj={periods.find((p) => p.id === periodId) || null}
               onNavigateToReconciliation={navigateToReconciliation}
               activeModule={activeModule}
               selectedLocalId={selectedLocalId}

@@ -18,6 +18,7 @@ import {
   IDB_DOCS_CACHE_VERSION,
 } from '../../utils/queryPersister';
 import { runCpuTaskInWorker } from '../../utils/jobQueue';
+import { calcularIndicadoresCompras } from '../../utils/compras/reportes';
 import {
   fetchAllSupabaseKeyset,
   SUPABASE_MAX_SELECT_ROWS,
@@ -109,10 +110,10 @@ export function useDocumentosCompras(periodId, enabled = true) {
         SUPABASE_MAX_SELECT_ROWS
       );
       const rpcLimit = Math.min(
-        net.recommendedReadRpcLimit || SUPABASE_KEYSET_RPC_LIMIT,
+        net.recommendedReadRpcLimit || 2500,
         SUPABASE_KEYSET_RPC_LIMIT
       );
-      const concurrency = net.recommendedReadConcurrency || 4;
+      const concurrency = net.recommendedReadConcurrency || 2;
 
       emitProgress(periodId, { loaded: 0, total: 0, phase: 'downloading' });
 
@@ -126,12 +127,18 @@ export function useDocumentosCompras(periodId, enabled = true) {
           onProgress: (loaded, total) => {
             emitProgress(periodId, { loaded, total, phase: 'downloading' });
           },
-          fetchCount: () =>
-            supabase
-              .from('detalle_compras')
-              .select('id', { count: 'exact', head: true })
-              .eq('periodo_id', periodId)
-              .abortSignal(signal),
+          fetchCount: async () => {
+            const { data, error } = await supabase
+              .from('periodos_carga')
+              .select('total_registros')
+              .eq('id', periodId)
+              .maybeSingle()
+              .abortSignal(signal);
+            if (!error && typeof data?.total_registros === 'number') {
+              return { count: data.total_registros, error: null };
+            }
+            return { count: null, error: null };
+          },
           fetchRpcBatch: ({ minId, maxId, afterId, limit }) =>
             supabase
               .rpc('obtener_lote_compras_json', {
@@ -184,7 +191,18 @@ export function useDocumentosCompras(periodId, enabled = true) {
 
         emitProgress(periodId, { loaded: all.length, total: all.length, phase: 'processing' });
         const docs = await runCpuTaskInWorker('HYDRATE_COMPRAS_DOCS', { filas: all });
-        idbSetQuery(cacheKeyHash, ['comprasDocumentos', periodId], docs, IDB_DOCS_CACHE_VERSION);
+        setTimeout(() => {
+          idbSetQuery(cacheKeyHash, ['comprasDocumentos', periodId], docs, IDB_DOCS_CACHE_VERSION);
+          try {
+            const resumen = calcularIndicadoresCompras(docs);
+            supabase.rpc('guardar_resumen_periodo', {
+              p_periodo_id: periodId,
+              p_resumen: resumen,
+            }).then(() => {}).catch(() => {});
+          } catch {
+            // Ignorar errores opcionales de caché de resumen
+          }
+        }, 50);
         emitProgress(periodId, null);
         return docs;
       } catch (err) {

@@ -145,8 +145,8 @@ describe('Carga masiva progresiva y resiliencia ante timeouts', () => {
     assert.equal(normal.recommendedBulkUploadBatchSize, 2000);
     assert.equal(normal.recommendedBulkUploadConcurrency, 4);
     assert.equal(normal.recommendedReadPageSize, 1000);
-    assert.equal(normal.recommendedReadRpcLimit, 5000);
-    assert.equal(normal.recommendedReadConcurrency, 4);
+    assert.equal(normal.recommendedReadRpcLimit, 2500);
+    assert.equal(normal.recommendedReadConcurrency, 2);
 
     simulateNetworkProfile({ isSlowNetwork: true, effectiveType: '2g' });
     const slow = getNetworkProfile();
@@ -155,8 +155,8 @@ describe('Carga masiva progresiva y resiliencia ante timeouts', () => {
     assert.equal(slow.recommendedBulkUploadBatchSize, 500);
     assert.equal(slow.recommendedBulkUploadConcurrency, 1);
     assert.equal(slow.recommendedReadPageSize, 500);
-    assert.equal(slow.recommendedReadRpcLimit, 2000);
-    assert.equal(slow.recommendedReadConcurrency, 2);
+    assert.equal(slow.recommendedReadRpcLimit, 1500);
+    assert.equal(slow.recommendedReadConcurrency, 1);
     simulateNetworkProfile(null);
   });
 
