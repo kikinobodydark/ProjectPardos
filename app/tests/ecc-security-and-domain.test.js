@@ -14,6 +14,7 @@ import { validarDocumentoCompras } from '../src/utils/compras/reglas.js';
 import { clearPersistedQueryCache } from '../src/utils/queryPersister.js';
 import { getNetworkProfile, simulateNetworkProfile } from '../src/utils/networkProfile.js';
 import { executeParallelBatches } from '../src/utils/jobQueue.js';
+import { fetchAllSupabaseKeyset } from '../src/utils/supabasePagination.js';
 
 describe('ECC Security — Excel Formula Injection & Input Sanitization', () => {
   it('prefija con comilla simple fórmulas peligrosas en celdas Excel', () => {
@@ -139,12 +140,84 @@ describe('Carga masiva progresiva y resiliencia ante timeouts', () => {
     const normal = getNetworkProfile();
     assert.equal(normal.recommendedBatchSize, 500);
     assert.equal(normal.recommendedConcurrency, 2);
+    assert.equal(normal.recommendedReadPageSize, 1000);
+    assert.equal(normal.recommendedReadRpcLimit, 5000);
+    assert.equal(normal.recommendedReadConcurrency, 4);
 
     simulateNetworkProfile({ isSlowNetwork: true, effectiveType: '2g' });
     const slow = getNetworkProfile();
     assert.equal(slow.recommendedBatchSize, 250);
     assert.equal(slow.recommendedConcurrency, 1);
+    assert.equal(slow.recommendedReadPageSize, 500);
+    assert.equal(slow.recommendedReadRpcLimit, 2000);
+    assert.equal(slow.recommendedReadConcurrency, 2);
     simulateNetworkProfile(null);
+  });
+
+  it('fetchAllSupabaseKeyset descarga por buckets UUID vía RPC y hace fallback keyset por car_sunat si la RPC no existe', async () => {
+    const hexPrefixes = ['1', '5', '9', 'd'];
+    const dataset = Array.from({ length: 12000 }, (_, i) => {
+      const prefix = hexPrefixes[i % 4];
+      const suffix = String(i).padStart(12, '0');
+      return {
+        id: `${prefix}0000000-0000-4000-8000-${suffix}`,
+        car_sunat: `2055359644103B601${String(i + 1).padStart(10, '0')}`,
+      };
+    });
+
+    // 1. Vía rápida: RPC Keyset por buckets UUID paralelos
+    let rpcCalls = 0;
+    const rpcResult = await fetchAllSupabaseKeyset({
+      rpcLimit: 2000,
+      concurrency: 4,
+      fetchCount: async () => ({ count: dataset.length, error: null }),
+      fetchRpcBatch: async ({ minId, maxId, afterId, limit }) => {
+        rpcCalls += 1;
+        const rows = dataset
+          .filter((r) => {
+            if (minId && r.id < minId) return false;
+            if (maxId && r.id > maxId) return false;
+            if (afterId && r.id <= afterId) return false;
+            return true;
+          })
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+          .slice(0, limit);
+        return { data: rows, error: null };
+      },
+    });
+    assert.equal(rpcResult.length, dataset.length, 'RPC keyset por buckets debe devolver todas las 12,000 filas sin pérdida');
+    assert.ok(rpcCalls <= 8, '12,000 filas en buckets de 2,000 deben completarse en <= 8 llamadas RPC');
+
+    // 2. Fallback automático sin migración: RPC inexistente (PGRST202) -> keyset por car_sunat sin OFFSET
+    let keysetCalls = 0;
+    const sortedByCar = [...dataset].sort((a, b) => (a.car_sunat < b.car_sunat ? -1 : 1));
+    const fallbackResult = await fetchAllSupabaseKeyset({
+      pageSize: 1000,
+      rpcLimit: 5000,
+      concurrency: 4,
+      fetchCount: async () => ({ count: dataset.length, error: null }),
+      fetchRpcBatch: async () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } }),
+      fetchCarKeysetPage: async (lastCar, limit) => {
+        keysetCalls += 1;
+        const rows = sortedByCar.filter((r) => (lastCar === null ? true : r.car_sunat > lastCar)).slice(0, limit);
+        return { data: rows, error: null };
+      },
+      fetchNullCarPage: async () => ({ data: [], error: null }),
+    });
+    assert.equal(fallbackResult.length, dataset.length, 'Fallback car_sunat keyset debe recuperar las 12,000 filas sin OFFSET');
+    assert.equal(keysetCalls, 13, '12,000 filas en bloques de 1,000 con cursor deben completar en 12 páginas + cierre');
+
+    // 3. Cancelación inmediata vía AbortSignal
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+      () =>
+        fetchAllSupabaseKeyset({
+          signal: controller.signal,
+          fetchCount: async () => ({ count: 10, error: null }),
+        }),
+      (err) => err?.name === 'AbortError'
+    );
   });
 
   it('executeParallelBatches detiene lotes en cola tras el primer error fatal', async () => {

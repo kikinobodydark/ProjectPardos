@@ -194,8 +194,9 @@ WITH (security_invoker = true) AS
      JOIN public.empresas e ON pc.empresa_id = e.id
   WHERE dv.estado_validacion::text = ANY (ARRAY['ERROR'::character varying, 'OBSERVADO'::character varying]::text[]);
 
--- Vista 5: Historial detallado de cargas (OPTIMIZADA SIN CONSULTAS N+1 CORRELACIONADAS)
--- Reemplaza las 4 subconsultas correlacionadas por fila con LEFT JOIN agregados en una sola pasada.
+-- Vista 5: Historial detallado de cargas (OPTIMIZADA O(1) CON CONTEOS CACHEADOS + FALLBACK LATERAL)
+-- Lee directamente los conteos precalculados en periodos_carga sin escanear detalle_ventas ni detalle_compras.
+-- Solo si un registro antiguo tiene conteos NULL recurre a un LEFT JOIN LATERAL acotado por periodo_id.
 CREATE OR REPLACE VIEW public.v_historial_cargas 
 WITH (security_invoker = true) AS
  SELECT pc.id AS periodo_id,
@@ -208,25 +209,32 @@ WITH (security_invoker = true) AS
     e.razon_social AS empresa_nombre,
     pc.empresa_id,
     u.nombre AS usuario_nombre,
-    CASE
-        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.total_registros, 0::bigint)
-        ELSE COALESCE(rv.total_registros, 0::bigint)
-    END AS total_registros,
-    CASE
-        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.ok_registros, 0::bigint)
-        ELSE COALESCE(rv.ok_registros, 0::bigint)
-    END AS ok_registros,
-    CASE
-        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.error_registros, 0::bigint)
-        ELSE COALESCE(rv.error_registros, 0::bigint)
-    END AS error_registros,
-    CASE
-        WHEN pc.modulo::text = 'compras'::text THEN COALESCE(rc.observado_registros, 0::bigint)
-        ELSE COALESCE(rv.observado_registros, 0::bigint)
-    END AS observado_registros
+    COALESCE(pc.total_registros::bigint, fallback.total_registros, 0::bigint) AS total_registros,
+    COALESCE(pc.ok_registros::bigint, fallback.ok_registros, 0::bigint) AS ok_registros,
+    COALESCE(pc.error_registros::bigint, fallback.error_registros, 0::bigint) AS error_registros,
+    COALESCE(pc.observado_registros::bigint, fallback.observado_registros, 0::bigint) AS observado_registros
    FROM public.periodos_carga pc
      JOIN public.empresas e ON pc.empresa_id = e.id
      LEFT JOIN public.usuarios u ON pc.usuario_id = u.id
-     LEFT JOIN public.v_resumen_ventas rv ON pc.modulo::text <> 'compras'::text AND rv.periodo_id = pc.id
-     LEFT JOIN public.v_resumen_compras rc ON pc.modulo::text = 'compras'::text AND rc.periodo_id = pc.id
+     LEFT JOIN LATERAL (
+         SELECT
+             count(*) AS total_registros,
+             count(*) FILTER (WHERE estado_validacion = 'OK') AS ok_registros,
+             count(*) FILTER (WHERE estado_validacion = 'ERROR') AS error_registros,
+             count(*) FILTER (WHERE estado_validacion = 'OBSERVADO') AS observado_registros
+         FROM public.detalle_ventas dv
+         WHERE pc.total_registros IS NULL
+           AND pc.modulo IS DISTINCT FROM 'compras'
+           AND dv.periodo_id = pc.id
+         UNION ALL
+         SELECT
+             count(*) AS total_registros,
+             count(*) FILTER (WHERE estado_validacion = 'OK') AS ok_registros,
+             count(*) FILTER (WHERE estado_validacion = 'ERROR') AS error_registros,
+             count(*) FILTER (WHERE estado_validacion = 'OBSERVADO') AS observado_registros
+         FROM public.detalle_compras dc
+         WHERE pc.total_registros IS NULL
+           AND pc.modulo = 'compras'
+           AND dc.periodo_id = pc.id
+     ) fallback ON pc.total_registros IS NULL
   ORDER BY pc.fecha_carga DESC, pc.version DESC;

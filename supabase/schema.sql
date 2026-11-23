@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS public.periodos_carga (
     fecha_carga TIMESTAMPTZ DEFAULT now(),
     estado TEXT NOT NULL CHECK (estado IN ('procesando', 'completado', 'error')),
     modulo VARCHAR(10) CHECK (modulo IN ('ventas', 'compras')),
+    total_registros INTEGER,
+    ok_registros INTEGER,
+    observado_registros INTEGER,
+    error_registros INTEGER,
     created_at TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT uq_periodo_empresa_version UNIQUE (empresa_id, periodo, dia, version, modulo)
 );
@@ -201,10 +205,14 @@ CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_orden_id
   ON public.detalle_ventas (periodo_id, fecha_emision, serie, correlativo, id);
 CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_estado
   ON public.detalle_ventas (periodo_id, estado_validacion);
+CREATE INDEX IF NOT EXISTS idx_detalle_ventas_periodo_id_pk
+  ON public.detalle_ventas (periodo_id, id);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_orden_id
   ON public.detalle_compras (periodo_id, fecha_emision, serie, correlativo, id);
 CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_estado
   ON public.detalle_compras (periodo_id, estado_validacion);
+CREATE INDEX IF NOT EXISTS idx_detalle_compras_periodo_id_pk
+  ON public.detalle_compras (periodo_id, id);
 CREATE INDEX IF NOT EXISTS idx_periodos_carga_empresa_modulo_estado
   ON public.periodos_carga (empresa_id, modulo, estado, fecha_carga DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_locales_empresa_empresa_nombre

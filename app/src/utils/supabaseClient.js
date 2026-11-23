@@ -64,7 +64,7 @@ const secureSessionStorage =
   typeof window !== 'undefined' && window.sessionStorage ? window.sessionStorage : undefined;
 
 export const instrumentedSupabaseFetch = createInstrumentedFetch({
-  maxConcurrent: 6,
+  maxConcurrent: 8,
   primaryUrl: supabaseUrl,
   readUrls: readReplicaUrls,
 });

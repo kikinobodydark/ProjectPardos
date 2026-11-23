@@ -1,21 +1,24 @@
 // ============================================================================
 // Persistencia de Caché para TanStack React Query (IndexedDB + sessionStorage)
-// - Por defecto, React Query guarda los datos solo en memoria RAM y se pierden
-//   al recargar la página (F5).
-// - Este módulo persiste:
-//   1. Metadatos ligeros (`userProfile`, `companies`, `periods`, `cargaHistory`,
-//      `dashboardStats`) en `sessionStorage` para hidratación SÍNCRONA (0 ms) al
-//      recargar la página.
-//   2. Lotes masivos (`ventasDocumentos`, `reconciliation` con 10,000+ filas) en
-//      `IndexedDB` para restaurarlos en ~20 ms desde disco local sin volver a
-//      descargar todas las páginas desde Supabase en cada F5.
+// - Metadatos ligeros (`userProfile`, `companies`, `periods`, `cargaHistory`,
+//   `dashboardStats`) se persisten en `sessionStorage` para hidratación SÍNCRONA (0 ms).
+// - Lotes masivos (`ventasDocumentos`, `comprasDocumentos`) se leen bajo demanda
+//   desde `IndexedDB` por `periodId` (sin cargar todos los períodos a RAM al iniciar)
+//   y conservando únicamente los 2 períodos más recientes para evitar saturar disco/RAM.
 // ============================================================================
 
 const SESSION_CACHE_KEY = 'ct_rq_sync_cache_v1';
-const LEGACY_IDB_NAMES = ['conciliatributo_rq_idb_v1', 'conciliatributo_rq_idb_v2', 'conciliatributo_rq_idb_v3'];
+const LEGACY_IDB_NAMES = [
+  'conciliatributo_rq_idb_v1',
+  'conciliatributo_rq_idb_v2',
+  'conciliatributo_rq_idb_v3',
+];
 const IDB_NAME = 'conciliatributo_rq_idb_v4';
 const IDB_STORE = 'queries';
 const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutos de validez de caché
+const MAX_IDB_ENTRIES = 2; // Conservar a lo sumo los 2 lotes más recientes
+const MAX_IDB_DOCS_COUNT = 120000; // Evitar congelar el hilo principal con structuredClone > 120k docs
+export const IDB_DOCS_CACHE_VERSION = 2;
 let legacyIdbCleaned = false;
 
 const SYNC_QUERY_PREFIXES = new Set([
@@ -27,12 +30,6 @@ const SYNC_QUERY_PREFIXES = new Set([
   'dashboardStats',
   'existingFilters',
   'usuarios',
-]);
-
-const IDB_QUERY_PREFIXES = new Set([
-  'ventasDocumentos',
-  'comprasDocumentos',
-  'reconciliation',
 ]);
 
 let activeSyncEntries = {};
@@ -67,14 +64,43 @@ function openIdb() {
   });
 }
 
-export async function idbSetQuery(queryHash, queryKey, data) {
+async function pruneOldIdbEntries(db, keepHash) {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const keysReq = store.getAllKeys();
+      keysReq.onsuccess = () => {
+        const keys = keysReq.result || [];
+        if (keys.length <= MAX_IDB_ENTRIES) {
+          resolve();
+          return;
+        }
+        const keysToDelete = keys.filter((k) => k !== keepHash).slice(0, keys.length - MAX_IDB_ENTRIES);
+        for (const k of keysToDelete) {
+          store.delete(k);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+export async function idbSetQuery(queryHash, queryKey, data, cacheVersion = IDB_DOCS_CACHE_VERSION) {
+  if (Array.isArray(data) && data.length > MAX_IDB_DOCS_COUNT) {
+    return false;
+  }
   const db = await openIdb();
-  if (!db) return;
+  if (!db) return false;
+  await pruneOldIdbEntries(db, queryHash);
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(IDB_STORE, 'readwrite');
       tx.objectStore(IDB_STORE).put(
-        { queryKey, data, updatedAt: Date.now() },
+        { queryKey, data, cacheVersion, updatedAt: Date.now() },
         queryHash
       );
       tx.oncomplete = () => resolve(true);
@@ -85,7 +111,7 @@ export async function idbSetQuery(queryHash, queryKey, data) {
   });
 }
 
-export async function idbGetQuery(queryHash) {
+export async function idbGetQueryEntry(queryHash) {
   const db = await openIdb();
   if (!db) return null;
   return new Promise((resolve) => {
@@ -97,7 +123,7 @@ export async function idbGetQuery(queryHash) {
         if (!entry || Date.now() - entry.updatedAt > MAX_AGE_MS) {
           resolve(null);
         } else {
-          resolve(entry.data);
+          resolve(entry);
         }
       };
       req.onerror = () => resolve(null);
@@ -105,6 +131,11 @@ export async function idbGetQuery(queryHash) {
       resolve(null);
     }
   });
+}
+
+export async function idbGetQuery(queryHash) {
+  const entry = await idbGetQueryEntry(queryHash);
+  return entry ? entry.data : null;
 }
 
 export async function clearPersistedQueryCache() {
@@ -128,8 +159,9 @@ export async function clearPersistedQueryCache() {
 }
 
 /**
- * Hidrata síncronamente `queryClient` desde `sessionStorage` antes del primer render
- * y restaura en segundo plano las consultas grandes desde `IndexedDB`.
+ * Hidrata síncronamente `queryClient` desde `sessionStorage` antes del primer render.
+ * Los lotes grandes en IndexedDB se leen de forma perezosa desde cada hook por `periodId`
+ * para evitar cargar múltiples períodos masivos a RAM simultáneamente al iniciar.
  */
 export function setupQueryPersistence(queryClient) {
   if (typeof window === 'undefined') return;
@@ -152,33 +184,7 @@ export function setupQueryPersistence(queryClient) {
     // Ignorar errores de parseo
   }
 
-  // 2. Hidratación asíncrona rápida (~15 ms) desde IndexedDB para lotes masivos
-  openIdb().then((db) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.getAll();
-      req.onsuccess = () => {
-        const entries = req.result || [];
-        const now = Date.now();
-        for (const entry of entries) {
-          if (entry && entry.queryKey && now - entry.updatedAt <= MAX_AGE_MS) {
-            const existing = queryClient.getQueryData(entry.queryKey);
-            if (!existing) {
-              queryClient.setQueryData(entry.queryKey, entry.data, {
-                updatedAt: entry.updatedAt,
-              });
-            }
-          }
-        }
-      };
-    } catch {
-      // Ignorar
-    }
-  });
-
-  // 3. Suscribirse a actualizaciones exitosas del QueryCache para persistirlas
+  // 2. Suscribirse a actualizaciones exitosas del QueryCache para persistir metadatos ligeros
   activeSyncEntries = (() => {
     try {
       const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
@@ -217,8 +223,6 @@ export function setupQueryPersistence(queryClient) {
             // Si excede cuota, limpiar entradas antiguas
           }
         }, 120);
-      } else if (IDB_QUERY_PREFIXES.has(prefix)) {
-        idbSetQuery(query.queryHash, queryKey, query.state.data);
       }
     }
   });

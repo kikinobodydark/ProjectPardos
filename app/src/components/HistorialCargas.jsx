@@ -8,7 +8,7 @@ import {
   logSuspiciousActivity,
 } from '../utils/security';
 import { clearPersistedQueryCache } from '../utils/queryPersister';
-import { SkeletonTable } from './SkeletonLoader';
+import { SkeletonTable, LoadErrorAlert } from './SkeletonLoader';
 import { FiClock, FiUser, FiArrowRight, FiTrash2, FiRefreshCw } from 'react-icons/fi';
 
 const COLS_HISTORIAL = [
@@ -27,6 +27,58 @@ const COLS_HISTORIAL = [
   'error_registros',
 ].join(',');
 
+async function fetchHistorialFallbackRapido(empresaId, modulo, signal) {
+  const { data: periodos, error } = await supabase
+    .from('periodos_carga')
+    .select('id, periodo, dia, version, fecha_carga, estado, modulo, empresa_id, usuarios(nombre)')
+    .eq('empresa_id', empresaId)
+    .eq('modulo', modulo)
+    .order('fecha_carga', { ascending: false })
+    .order('version', { ascending: false })
+    .abortSignal(signal);
+
+  if (error) throw error;
+  if (!periodos || periodos.length === 0) return [];
+
+  const tablaDetalle = modulo === 'compras' ? 'detalle_compras' : 'detalle_ventas';
+  const countPorEstado = async (periodoId, estado) => {
+    let q = supabase
+      .from(tablaDetalle)
+      .select('id', { count: 'exact', head: true })
+      .eq('periodo_id', periodoId);
+    if (estado) q = q.eq('estado_validacion', estado);
+    const res = await q.abortSignal(signal);
+    return res.error ? 0 : res.count || 0;
+  };
+
+  // Calcular conteos ligeros (Index-Only Scan en idx_detalle_*_periodo_estado) por período
+  const filas = [];
+  for (const p of periodos) {
+    if (signal?.aborted) throw new DOMException('Operación cancelada.', 'AbortError');
+    const [ok, observado, errCount] = await Promise.all([
+      countPorEstado(p.id, 'OK'),
+      countPorEstado(p.id, 'OBSERVADO'),
+      countPorEstado(p.id, 'ERROR'),
+    ]);
+    filas.push({
+      periodo_id: p.id,
+      periodo: p.periodo,
+      dia: p.dia,
+      version: p.version,
+      fecha_carga: p.fecha_carga,
+      estado_carga: p.estado,
+      modulo: p.modulo,
+      empresa_id: p.empresa_id,
+      usuario_nombre: p.usuarios?.nombre || 'N/A',
+      total_registros: ok + observado + errCount,
+      ok_registros: ok,
+      observado_registros: observado,
+      error_registros: errCount,
+    });
+  }
+  return filas;
+}
+
 const HistorialCargas = memo(function HistorialCargas({
   activeCompany,
   onSelectPeriod,
@@ -42,29 +94,46 @@ const HistorialCargas = memo(function HistorialCargas({
   const [porPagina, setPorPagina] = useState(15);
   const [clearingAll, setClearingAll] = useState(false);
 
-  const { data: history = [], isLoading, refetch } = useQuery({
+  const {
+    data: history = [],
+    isLoading,
+    isSuccess,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['cargaHistory', activeCompany?.id, activeModule],
-    queryFn: async () => {
-      const { data, error } = await supabase
+    queryFn: async ({ signal }) => {
+      const { data, error: viewErr } = await supabase
         .from('v_historial_cargas')
         .select(COLS_HISTORIAL)
         .eq('empresa_id', activeCompany.id)
         .eq('modulo', activeModule)
-        .order('fecha_carga', { ascending: false });
+        .order('fecha_carga', { ascending: false })
+        .abortSignal(signal);
 
-      if (error) throw error;
-      return data || [];
+      if (!viewErr) {
+        return data || [];
+      }
+
+      // Si la vista remota aún no está migrada y excede statement_timeout (57014), usar fallback index-only
+      const msg = String(viewErr.message || '').toLowerCase();
+      if (viewErr.code === '57014' || msg.includes('statement timeout') || msg.includes('canceling statement')) {
+        return fetchHistorialFallbackRapido(activeCompany.id, activeModule, signal);
+      }
+      throw viewErr;
     },
     enabled: isAdmin && !!activeCompany?.id && !!activeModule,
+    retry: 0,
   });
 
-  // Si el historial en BD está vacío, sincronizar automáticamente el selector de Período Activo del Navbar
+  // Si el historial en BD está genuinamente vacío (sin error), sincronizar el selector de Período Activo del Navbar
   useEffect(() => {
-    if (!isLoading && history.length === 0 && onDeletePeriod) {
+    if (isSuccess && !isError && !isLoading && history.length === 0 && onDeletePeriod) {
       onDeletePeriod(null);
       queryClient.invalidateQueries({ queryKey: ['periods'] });
     }
-  }, [isLoading, history.length, onDeletePeriod, queryClient]);
+  }, [isSuccess, isError, isLoading, history.length, onDeletePeriod, queryClient]);
 
   const totalPaginas = Math.ceil(history.length / porPagina);
   const historyPaginada = useMemo(
@@ -223,6 +292,12 @@ const HistorialCargas = memo(function HistorialCargas({
 
       {isLoading ? (
         <SkeletonTable rows={6} columns={9} title="Cargando bitácora de cargas..." />
+      ) : isError ? (
+        <LoadErrorAlert
+          title="No se pudo cargar el historial de procesos"
+          error={error}
+          onRetry={refetch}
+        />
       ) : history.length === 0 ? (
         <div
           className="text-center py-5 rounded-3 my-3"
