@@ -257,17 +257,15 @@ export function createInstrumentedFetch({
 
     // Clave de deduplicación para peticiones GET/HEAD idénticas en vuelo
     const isDeduplicable = method === 'GET' || method === 'HEAD';
-    const authHeader =
-      init?.headers?.Authorization ||
-      init?.headers?.authorization ||
-      (init?.headers instanceof Headers ? init.headers.get('Authorization') : '') ||
-      '';
-    const rangeHeader =
-      init?.headers?.Range ||
-      init?.headers?.range ||
-      (init?.headers instanceof Headers ? init.headers.get('Range') : '') ||
-      '';
-    const dedupKey = isDeduplicable ? `${method}:${rawUrl}:${rangeHeader}:${authHeader.slice(-16)}` : null;
+    const reqHeaders = new Headers(
+      init?.headers || (typeof input === 'object' ? input?.headers : undefined) || {}
+    );
+    const authHeader = reqHeaders.get('Authorization') || '';
+    const rangeHeader = reqHeaders.get('Range') || '';
+    const preferHeader = reqHeaders.get('Prefer') || '';
+    const dedupKey = isDeduplicable
+      ? `${method}:${rawUrl}:${rangeHeader}:${preferHeader}:${authHeader.slice(-16)}`
+      : null;
 
     if (dedupKey && inFlightGetRequests.has(dedupKey)) {
       statsCounters.deduplicated += 1;

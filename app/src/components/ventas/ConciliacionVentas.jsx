@@ -11,8 +11,11 @@ import {
   FiList, FiBarChart2, FiChevronDown, FiAlertCircle, FiRefreshCw,
 } from 'react-icons/fi';
 import { useDocumentosVentas } from './useDocumentosVentas';
+import { useLocalesEmpresa, coincideConLocal } from '../../utils/useLocalesEmpresa';
 import ModalDetalleDocumentoVentas from './ModalDetalleDocumentoVentas';
 import ReportesEspecificosVentas from './ReportesEspecificosVentas';
+import PanelSaltosSecuenciaVentas from './PanelSaltosSecuenciaVentas';
+import SelectorLocal from '../SelectorLocal';
 import { SkeletonTable } from '../SkeletonLoader';
 import { useVirtualList } from '../../utils/useVirtualList';
 import { useNetworkProfile } from '../../utils/networkProfile';
@@ -20,7 +23,7 @@ import {
   INCIDENCIAS, ESTADOS, descripcionTipoCP,
 } from '../../utils/ventas/catalogos';
 import {
-  FILTROS_INICIALES, filtrarDocumentos, calcularIndicadores, exportarExcelVentas,
+  FILTROS_INICIALES, filtrarDocumentos, calcularIndicadores, calcularSecuencias, exportarExcelVentas,
 } from '../../utils/ventas/reportes';
 import { formatoMonto, dentroDeTolerancia } from '../../utils/ventas/montos';
 
@@ -163,9 +166,10 @@ const FilaDocumentoVenta = memo(function FilaDocumentoVenta({
 });
 
 const ConciliacionVentas = memo(function ConciliacionVentas({
-  periodId, activePeriod, initialFilter, onFilterReset,
+  periodId, activePeriod, initialFilter, onFilterReset, activeCompany,
 }) {
   const { data: todosDocs = [], isLoading } = useDocumentosVentas(periodId, true);
+  const { localesActivos, indiceLocales } = useLocalesEmpresa(activeCompany?.id, true);
   const networkProfile = useNetworkProfile();
 
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
@@ -213,15 +217,63 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
     if (onFilterReset) onFilterReset();
   }, [initialFilter, onFilterReset]);
 
+  // Reiniciar el filtro de local si cambia la empresa o si el local fue eliminado/desactivado en Configuración
+  useEffect(() => {
+    setFiltros((prev) => (prev.localId !== 'ALL' ? { ...prev, localId: 'ALL' } : prev));
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    if (
+      filtros.localId !== 'ALL' &&
+      filtros.localId !== 'SIN_LOCAL' &&
+      !localesActivos.some((l) => l.id === filtros.localId)
+    ) {
+      setFiltros((prev) => ({ ...prev, localId: 'ALL' }));
+    }
+  }, [filtros.localId, localesActivos]);
+
   const docsFiltrados = useMemo(
-    () => filtrarDocumentos(todosDocs, filtros),
-    [todosDocs, filtros]
+    () => filtrarDocumentos(todosDocs, filtros, indiceLocales),
+    [todosDocs, filtros, indiceLocales]
   );
 
   const conteoPorCodigoBase = useMemo(() => {
-    const sinCodigos = filtrarDocumentos(todosDocs, { ...filtros, codigos: [] });
+    const sinCodigos = filtrarDocumentos(todosDocs, { ...filtros, codigos: [] }, indiceLocales);
     return calcularIndicadores(sinCodigos).porCodigo;
-  }, [todosDocs, filtros]);
+  }, [todosDocs, filtros, indiceLocales]);
+
+  // Correlativos faltantes (OBS 3) cuando el usuario filtra por OBS 3 en la tabla principal
+  const mostrandoObs3 = vistaActiva === 'tabla' && filtros.codigos.includes('OBS 3');
+  const soloObs3 = vistaActiva === 'tabla' && filtros.codigos.length === 1 && filtros.codigos[0] === 'OBS 3';
+  const saltosObs3Filtrados = useMemo(() => {
+    if (!mostrandoObs3 || todosDocs.length === 0) return [];
+    const { saltos } = calcularSecuencias(todosDocs);
+    const serieQ = (filtros.serie || '').trim().toUpperCase();
+    const q = (filtros.busqueda || '').trim().toLowerCase();
+    return saltos.filter((s) => {
+      if (filtros.localId !== 'ALL' && !coincideConLocal(s, filtros.localId, indiceLocales)) return false;
+      if (filtros.tipoCP !== 'ALL' && s.tipo_doc_pago !== filtros.tipoCP) return false;
+      if (serieQ && !s.serie.toUpperCase().includes(serieQ)) return false;
+      if (filtros.fechaDesde && s.fecha_siguiente && s.fecha_siguiente < filtros.fechaDesde) return false;
+      if (filtros.fechaHasta && s.fecha_siguiente && s.fecha_siguiente > filtros.fechaHasta) return false;
+      if (q) {
+        const texto = [
+          s.serie,
+          s.anterior,
+          s.siguiente,
+          `${s.serie}-${s.anterior}`,
+          `${s.serie}-${s.siguiente}`,
+          s.rango_faltante,
+          s.sistema_etiqueta,
+          ...s.correlativos_faltantes.slice(0, 30).map((c) => `${s.serie}-${c}`),
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!texto.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [mostrandoObs3, todosDocs, filtros.localId, indiceLocales, filtros.tipoCP, filtros.serie, filtros.fechaDesde, filtros.fechaHasta, filtros.busqueda]);
 
   // Paginación en memoria
   const totalRegistros = docsFiltrados.length;
@@ -286,6 +338,7 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
     filtros.tipoCP !== 'ALL' ||
     filtros.existencia !== 'ALL' ||
     filtros.categoria !== 'ALL' ||
+    filtros.localId !== 'ALL' ||
     filtros.codigos.length > 0 ||
     filtros.serie !== '' ||
     filtros.corrDesde !== '' ||
@@ -500,6 +553,14 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
                 <option value={500}>500 filas</option>
               </select>
             )}
+
+            <SelectorLocal
+              locales={localesActivos}
+              value={filtros.localId}
+              onChange={(val) => actualizarFiltro({ localId: val })}
+              mostrarSinAsignar
+              align="left"
+            />
           </div>
 
           {/* Menú de exportación de resultados */}
@@ -701,21 +762,64 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
             onSelectDoc={setDocSeleccionado}
             onFiltrarCodigo={seleccionarSoloCodigo}
           />
-        ) : totalRegistros === 0 ? (
-          <div
-            className="text-center py-5 rounded-3"
-            style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
-          >
-            <FiAlertCircle className="text-muted fs-1 mb-2" />
-            <p className="text-muted mb-0 fw-semibold">
-              {todosDocs.length === 0
-                ? 'No hay documentos cargados en este período. Utilice el panel superior para cargar los archivos SAP y SUNAT.'
-                : 'No se encontraron comprobantes para los filtros seleccionados.'}
-            </p>
-          </div>
+        ) : soloObs3 ? (
+          saltosObs3Filtrados.length > 0 ? (
+            <PanelSaltosSecuenciaVentas
+              saltos={saltosObs3Filtrados}
+              onSelectDoc={setDocSeleccionado}
+              onExportarSecuencia={() =>
+                exportarExcelVentas({
+                  tipo: 'secuencia',
+                  docs: docsFiltrados,
+                  todosDocs,
+                  periodo: activePeriod,
+                })
+              }
+            />
+          ) : (
+            <div
+              className="text-center py-5 rounded-3"
+              style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
+            >
+              <FiAlertCircle className="text-muted fs-1 mb-2" />
+              <p className="text-muted mb-0 fw-semibold">
+                No se encontraron saltos de correlativos para los filtros seleccionados.
+              </p>
+            </div>
+          )
         ) : (
           <>
-            {/* SECCIÓN 10: Tabla Principal con las 20 columnas requeridas + Virtualización */}
+            {/* Panel dedicado de Correlativos Faltantes cuando se combina OBS 3 con otros códigos */}
+            {mostrandoObs3 && saltosObs3Filtrados.length > 0 && (
+              <PanelSaltosSecuenciaVentas
+                saltos={saltosObs3Filtrados}
+                onSelectDoc={setDocSeleccionado}
+                onExportarSecuencia={() =>
+                  exportarExcelVentas({
+                    tipo: 'secuencia',
+                    docs: docsFiltrados,
+                    todosDocs,
+                    periodo: activePeriod,
+                  })
+                }
+              />
+            )}
+
+            {totalRegistros === 0 ? (
+              <div
+                className="text-center py-5 rounded-3"
+                style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
+              >
+                <FiAlertCircle className="text-muted fs-1 mb-2" />
+                <p className="text-muted mb-0 fw-semibold">
+                  {todosDocs.length === 0
+                    ? 'No hay documentos cargados en este período. Utilice el panel superior para cargar los archivos SAP y SUNAT.'
+                    : 'No se encontraron comprobantes para los filtros seleccionados.'}
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* SECCIÓN 10: Tabla Principal con las 20 columnas requeridas + Virtualización */}
             <div
               ref={containerRef}
               onScroll={onScroll}
@@ -804,7 +908,9 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
                     </li>
                   </ul>
                 </nav>
-              </div>
+                </div>
+              )}
+              </>
             )}
           </>
         )}
@@ -813,6 +919,11 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
       {/* Modal de detalle comparativo SAP vs SUNAT */}
       <ModalDetalleDocumentoVentas
         doc={docSeleccionado}
+        localNombre={
+          docSeleccionado
+            ? indiceLocales.obtenerLocal(docSeleccionado.serie, docSeleccionado.tipo_doc_pago)?.nombre || null
+            : null
+        }
         onClose={cerrarModal}
         onFiltrarCodigo={seleccionarSoloCodigo}
       />

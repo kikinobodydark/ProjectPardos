@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import { sanitizeExcelRow, checkRateLimit } from '../utils/security';
-import { executeParallelBatches } from '../utils/jobQueue';
+import { fetchAllSupabasePages, SUPABASE_MAX_SELECT_ROWS } from '../utils/supabasePagination';
 import { useVirtualList } from '../utils/useVirtualList';
 import { useNetworkProfile } from '../utils/networkProfile';
+import { useLocalesEmpresa } from '../utils/useLocalesEmpresa';
 import { SkeletonTable } from './SkeletonLoader';
+import SelectorLocal from './SelectorLocal';
 import { FiDownload, FiSearch, FiEye, FiX, FiAlertCircle, FiCheckCircle } from 'react-icons/fi';
 
 const ConciliacionVentas = lazy(() => import('./ventas/ConciliacionVentas'));
@@ -183,14 +185,16 @@ const TablaUnificada = memo(function TablaUnificada({
       initialFilter={initialFilter}
       onFilterReset={onFilterReset}
       activeModule={activeModule}
+      activeCompany={activeCompany}
     />
   );
 });
 
 export default TablaUnificada;
 
-function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilterReset, activeModule }) {
+function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilterReset, activeModule, activeCompany }) {
   const networkProfile = useNetworkProfile();
+  const { localesActivos } = useLocalesEmpresa(activeCompany?.id, true);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
@@ -249,6 +253,18 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
   const [startCorr, setStartCorr] = useState('');
   const [endCorr, setEndCorr] = useState('');
   const [originFilter, setOriginFilter] = useState('ALL');
+  const [localFilter, setLocalFilter] = useState('ALL');
+
+  // Reiniciar el filtro de local si cambia la empresa o si el local fue eliminado
+  useEffect(() => {
+    setLocalFilter('ALL');
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    if (localFilter !== 'ALL' && !localesActivos.some((l) => l.id === localFilter)) {
+      setLocalFilter('ALL');
+    }
+  }, [localFilter, localesActivos]);
 
   // Modal para ver errores
   const [selectedRow, setSelectedRow] = useState(null);
@@ -265,6 +281,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
     setEndCorr('');
     setOriginFilter('ALL');
     setFilterObsIdOk('ALL');
+    setLocalFilter('ALL');
     setCurrentPage(1);
   };
 
@@ -272,13 +289,20 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
     queryKey: ['existingFilters', periodId, activeModule],
     queryFn: async () => {
       if (!periodId) return { errors: [], obs: [] };
-      const { data, error } = await supabase
-        .from(activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas')
-        .select('errores_json')
-        .eq('periodo_id', periodId)
-        .neq('estado_validacion', 'OK');
-
-      if (error) throw error;
+      const tableName = activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas';
+      const data = await fetchAllSupabasePages({
+        pageSize: SUPABASE_MAX_SELECT_ROWS,
+        concurrency: networkProfile.recommendedConcurrency || 4,
+        label: 'ExistingFiltersPage',
+        fetchPage: (from, to, withCount) =>
+          supabase
+            .from(tableName)
+            .select('errores_json', withCount ? { count: 'exact' } : undefined)
+            .eq('periodo_id', periodId)
+            .neq('estado_validacion', 'OK')
+            .order('id', { ascending: true })
+            .range(from, to),
+      });
 
       const errorsSet = new Set();
       const obsSet = new Set();
@@ -377,6 +401,12 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         const cleanSerie = filterSerie.trim().replace(/[^A-Za-z0-9-]/g, '').slice(0, 10);
         if (cleanSerie) query = query.ilike('serie', `%${cleanSerie}%`);
       }
+      if (localFilter !== 'ALL') {
+        const locObj = localesActivos.find((l) => l.id === localFilter);
+        if (locObj && locObj.seriesSet.size > 0) {
+          query = query.in('serie', [...locObj.seriesSet]);
+        }
+      }
       if (startDate) query = query.gte('fecha_emision', startDate);
       if (endDate) query = query.lte('fecha_emision', endDate);
       if (startCorr) {
@@ -433,7 +463,8 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
       return query
         .order('fecha_emision', { ascending: true })
         .order('serie', { ascending: true })
-        .order('correlativo', { ascending: true });
+        .order('correlativo', { ascending: true })
+        .order('id', { ascending: true });
     },
     [
       periodId,
@@ -450,6 +481,8 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
       activeModule,
       docFilter,
       sireFilter,
+      localFilter,
+      localesActivos,
     ]
   );
 
@@ -472,6 +505,7 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
       endCorr,
       originFilter,
       filterObsIdOk,
+      localFilter,
       activeModule,
     ],
     queryFn: async () => {
@@ -520,29 +554,23 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
     setExportProgress(0);
     try {
       const tableName = activeModule === 'compras' ? 'detalle_compras' : 'detalle_ventas';
-      const pageSize = networkProfile.recommendedBatchSize || 1000;
-      const totalPagesToFetch = Math.max(1, Math.ceil((totalRecords || pageSize) / pageSize));
-      const pageIndices = Array.from({ length: totalPagesToFetch }, (_, i) => i);
-
-      // Descarga paralela controlada por la cola de trabajo
-      const pagesResults = await executeParallelBatches(
-        pageIndices,
-        1,
-        async ([pageIdx]) => {
-          const base = supabase.from(tableName).select(COLS_TABLA_COMPRAS);
-          const q = applyFiltersToQuery(base).range(pageIdx * pageSize, (pageIdx + 1) * pageSize - 1);
-          const { data: chunk, error } = await q;
-          if (error) throw error;
-          return chunk || [];
-        },
-        {
-          concurrency: networkProfile.recommendedConcurrency || 4,
-          label: 'ExportComprasPage',
-          onProgress: (donePages) => setExportProgress(Math.min(totalRecords, donePages * pageSize)),
-        }
+      const pageSize = Math.min(
+        networkProfile.recommendedBatchSize || SUPABASE_MAX_SELECT_ROWS,
+        SUPABASE_MAX_SELECT_ROWS
       );
 
-      const allRows = pagesResults.flat();
+      const allRows = await fetchAllSupabasePages({
+        pageSize,
+        concurrency: networkProfile.recommendedConcurrency || 4,
+        label: 'ExportComprasPage',
+        onProgress: (loaded) => setExportProgress(loaded),
+        fetchPage: (from, to, withCount) => {
+          const base = supabase
+            .from(tableName)
+            .select(COLS_TABLA_COMPRAS, withCount ? { count: 'exact' } : undefined);
+          return applyFiltersToQuery(base).range(from, to);
+        },
+      });
       if (!allRows || allRows.length === 0) return;
 
       const wsData = allRows.map((r) => {
@@ -651,6 +679,13 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
             <option value={100}>Mostrar 100 filas</option>
             <option value={250}>Mostrar 250 filas</option>
           </select>
+          <SelectorLocal
+            locales={localesActivos}
+            value={localFilter}
+            onChange={(val) => { setLocalFilter(val); setCurrentPage(1); }}
+            mostrarSinAsignar={false}
+            align="left"
+          />
         </div>
         <button
           onClick={handleExport}
@@ -982,12 +1017,16 @@ function TablaUnificadaCompras({ periodId, activePeriod, initialFilter, onFilter
         <div
           className="modal fade show d-block"
           tabIndex="-1"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.65)' }}
+          style={{ backgroundColor: 'rgba(15, 23, 42, 0.55)', backdropFilter: 'blur(2px)' }}
+          onClick={() => setSelectedRow(null)}
         >
-          <div className="modal-dialog modal-dialog-centered modal-xl">
+          <div
+            className="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div
-              className="modal-content rounded-3 p-5"
-              style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', minHeight: '450px' }}
+              className="modal-content rounded-3 p-3 p-md-4"
+              style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)' }}
             >
               <div className="modal-header border-0 pb-0 d-flex justify-content-between align-items-center">
                 <h3 className="modal-title fw-bold text-dark" style={{ fontSize: '2rem' }}>

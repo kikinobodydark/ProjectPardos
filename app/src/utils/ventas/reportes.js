@@ -9,8 +9,11 @@ import {
   descripcionTipoCP, descripcionTipoIdentidad,
 } from './catalogos.js';
 import { centimosADecimal, dentroDeTolerancia } from './montos.js';
-import { validarImportes, evaluarIdentidad, sistemaCorrecto } from './reglas.js';
-import { compararCorrelativos, diferenciaCorrelativos } from './documento.js';
+import {
+  validarImportes, evaluarIdentidad, sistemaCorrecto, analizarSecuencias, ETIQUETA_SISTEMA_SALTO,
+} from './reglas.js';
+import { compararCorrelativos, generarCorrelativosFaltantes } from './documento.js';
+import { coincideConLocal } from '../locales.js';
 
 export const FILTROS_INICIALES = {
   busqueda: '',
@@ -18,6 +21,7 @@ export const FILTROS_INICIALES = {
   tipoCP: 'ALL',         // ALL | 01 | 03 | 07 | 08
   existencia: 'ALL',     // ALL | AMBOS | SAP | SUNAT | SOLO_SAP | SOLO_SUNAT
   categoria: 'ALL',      // ALL | DIF_IMPORTES | PROB_IDENTIDAD | CORTESIAS
+  localId: 'ALL',        // ALL | SIN_LOCAL | <uuid local>
   codigos: [],           // multi-selección: ['ERROR 1', 'OBS 2', ...]
   serie: '',
   corrDesde: '',
@@ -27,7 +31,7 @@ export const FILTROS_INICIALES = {
 };
 
 /** Aplica todos los filtros visuales sobre la lista de documentos conciliados. */
-export function filtrarDocumentos(docs, f = FILTROS_INICIALES) {
+export function filtrarDocumentos(docs, f = FILTROS_INICIALES, indiceLocales = null) {
   const q = (f.busqueda || '').trim().toLowerCase();
   const serieQ = (f.serie || '').trim().toUpperCase();
   const cDesde = (f.corrDesde || '').trim();
@@ -35,6 +39,7 @@ export function filtrarDocumentos(docs, f = FILTROS_INICIALES) {
   const codigosSet = f.codigos?.length ? new Set(f.codigos) : null;
 
   return docs.filter((d) => {
+    if (f.localId && f.localId !== 'ALL' && !coincideConLocal(d, f.localId, indiceLocales)) return false;
     if (f.estado && f.estado !== 'ALL' && d.estado !== f.estado) return false;
     if (f.tipoCP && f.tipoCP !== 'ALL' && d.tipo_doc_pago !== f.tipoCP) return false;
 
@@ -140,56 +145,9 @@ export function calcularIndicadores(docs) {
   return ind;
 }
 
-/** Reconstruye el resumen por serie y los saltos de secuencia sobre cualquier conjunto de docs. */
+/** Reconstruye el resumen por serie y los saltos de secuencia (SAP, SUNAT o AMBOS) con correlativos faltantes. */
 export function calcularSecuencias(docs) {
-  const grupos = new Map();
-  for (const d of docs) {
-    const k = `${d.tipo_doc_pago}|${d.serie}`;
-    if (!grupos.has(k)) grupos.set(k, []);
-    grupos.get(k).push(d);
-  }
-  const series = [];
-  const saltos = [];
-  for (const [k, lista] of grupos) {
-    const ordenados = [...lista].sort((a, b) => compararCorrelativos(a.correlativo, b.correlativo));
-    let saltosSerie = 0;
-    let faltantesSerie = 0;
-    for (let i = 1; i < ordenados.length; i++) {
-      const prev = ordenados[i - 1];
-      const curr = ordenados[i];
-      const dif = diferenciaCorrelativos(prev.correlativo, curr.correlativo);
-      if (dif !== null && dif > 1) {
-        saltosSerie += 1;
-        faltantesSerie += dif - 1;
-        saltos.push({
-          doc: curr,
-          tipo_doc_pago: curr.tipo_doc_pago,
-          serie: curr.serie,
-          anterior: prev.correlativo,
-          fecha_anterior: prev.fecha_emision,
-          siguiente: curr.correlativo,
-          fecha_siguiente: curr.fecha_emision,
-          diferencia: dif,
-          faltantes: dif - 1,
-        });
-      }
-    }
-    const [tipo, serie] = k.split('|');
-    series.push({
-      tipo_doc_pago: tipo,
-      serie,
-      documentos: ordenados.length,
-      primero: ordenados[0].correlativo,
-      ultimo: ordenados[ordenados.length - 1].correlativo,
-      fecha_primero: ordenados[0].fecha_emision,
-      fecha_ultimo: ordenados[ordenados.length - 1].fecha_emision,
-      saltos: saltosSerie,
-      faltantes: faltantesSerie,
-      estado: saltosSerie === 0 ? 'CONTINUA' : 'CON SALTOS',
-    });
-  }
-  series.sort((a, b) => a.serie.localeCompare(b.serie));
-  return { series, saltos };
+  return analizarSecuencias(docs);
 }
 
 /** Obtiene (o recalcula para cargas v1) la evaluación de identidad de un documento. */
@@ -481,18 +439,45 @@ export async function exportarExcelVentas({ tipo, docs, todosDocs, periodo = 'pe
       'Último correlativo': s.ultimo,
       'Saltos detectados': s.saltos,
       'Correlativos faltantes': s.faltantes,
+      'Sistema con salto': s.sistema_salto ? (ETIQUETA_SISTEMA_SALTO[s.sistema_salto] || s.sistema_salto) : 'Sin saltos',
       'Estado de secuencia': s.estado,
     })));
     agregarHoja('Saltos de Secuencia', saltos.map((s) => ({
       'Serie afectada': s.serie,
       'Tipo CP': descripcionTipoCP(s.tipo_doc_pago),
+      'Salto en': s.sistema_etiqueta || s.sistema,
+      'Correlativos faltantes': s.faltantes <= 10
+        ? s.correlativos_faltantes.map((c) => `${s.serie}-${c}`).join(', ')
+        : `${s.serie}-${s.primer_faltante} al ${s.serie}-${s.ultimo_faltante} (${s.faltantes})`,
       'Correlativo anterior': s.anterior,
       'Fecha anterior': s.fecha_anterior || '',
       'Correlativo siguiente': s.siguiente,
       'Fecha siguiente': s.fecha_siguiente || '',
       'Diferencia de correlativos': s.diferencia,
-      'Correlativos faltantes': s.faltantes,
+      'Cantidad faltantes': s.faltantes,
     })));
+
+    const detalleFaltantes = [];
+    const MAX_FILAS_FALTANTES = 50000;
+    for (const s of saltos) {
+      if (detalleFaltantes.length >= MAX_FILAS_FALTANTES) break;
+      const restante = MAX_FILAS_FALTANTES - detalleFaltantes.length;
+      const gen = generarCorrelativosFaltantes(s.start, s.end, s.anterior, s.siguiente, restante);
+      for (const corr of gen.lista) {
+        detalleFaltantes.push({
+          'Documento faltante': `${s.serie}-${corr}`,
+          'Serie': s.serie,
+          'Correlativo faltante': corr,
+          'Tipo CP': descripcionTipoCP(s.tipo_doc_pago),
+          'Salto en': s.sistema_etiqueta || s.sistema,
+          'Correlativo anterior': s.anterior,
+          'Fecha anterior': s.fecha_anterior || '',
+          'Correlativo siguiente': s.siguiente,
+          'Fecha siguiente': s.fecha_siguiente || '',
+        });
+      }
+    }
+    agregarHoja('Correlativos Faltantes', detalleFaltantes);
   }
   if (tipo === 'cortesias') {
     const filas = docs.filter((d) => d.cortesia).map((d) => ({

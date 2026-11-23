@@ -3,15 +3,31 @@
 // Muestra los valores de ambos sistemas, las diferencias por concepto, la
 // evaluación de identidad, cortesías y la trazabilidad de cada regla aplicada.
 // ============================================================================
-import React, { memo } from 'react';
+import React, { useEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { FiX, FiCheckCircle, FiAlertTriangle, FiGift } from 'react-icons/fi';
+import { FiX, FiCheckCircle, FiAlertTriangle, FiGift, FiMapPin } from 'react-icons/fi';
 import { ESTADOS, REGLAS, descripcionTipoCP, descripcionTipoIdentidad } from '../../utils/ventas/catalogos';
 import { formatoMonto, dentroDeTolerancia } from '../../utils/ventas/montos';
 import { CONCEPTOS_IMPORTE } from '../../utils/ventas/reglas';
 import { obtenerEvaluacionIdentidad } from '../../utils/ventas/reportes';
+import { parsearCorrelativoBigInt, generarCorrelativosFaltantes } from '../../utils/ventas/documento';
+import { BadgeSistemaSalto, ListaCorrelativosFaltantes } from './PanelSaltosSecuenciaVentas';
 
-const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ doc, onClose, onFiltrarCodigo }) {
+const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ doc, localNombre, onClose, onFiltrarCodigo }) {
+  useEffect(() => {
+    if (!doc) return undefined;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && onClose) onClose();
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [doc, onClose]);
+
   if (!doc) return null;
   const est = ESTADOS[doc.estado] || ESTADOS.OK;
   const evId = obtenerEvaluacionIdentidad(doc);
@@ -40,7 +56,7 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className="modal-content rounded-3 p-4"
+          className="modal-content rounded-3 p-3 p-md-4"
           style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)' }}
         >
           {/* Encabezado */}
@@ -56,6 +72,14 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                 <span className={`badge badge-status badge-status-${est.clase}`}>
                   {est.etiqueta}
                 </span>
+                {localNombre && (
+                  <span
+                    className="badge d-inline-flex align-items-center gap-1"
+                    style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', color: '#1D4ED8', fontSize: '0.75rem' }}
+                  >
+                    <FiMapPin size={11} /> {localNombre}
+                  </span>
+                )}
                 {doc.anulado && (
                   <span className="badge bg-secondary">ANULADO (Est. 2)</span>
                 )}
@@ -109,60 +133,62 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                       </span>
                     )}
                   </div>
-                  <table className="table table-sm table-dense mb-0">
-                    <thead>
-                      <tr>
-                        <th>Campo</th>
-                        <th>SAP</th>
-                        <th>SUNAT</th>
-                        <th className="text-center">Cruce</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td className="fw-semibold">Existencia</td>
-                        <td>{doc.en_sap ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SAP</span>}</td>
-                        <td>{doc.en_sunat ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SUNAT</span>}</td>
-                        <td className="text-center">{doc.en_sap && doc.en_sunat ? <FiCheckCircle className="text-success" /> : <FiAlertTriangle className="text-warning" />}</td>
-                      </tr>
-                      <tr>
-                        <td className="fw-semibold">Tipo Identidad</td>
-                        <td className={`font-mono ${diffTipoId ? 'cell-mismatch' : ''}`}>
-                          {doc.en_sap ? descripcionTipoIdentidad(doc.sap.tipo_identidad) : '—'}
-                        </td>
-                        <td className={`font-mono ${diffTipoId ? 'cell-mismatch' : ''}`}>
-                          {doc.en_sunat ? descripcionTipoIdentidad(doc.sunat.tipo_identidad) : '—'}
-                        </td>
-                        <td className="text-center">
-                          {!doc.en_sap || !doc.en_sunat ? '—' : diffTipoId ? <span className="badge badge-status badge-status-observado">OBS 1</span> : <FiCheckCircle className="text-success" />}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="fw-semibold">N° Identidad</td>
-                        <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
-                          {doc.en_sap ? (doc.sap.nro_identidad || '(vacío)') : '—'}
-                        </td>
-                        <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
-                          {doc.en_sunat ? (doc.sunat.nro_identidad || '(vacío)') : '—'}
-                        </td>
-                        <td className="text-center">
-                          {!doc.en_sap || !doc.en_sunat ? '—' : diffNroId ? <span className="badge badge-status badge-status-observado">OBS 2</span> : <FiCheckCircle className="text-success" />}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="fw-semibold">Nombre / Razón Social</td>
-                        <td className={diffNombre ? 'text-warning fw-semibold' : ''} style={{ whiteSpace: 'normal' }}>
-                          {doc.en_sap ? (doc.sap.nombre || '—') : '—'}
-                        </td>
-                        <td className={diffNombre ? 'text-warning fw-semibold' : ''} style={{ whiteSpace: 'normal' }}>
-                          {doc.en_sunat ? (doc.sunat.nombre || '—') : '—'}
-                        </td>
-                        <td className="text-center">
-                          {!doc.en_sap || !doc.en_sunat ? '—' : diffNombre ? <span className="text-muted">Distinto</span> : <FiCheckCircle className="text-success" />}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                  <div className="table-responsive">
+                    <table className="table table-sm table-dense mb-0">
+                      <thead>
+                        <tr>
+                          <th>Campo</th>
+                          <th>SAP</th>
+                          <th>SUNAT</th>
+                          <th className="text-center">Cruce</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="fw-semibold">Existencia</td>
+                          <td>{doc.en_sap ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SAP</span>}</td>
+                          <td>{doc.en_sunat ? <span className="text-success fw-semibold">Registrado</span> : <span className="text-danger fw-bold">NO EXISTE EN SUNAT</span>}</td>
+                          <td className="text-center">{doc.en_sap && doc.en_sunat ? <FiCheckCircle className="text-success" /> : <FiAlertTriangle className="text-warning" />}</td>
+                        </tr>
+                        <tr>
+                          <td className="fw-semibold">Tipo Identidad</td>
+                          <td className={`font-mono ${diffTipoId ? 'cell-mismatch' : ''}`}>
+                            {doc.en_sap ? descripcionTipoIdentidad(doc.sap.tipo_identidad) : '—'}
+                          </td>
+                          <td className={`font-mono ${diffTipoId ? 'cell-mismatch' : ''}`}>
+                            {doc.en_sunat ? descripcionTipoIdentidad(doc.sunat.tipo_identidad) : '—'}
+                          </td>
+                          <td className="text-center">
+                            {!doc.en_sap || !doc.en_sunat ? '—' : diffTipoId ? <span className="badge badge-status badge-status-observado">OBS 1</span> : <FiCheckCircle className="text-success" />}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="fw-semibold">N° Identidad</td>
+                          <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
+                            {doc.en_sap ? (doc.sap.nro_identidad || '(vacío)') : '—'}
+                          </td>
+                          <td className={`font-mono ${diffNroId ? 'cell-mismatch' : ''}`}>
+                            {doc.en_sunat ? (doc.sunat.nro_identidad || '(vacío)') : '—'}
+                          </td>
+                          <td className="text-center">
+                            {!doc.en_sap || !doc.en_sunat ? '—' : diffNroId ? <span className="badge badge-status badge-status-observado">OBS 2</span> : <FiCheckCircle className="text-success" />}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="fw-semibold">Nombre / Razón Social</td>
+                          <td className={diffNombre ? 'text-warning fw-semibold' : ''} style={{ whiteSpace: 'normal' }}>
+                            {doc.en_sap ? (doc.sap.nombre || '—') : '—'}
+                          </td>
+                          <td className={diffNombre ? 'text-warning fw-semibold' : ''} style={{ whiteSpace: 'normal' }}>
+                            {doc.en_sunat ? (doc.sunat.nombre || '—') : '—'}
+                          </td>
+                          <td className="text-center">
+                            {!doc.en_sap || !doc.en_sunat ? '—' : diffNombre ? <span className="text-muted">Distinto</span> : <FiCheckCircle className="text-success" />}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
 
                   {evId && (
                     <div className="mt-2 pt-2 border-top" style={{ fontSize: '0.78rem', borderColor: 'var(--border-color)' }}>
@@ -200,47 +226,49 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                     </span>
                     <span className="text-muted font-mono" style={{ fontSize: '0.75rem' }}>Moneda: PEN (S/)</span>
                   </div>
-                  <table className="table table-sm table-dense mb-0">
-                    <thead>
-                      <tr>
-                        <th>Concepto</th>
-                        <th className="text-end">Importe SAP</th>
-                        <th className="text-end">Importe SUNAT</th>
-                        <th className="text-end">Diferencia</th>
-                        <th className="text-center">Resultado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filasImportes.map((f) => (
-                        <tr key={f.campo}>
-                          <td className="fw-semibold">{f.concepto}</td>
-                          <td className="text-end font-mono">{doc.en_sap ? formatoMonto(f.sap) : '—'}</td>
-                          <td className="text-end font-mono">{doc.en_sunat ? formatoMonto(f.sunat) : '—'}</td>
-                          <td className={`text-end font-mono ${f.ok === false ? 'cell-mismatch' : f.dif === 0 ? 'text-muted' : 'text-success'}`}>
-                            {f.dif === null ? '—' : formatoMonto(f.dif)}
-                          </td>
-                          <td className="text-center">
-                            {f.ok === null ? (
-                              <span className="text-muted">N/A</span>
-                            ) : f.ok ? (
-                              <span className="badge badge-status badge-status-ok">Correcto</span>
-                            ) : (
-                              <span className="badge badge-status badge-status-error">{f.codigo}</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      {doc.sunat?.op_gratuitas > 0 && (
+                  <div className="table-responsive">
+                    <table className="table table-sm table-dense mb-0">
+                      <thead>
                         <tr>
-                          <td className="text-muted">Valor Op. Gratuitas (SUNAT)</td>
-                          <td className="text-end font-mono text-muted">—</td>
-                          <td className="text-end font-mono">{formatoMonto(doc.sunat.op_gratuitas)}</td>
-                          <td className="text-end font-mono text-muted">—</td>
-                          <td className="text-center"><span className="text-muted" style={{ fontSize: '0.72rem' }}>Informativo</span></td>
+                          <th>Concepto</th>
+                          <th className="text-end">Importe SAP</th>
+                          <th className="text-end">Importe SUNAT</th>
+                          <th className="text-end">Diferencia</th>
+                          <th className="text-center">Resultado</th>
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {filasImportes.map((f) => (
+                          <tr key={f.campo}>
+                            <td className="fw-semibold">{f.concepto}</td>
+                            <td className="text-end font-mono">{doc.en_sap ? formatoMonto(f.sap) : '—'}</td>
+                            <td className="text-end font-mono">{doc.en_sunat ? formatoMonto(f.sunat) : '—'}</td>
+                            <td className={`text-end font-mono ${f.ok === false ? 'cell-mismatch' : f.dif === 0 ? 'text-muted' : 'text-success'}`}>
+                              {f.dif === null ? '—' : formatoMonto(f.dif)}
+                            </td>
+                            <td className="text-center">
+                              {f.ok === null ? (
+                                <span className="text-muted">N/A</span>
+                              ) : f.ok ? (
+                                <span className="badge badge-status badge-status-ok">Correcto</span>
+                              ) : (
+                                <span className="badge badge-status badge-status-error">{f.codigo}</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {doc.sunat?.op_gratuitas > 0 && (
+                          <tr>
+                            <td className="text-muted">Valor Op. Gratuitas (SUNAT)</td>
+                            <td className="text-end font-mono text-muted">—</td>
+                            <td className="text-end font-mono">{formatoMonto(doc.sunat.op_gratuitas)}</td>
+                            <td className="text-end font-mono text-muted">—</td>
+                            <td className="text-center"><span className="text-muted" style={{ fontSize: '0.72rem' }}>Informativo</span></td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
 
                   {doc.cortesia && (
                     <div className="mt-2 pt-2 border-top" style={{ fontSize: '0.78rem', borderColor: 'var(--border-color)' }}>
@@ -279,6 +307,22 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                   {doc.incidencias.map((inc, idx) => {
                     const esErr = inc.tipo === 'ERROR';
                     const esObs = inc.tipo === 'OBS';
+                    const esObs3 = inc.codigo === 'OBS 3';
+                    let obs3Faltantes = inc.datos?.correlativos_faltantes || [];
+                    let obs3Total = inc.datos?.faltantes || obs3Faltantes.length;
+                    let obs3Rango = inc.datos?.rango_faltante || '';
+                    let obs3Truncado = !!inc.datos?.faltantes_truncado;
+                    if (esObs3 && obs3Faltantes.length === 0 && inc.datos?.anterior && inc.datos?.siguiente) {
+                      const aNum = parsearCorrelativoBigInt(inc.datos.anterior);
+                      const bNum = parsearCorrelativoBigInt(inc.datos.siguiente);
+                      if (aNum !== null && bNum !== null && bNum - aNum > 1n) {
+                        const gen = generarCorrelativosFaltantes(aNum + 1n, bNum - 1n, inc.datos.anterior, inc.datos.siguiente, 50);
+                        obs3Faltantes = gen.lista;
+                        obs3Total = gen.total;
+                        obs3Rango = gen.rangoTexto;
+                        obs3Truncado = gen.truncado;
+                      }
+                    }
                     return (
                       <div
                         key={idx}
@@ -294,6 +338,9 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                               {inc.codigo}
                             </span>
                             <strong style={{ fontSize: '0.83rem' }}>{inc.descripcion}</strong>
+                            {esObs3 && inc.datos?.sistema && (
+                              <BadgeSistemaSalto sistema={inc.datos.sistema} />
+                            )}
                             {inc.regla && (
                               <span className="font-mono text-muted" style={{ fontSize: '0.73rem' }}>
                                 [{inc.regla}{REGLAS[inc.regla] ? `: ${REGLAS[inc.regla]}` : ''}]
@@ -301,6 +348,21 @@ const ModalDetalleDocumentoVentas = memo(function ModalDetalleDocumentoVentas({ 
                             )}
                           </div>
                           <div className="mt-1" style={{ fontSize: '0.82rem' }}>{inc.detalle}</div>
+                          {esObs3 && obs3Faltantes.length > 0 && (
+                            <div className="mt-2 d-flex align-items-center flex-wrap gap-1.5" style={{ gap: '6px' }}>
+                              <span className="fw-semibold text-muted" style={{ fontSize: '0.76rem' }}>
+                                Correlativo(s) faltante(s):
+                              </span>
+                              <ListaCorrelativosFaltantes
+                                serie={inc.datos?.serie || doc.serie}
+                                correlativos={obs3Faltantes}
+                                total={obs3Total}
+                                rangoTexto={obs3Rango}
+                                truncado={obs3Truncado}
+                                limiteInicial={12}
+                              />
+                            </div>
+                          )}
                         </div>
                         {onFiltrarCodigo && (esErr || esObs) && (
                           <button

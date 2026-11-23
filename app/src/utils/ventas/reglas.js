@@ -3,9 +3,14 @@
 // Cada regla es una función pura e independiente que devuelve incidencias
 // trazables: { codigo, tipo, descripcion, detalle, regla, datos }.
 // ============================================================================
-import { INCIDENCIA_POR_CODIGO, LIMITE_BOLETA_CENTIMOS } from './catalogos.js';
+import { INCIDENCIA_POR_CODIGO, LIMITE_BOLETA_CENTIMOS, TIPO } from './catalogos.js';
 import { dentroDeTolerancia, formatoMonto } from './montos.js';
-import { compararCorrelativos, diferenciaCorrelativos } from './documento.js';
+import {
+  compararCorrelativos,
+  correlativoCanonico,
+  parsearCorrelativoBigInt,
+  generarCorrelativosFaltantes,
+} from './documento.js';
 
 export function crearIncidencia(codigo, regla, detalle, datos = {}) {
   const def = INCIDENCIA_POR_CODIGO[codigo];
@@ -233,49 +238,256 @@ export function validarCortesia(doc, excel, excelCargado) {
 }
 
 // ---------------------------------------------------------------------------
-// 4.4 Secuencia de correlativos (por tipo + serie, sobre el universo SAP ∪ SUNAT)
+// 4.4 Secuencia de correlativos (por tipo + serie, evaluando SAP y SUNAT)
 // ---------------------------------------------------------------------------
+export const ETIQUETA_SISTEMA_SALTO = {
+  AMBOS: 'AMBOS (SAP y SUNAT)',
+  SAP: 'Solo SAP',
+  SUNAT: 'Solo SUNAT',
+};
+
+function detectarSaltosEnSistema(subLista) {
+  if (!subLista || subLista.length < 2) return [];
+  const ordenados = [...subLista].sort((a, b) => compararCorrelativos(a.correlativo, b.correlativo));
+  const saltos = [];
+  let prev = ordenados[0];
+  let prevNum = parsearCorrelativoBigInt(prev.correlativo);
+
+  for (let i = 1; i < ordenados.length; i++) {
+    const curr = ordenados[i];
+    const currNum = parsearCorrelativoBigInt(curr.correlativo);
+    if (prevNum !== null && currNum !== null) {
+      if (currNum === prevNum) continue; // mismo correlativo canónico
+      if (currNum - prevNum > 1n) {
+        saltos.push({
+          start: prevNum + 1n,
+          end: currNum - 1n,
+          prev,
+          curr,
+          anterior: prev.correlativo,
+          fecha_anterior: prev.fecha_emision,
+          siguiente: curr.correlativo,
+          fecha_siguiente: curr.fecha_emision,
+        });
+      }
+    }
+    prev = curr;
+    prevNum = currNum;
+  }
+  return saltos;
+}
+
+function combinarSaltosPorSistema(sapGaps, sunatGaps) {
+  if (sapGaps.length === 0 && sunatGaps.length === 0) return [];
+  const ptsSet = new Set();
+  for (const g of sapGaps) {
+    ptsSet.add(g.start);
+    ptsSet.add(g.end + 1n);
+  }
+  for (const g of sunatGaps) {
+    ptsSet.add(g.start);
+    ptsSet.add(g.end + 1n);
+  }
+  const pts = [...ptsSet].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+  const combinados = [];
+  let iSap = 0;
+  let iSun = 0;
+
+  for (let k = 0; k < pts.length - 1; k++) {
+    const segStart = pts[k];
+    const segEnd = pts[k + 1] - 1n;
+    if (segStart > segEnd) continue;
+
+    while (iSap < sapGaps.length && sapGaps[iSap].end < segStart) iSap++;
+    while (iSun < sunatGaps.length && sunatGaps[iSun].end < segStart) iSun++;
+
+    const gSap =
+      iSap < sapGaps.length && sapGaps[iSap].start <= segStart && sapGaps[iSap].end >= segEnd
+        ? sapGaps[iSap]
+        : null;
+    const gSun =
+      iSun < sunatGaps.length && sunatGaps[iSun].start <= segStart && sunatGaps[iSun].end >= segEnd
+        ? sunatGaps[iSun]
+        : null;
+
+    if (!gSap && !gSun) continue;
+
+    const sistema = gSap && gSun ? 'AMBOS' : gSap ? 'SAP' : 'SUNAT';
+    const ref = gSun || gSap;
+    const generados = generarCorrelativosFaltantes(segStart, segEnd, ref.anterior, ref.siguiente, 200);
+
+    combinados.push({
+      start: segStart,
+      end: segEnd,
+      sistema,
+      sistema_etiqueta: ETIQUETA_SISTEMA_SALTO[sistema],
+      doc: ref.curr,
+      prevDoc: ref.prev,
+      tipo_doc_pago: ref.curr.tipo_doc_pago,
+      serie: ref.curr.serie,
+      anterior: ref.anterior,
+      fecha_anterior: ref.fecha_anterior,
+      siguiente: ref.siguiente,
+      fecha_siguiente: ref.fecha_siguiente,
+      anterior_sap: gSap ? gSap.anterior : null,
+      siguiente_sap: gSap ? gSap.siguiente : null,
+      anterior_sunat: gSun ? gSun.anterior : null,
+      siguiente_sunat: gSun ? gSun.siguiente : null,
+      diferencia: generados.total + 1,
+      faltantes: generados.total,
+      correlativos_faltantes: generados.lista,
+      faltantes_truncado: generados.truncado,
+      primer_faltante: generados.primero,
+      ultimo_faltante: generados.ultimo,
+      rango_faltante: generados.rangoTexto,
+    });
+  }
+  return combinados;
+}
+
+function construirIncidenciaObs3(salto) {
+  const maxGuardar = 20;
+  const listaCorta = salto.correlativos_faltantes.slice(0, maxGuardar);
+  const resumenFaltantes =
+    salto.faltantes <= 5
+      ? listaCorta.join(', ')
+      : `${salto.rango_faltante} (${salto.faltantes} correlativos)`;
+
+  const detalle =
+    `Serie ${salto.serie} · Salto en ${salto.sistema_etiqueta}: ` +
+    `de ${salto.anterior} (${salto.fecha_anterior || 's/f'}) a ${salto.siguiente} (${salto.fecha_siguiente || 's/f'}) · ` +
+    `falta(n) ${salto.faltantes} correlativo(s): ${resumenFaltantes}`;
+
+  const datos = {
+    serie: salto.serie,
+    tipo_doc_pago: salto.tipo_doc_pago,
+    sistema: salto.sistema,
+    anterior: salto.anterior,
+    fecha_anterior: salto.fecha_anterior,
+    siguiente: salto.siguiente,
+    fecha_siguiente: salto.fecha_siguiente,
+    anterior_sap: salto.anterior_sap,
+    siguiente_sap: salto.siguiente_sap,
+    anterior_sunat: salto.anterior_sunat,
+    siguiente_sunat: salto.siguiente_sunat,
+    diferencia: salto.diferencia,
+    faltantes: salto.faltantes,
+    correlativos_faltantes: listaCorta,
+    faltantes_truncado: salto.faltantes > maxGuardar,
+    rango_faltante: salto.rango_faltante,
+  };
+
+  return crearIncidencia('OBS 3', 'R-SEC-01', detalle, datos);
+}
+
 /**
- * Identifica saltos de numeración. No considera la diferencia de fechas como error.
- * Agrega OBS 3 al documento posterior al salto y devuelve el resumen por serie.
+ * Analiza la continuidad de correlativos por tipo + serie evaluando SAP y SUNAT
+ * por separado y combinando los saltos para identificar si falta en SAP, SUNAT o AMBOS,
+ * junto con los números de correlativos faltantes exactos.
  */
-export function validarSecuencias(docs) {
+export function analizarSecuencias(docs) {
   const grupos = new Map();
   for (const d of docs) {
     const k = `${d.tipo_doc_pago}|${d.serie}`;
     if (!grupos.has(k)) grupos.set(k, []);
     grupos.get(k).push(d);
   }
+
   const series = [];
+  const saltos = [];
+
   for (const [k, lista] of grupos) {
-    lista.sort((a, b) => compararCorrelativos(a.correlativo, b.correlativo));
-    const saltos = [];
-    for (let i = 1; i < lista.length; i++) {
-      const prev = lista[i - 1];
-      const curr = lista[i];
-      const dif = diferenciaCorrelativos(prev.correlativo, curr.correlativo);
-      if (dif !== null && dif > 1) {
-        const datos = {
-          serie: curr.serie, tipo_doc_pago: curr.tipo_doc_pago,
-          anterior: prev.correlativo, fecha_anterior: prev.fecha_emision,
-          siguiente: curr.correlativo, fecha_siguiente: curr.fecha_emision,
-          diferencia: dif, faltantes: dif - 1,
-        };
-        saltos.push(datos);
-        curr.incidencias.push(crearIncidencia('OBS 3', 'R-SEC-01',
-          `Serie ${curr.serie}: salto de ${prev.correlativo} (${prev.fecha_emision || 's/f'}) a ${curr.correlativo} (${curr.fecha_emision || 's/f'}) · diferencia ${dif} · ${dif - 1} correlativo(s) faltante(s)`,
-          datos));
-      }
+    const ordenados = [...lista].sort((a, b) => compararCorrelativos(a.correlativo, b.correlativo));
+    const sapGaps = detectarSaltosEnSistema(ordenados.filter((d) => d.en_sap));
+    const sunatGaps = detectarSaltosEnSistema(ordenados.filter((d) => d.en_sunat));
+    const saltosSerie = combinarSaltosPorSistema(sapGaps, sunatGaps);
+
+    for (const s of saltosSerie) {
+      saltos.push(s);
     }
+
+    const sistemasSet = new Set(saltosSerie.map((s) => s.sistema));
+    let sistemaSalto = null;
+    if (sistemasSet.has('AMBOS') || (sistemasSet.has('SAP') && sistemasSet.has('SUNAT'))) {
+      sistemaSalto = 'AMBOS';
+    } else if (sistemasSet.has('SAP')) {
+      sistemaSalto = 'SAP';
+    } else if (sistemasSet.has('SUNAT')) {
+      sistemaSalto = 'SUNAT';
+    }
+
     const [tipo, serie] = k.split('|');
     series.push({
-      tipo_doc_pago: tipo, serie, documentos: lista.length,
-      primero: lista[0].correlativo, ultimo: lista[lista.length - 1].correlativo,
-      fecha_primero: lista[0].fecha_emision, fecha_ultimo: lista[lista.length - 1].fecha_emision,
-      saltos: saltos.length, faltantes: saltos.reduce((a, s) => a + s.faltantes, 0),
+      tipo_doc_pago: tipo,
+      serie,
+      documentos: ordenados.length,
+      primero: ordenados[0].correlativo,
+      ultimo: ordenados[ordenados.length - 1].correlativo,
+      fecha_primero: ordenados[0].fecha_emision,
+      fecha_ultimo: ordenados[ordenados.length - 1].fecha_emision,
+      saltos: saltosSerie.length,
+      faltantes: saltosSerie.reduce((a, s) => a + s.faltantes, 0),
+      sistema_salto: sistemaSalto,
+      estado: saltosSerie.length === 0 ? 'CONTINUA' : 'CON SALTOS',
     });
   }
-  return series.sort((a, b) => a.serie.localeCompare(b.serie));
+
+  series.sort((a, b) => a.serie.localeCompare(b.serie));
+  saltos.sort(
+    (a, b) =>
+      a.serie.localeCompare(b.serie) ||
+      (a.start < b.start ? -1 : a.start > b.start ? 1 : 0)
+  );
+
+  return { series, saltos };
+}
+
+/**
+ * Identifica saltos de numeración en SAP, SUNAT o AMBOS.
+ * No considera la diferencia de fechas como error.
+ * Agrega OBS 3 al documento posterior al salto y devuelve el resumen por serie.
+ */
+export function validarSecuencias(docs) {
+  const { series, saltos } = analizarSecuencias(docs);
+  for (const s of saltos) {
+    if (s.doc) {
+      s.doc.incidencias.push(construirIncidenciaObs3(s));
+    }
+  }
+  return series;
+}
+
+/**
+ * Enriquecimiento idempotente en memoria para períodos ya cargados en BD:
+ * actualiza las incidencias OBS 3 con los correlativos faltantes exactos y
+ * el sistema afectado (SAP, SUNAT o AMBOS) sin requerir recarga de archivos.
+ */
+export function enriquecerSecuenciasEnDocs(docs) {
+  if (!Array.isArray(docs) || docs.length === 0) return docs;
+  const { saltos } = analizarSecuencias(docs);
+  const saltosPorClave = new Map();
+  for (const s of saltos) {
+    if (!s.doc) continue;
+    const k = s.doc.key || `${s.doc.tipo_doc_pago}|${s.doc.serie}|${correlativoCanonico(s.doc.correlativo)}`;
+    if (!saltosPorClave.has(k)) saltosPorClave.set(k, []);
+    saltosPorClave.get(k).push(s);
+  }
+
+  return docs.map((d) => {
+    const k = d.key || `${d.tipo_doc_pago}|${d.serie}|${correlativoCanonico(d.correlativo)}`;
+    const nuevosSaltos = saltosPorClave.get(k) || [];
+    const tieneObs3Prev = Array.isArray(d.incidencias) && d.incidencias.some((i) => i.codigo === 'OBS 3');
+    if (nuevosSaltos.length === 0 && !tieneObs3Prev) return d;
+
+    const otrasIncidencias = (d.incidencias || []).filter((i) => i.codigo !== 'OBS 3');
+    const nuevasObs3 = nuevosSaltos.map(construirIncidenciaObs3);
+    const incidencias = [...otrasIncidencias, ...nuevasObs3];
+    const codigos = [...new Set(incidencias.filter((i) => i.tipo !== TIPO.INFO).map((i) => i.codigo))];
+    const estado = estadoGeneral(incidencias);
+
+    return { ...d, incidencias, codigos, estado };
+  });
 }
 
 /** Estado general: ERROR > OBSERVADO > OK. */
