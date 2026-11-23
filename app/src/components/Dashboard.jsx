@@ -1,20 +1,24 @@
 import React, { useState, useEffect, useMemo, memo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '../utils/supabaseClient';
-import {
-  FiCheckCircle, FiAlertTriangle, FiXCircle, FiLayers, FiDownload, FiArrowRight,
-} from 'react-icons/fi';
+import { FiDownload, FiArrowRight } from 'react-icons/fi';
 import { useDocumentosVentas } from './ventas/useDocumentosVentas';
+import { useDocumentosCompras } from './compras/useDocumentosCompras';
 import { useLocalesEmpresa, coincideConLocal } from '../utils/useLocalesEmpresa';
 import TarjetasIndicadoresVentas from './ventas/TarjetasIndicadoresVentas';
+import TarjetasIndicadoresCompras from './compras/TarjetasIndicadoresCompras';
 import SelectorLocal from './SelectorLocal';
-import { SkeletonDashboard, SkeletonKpiGrid } from './SkeletonLoader';
+import { SkeletonDashboard } from './SkeletonLoader';
 import { INCIDENCIAS } from '../utils/ventas/catalogos';
 import { REPORTES_ESPECIFICOS, calcularIndicadores, exportarExcelVentas } from '../utils/ventas/reportes';
 import { formatoMonto, dentroDeTolerancia } from '../utils/ventas/montos';
-
-const COLS_RESUMEN_COMPRAS =
-  'total_registros, ok_registros, error_registros, observado_registros, sum_base_sap, sum_base_sunat, sum_igv_sap, sum_igv_sunat, sum_total_sap, sum_total_sunat';
+import {
+  INCIDENCIAS_COMPRAS,
+  CONCEPTOS_IMPORTE_COMPRAS,
+  LISTA_RESULTADOS_COMPRAS,
+} from '../utils/compras/catalogos';
+import {
+  calcularIndicadoresCompras,
+  exportarExcelCompras,
+} from '../utils/compras/reportes';
 
 const Dashboard = memo(function Dashboard({
   activeCompany, periodId, activePeriod, onNavigateToReconciliation, activeModule,
@@ -35,8 +39,8 @@ const Dashboard = memo(function Dashboard({
   return (
     <DashboardCompras
       periodId={periodId}
+      activePeriod={activePeriod}
       onNavigateToReconciliation={onNavigateToReconciliation}
-      activeModule={activeModule}
     />
   );
 });
@@ -446,120 +450,257 @@ const DashboardVentas = memo(function DashboardVentas({
 });
 
 // ============================================================================
-// Dashboard del módulo de Compras (consultas en paralelo + columnas explícitas + skeleton)
+// Dashboard del módulo de Compras (Conciliación SAP vs. SUNAT — RCE)
 // ============================================================================
-const DashboardCompras = memo(function DashboardCompras({ periodId, onNavigateToReconciliation, activeModule }) {
-  const { data: stats = {
-    total: 0, ok: 0, errors: 0, observed: 0,
-    baseSap: 0, baseSunat: 0, igvSap: 0, igvSunat: 0, totalSap: 0, totalSunat: 0,
-    countObs1: 0, countObs2: 0, countSapOk: 0, countSunatOk: 0,
-  }, isLoading } = useQuery({
-    queryKey: ['dashboardStats', periodId, activeModule],
-    queryFn: async () => {
-      const [resumenRes, obs1Res, obs2Res, sapObsIdOkRes, sunatObsIdOkRes] = await Promise.all([
-        supabase.from('v_resumen_compras').select(COLS_RESUMEN_COMPRAS).eq('periodo_id', periodId).single(),
-        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
-          .contains('errores_json', JSON.stringify(['OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)'])),
-        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
-          .contains('errores_json', JSON.stringify(['OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)'])),
-        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
-          .eq('estado_validacion', 'OBSERVADO').or('nro_identidad_sap.not.is.null,nombre_sap.not.is.null')
-          .not('errores_json', 'cs', '["OBS 6: RUC PROVEEDOR INVÁLIDO (SAP)"]'),
-        supabase.from('detalle_compras').select('id', { count: 'exact', head: true }).eq('periodo_id', periodId)
-          .eq('estado_validacion', 'OBSERVADO').or('nro_identidad_sunat.not.is.null,nombre_sunat.not.is.null')
-          .not('errores_json', 'cs', '["OBS 7: RUC PROVEEDOR INVÁLIDO (SUNAT)"]'),
-      ]);
+const DashboardCompras = memo(function DashboardCompras({
+  periodId,
+  activePeriod,
+  onNavigateToReconciliation,
+}) {
+  const { data: docs = [], isLoading } = useDocumentosCompras(periodId, true);
+  const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
 
-      if (resumenRes.error && resumenRes.error.code !== 'PGRST116') throw resumenRes.error;
-      const summary = resumenRes.data || {};
-      return {
-        total: parseInt(summary.total_registros, 10) || 0,
-        ok: parseInt(summary.ok_registros, 10) || 0,
-        errors: parseInt(summary.error_registros, 10) || 0,
-        observed: parseInt(summary.observado_registros, 10) || 0,
-        baseSap: parseFloat(summary.sum_base_sap) || 0,
-        baseSunat: parseFloat(summary.sum_base_sunat) || 0,
-        igvSap: parseFloat(summary.sum_igv_sap) || 0,
-        igvSunat: parseFloat(summary.sum_igv_sunat) || 0,
-        totalSap: parseFloat(summary.sum_total_sap) || 0,
-        totalSunat: parseFloat(summary.sum_total_sunat) || 0,
-        countObs1: obs1Res.count || 0,
-        countObs2: obs2Res.count || 0,
-        countSapOk: sapObsIdOkRes.count || 0,
-        countSunatOk: sunatObsIdOkRes.count || 0,
-      };
-    },
-    enabled: !!periodId && !!activeModule,
-  });
+  const ind = useMemo(() => calcularIndicadoresCompras(docs), [docs]);
 
-  const getPercentage = (value) => (stats.total === 0 ? '0%' : `${((value / stats.total) * 100).toFixed(1)}%`);
+  const pct = (val) => (ind.totalUnicos > 0 ? `${((val / ind.totalUnicos) * 100).toFixed(1)}%` : '0.0%');
+
+  const irAConciliacion = (payload) => {
+    if (!onNavigateToReconciliation) return;
+    onNavigateToReconciliation(payload);
+  };
+
+  const sumasActivas = modoComparativa === 'coincidentes' ? ind.sumasCoincidentes : ind.sumas;
+
+  const conteosResultado = {
+    OK: ind.ok,
+    CON_DIFERENCIAS: ind.conDiferencias,
+    CON_OBSERVACIONES: ind.conObservaciones,
+    NO_EXISTE_SUNAT: ind.noExisteSunat,
+    NO_EXISTE_SAP: ind.noExisteSap,
+  };
+
+  const descResultado = {
+    OK: 'Coincidente sin diferencias ni observaciones (incluye recibos tipo 14).',
+    CON_DIFERENCIAS: 'Presente en SAP y SUNAT, pero con errores económicos, fecha o tipo doc.',
+    CON_OBSERVACIONES: 'Sin errores críticos, presenta observaciones de identidad.',
+    NO_EXISTE_SUNAT: 'Registrado en SAP sin correspondencia en SUNAT (ERROR 6).',
+    NO_EXISTE_SAP: 'Registrado en SUNAT sin correspondencia en SAP (OBS 1).',
+  };
 
   return (
     <div className="animate-fade-in w-100">
-      <div className="d-flex justify-content-between align-items-center mb-4">
+      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <div>
           <h3 className="mb-1 fw-bold" style={{ letterSpacing: '-0.02em', color: 'var(--color-text)' }}>
-            Panel Resumen Ejecutivo
+            Panel Resumen Ejecutivo de Compras (SAP vs. SUNAT)
           </h3>
           <p className="text-muted mb-0" style={{ fontSize: '0.86rem' }}>
-            Métricas de conciliación y calidad de datos del período seleccionado
+            Conciliación automatizada por clave única (RUC + Tipo Doc. + Serie + Correlativo). Haga clic en cualquier indicador para filtrar.
           </p>
+        </div>
+        <div className="d-flex align-items-center flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={docs.length === 0}
+            className="btn btn-sm btn-outline-primary d-flex align-items-center fw-semibold"
+            onClick={() => exportarExcelCompras({ docs, alcance: 'completo', periodo: activePeriod || 'periodo' })}
+          >
+            <FiDownload className="me-1.5" /> Exportar Excel Completo
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary d-flex align-items-center fw-semibold"
+            onClick={() => irAConciliacion('ALL')}
+          >
+            Ir a Tabla de Conciliación <FiArrowRight className="ms-1.5" />
+          </button>
         </div>
       </div>
 
       {isLoading ? (
-        <SkeletonKpiGrid count={4} />
+        <SkeletonDashboard kpiCount={7} />
       ) : (
-        <div className="row g-3 mb-4">
-          <div className="col-xl-3 col-sm-6">
-            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ALL')}>
-              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: '#4F46E5', fontSize: '1.4rem' }}>
-                <FiLayers />
+        <>
+          {/* 7 Indicadores Generales (Sección 7.A) */}
+          <TarjetasIndicadoresCompras
+            indicadores={ind}
+            totalSinFiltro={docs.length}
+            onSelectKpi={(id, filtro) => irAConciliacion({ kpi: id, filtros: filtro })}
+          />
+
+          <div className="row g-3 mb-3">
+            {/* Comparativa Monetaria SAP vs SUNAT */}
+            <div className="col-lg-7">
+              <div className="card-premium h-100 p-3 d-flex flex-column justify-content-between">
+                <div>
+                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <div>
+                      <h5 className="mb-0 fw-bold">Comparativa Monetaria de Compras (SAP vs. SUNAT)</h5>
+                      <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                        {modoComparativa === 'coincidentes'
+                          ? `Solo documentos coincidentes en SAP y SUNAT (${ind.coincidentes.toLocaleString('es-PE')} docs) — precisión decimal exacta.`
+                          : `Suma total del archivo SAP (${ind.totalSap.toLocaleString('es-PE')}) vs. SUNAT (${ind.totalSunat.toLocaleString('es-PE')}).`}
+                      </small>
+                    </div>
+                    <div className="btn-group btn-group-sm" role="group">
+                      <button
+                        type="button"
+                        className={`btn ${modoComparativa === 'coincidentes' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                        style={{ fontSize: '0.74rem' }}
+                        onClick={() => setModoComparativa('coincidentes')}
+                      >
+                        Coincidentes ({ind.coincidentes.toLocaleString('es-PE')})
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn ${modoComparativa === 'lote' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                        style={{ fontSize: '0.74rem' }}
+                        onClick={() => setModoComparativa('lote')}
+                      >
+                        Total Lote ({ind.totalUnicos.toLocaleString('es-PE')})
+                      </button>
+                    </div>
+                  </div>
+                  <div className="table-responsive">
+                    <table className="table table-hover table-dense align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>Concepto</th>
+                          <th className="text-end">SAP (S/)</th>
+                          <th className="text-end">SUNAT (S/)</th>
+                          <th className="text-end">Diferencia (S/)</th>
+                          <th className="text-center">Docs Afectados</th>
+                          <th className="text-center">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {CONCEPTOS_IMPORTE_COMPRAS.map((c) => {
+                          const s = sumasActivas[`${c.campo}_sap`] || 0;
+                          const u = sumasActivas[`${c.campo}_sunat`] || 0;
+                          const dif = s - u;
+                          const afectados = ind.porCodigo[c.codigo] || 0;
+                          const ok = afectados === 0 && dif === 0;
+                          return (
+                            <tr
+                              key={c.codigo}
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => irAConciliacion({ filtros: { codigos: [c.codigo] } })}
+                            >
+                              <td className="fw-semibold">{c.concepto}</td>
+                              <td className="text-end font-mono">{formatoMonto(s)}</td>
+                              <td className="text-end font-mono">{formatoMonto(u)}</td>
+                              <td className={`text-end font-mono ${dif !== 0 ? 'text-danger fw-bold' : 'text-success'}`}>
+                                {formatoMonto(dif)}
+                              </td>
+                              <td className="text-center font-mono fw-bold">{afectados.toLocaleString('es-PE')}</td>
+                              <td className="text-center">
+                                {ok ? (
+                                  <span className="badge badge-status badge-status-ok">OK</span>
+                                ) : (
+                                  <span className="badge badge-status badge-status-error">{c.codigo}</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-              <div className="text-truncate">
-                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>TOTAL COMPROBANTES</div>
-                <h3 className="fw-bold mb-0 font-mono">{stats.total.toLocaleString('es-PE')}</h3>
-                <small className="text-muted" style={{ fontSize: '0.75rem' }}>100% de la carga procesada</small>
+            </div>
+
+            {/* Distribución por Clasificación de Resultados (5 estados) */}
+            <div className="col-lg-5">
+              <div className="card-premium h-100 p-3">
+                <h5 className="mb-2 fw-bold">Clasificación de Resultados</h5>
+                <p className="text-muted mb-3" style={{ fontSize: '0.8rem' }}>
+                  Haga clic en cualquier estado para inspeccionar los comprobantes clasificados.
+                </p>
+                {LISTA_RESULTADOS_COMPRAS.map((r) => {
+                  const count = conteosResultado[r.valor] || 0;
+                  const barClass =
+                    r.clase === 'ok' ? 'bg-success' : r.clase === 'observado' ? 'bg-warning' : 'bg-danger';
+                  return (
+                    <div
+                      key={r.valor}
+                      className="p-2 rounded-2 mb-2"
+                      style={{ backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)', cursor: 'pointer' }}
+                      onClick={() => irAConciliacion({ kpi: r.valor, filtros: { resultado: r.valor } })}
+                    >
+                      <div className="d-flex justify-content-between align-items-center mb-1 gap-2">
+                        <div className="d-flex align-items-center gap-2 text-truncate">
+                          <span className={`badge badge-status badge-status-${r.clase}`}>{r.etiqueta}</span>
+                          <small className="text-muted text-truncate">{descResultado[r.valor]}</small>
+                        </div>
+                        <span className="font-mono fw-bold flex-shrink-0">
+                          {count.toLocaleString('es-PE')} ({pct(count)})
+                        </span>
+                      </div>
+                      <div className="progress" style={{ height: '6px' }}>
+                        <div className={`progress-bar ${barClass}`} style={{ width: pct(count) }} />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
-          <div className="col-xl-3 col-sm-6">
-            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OK')}>
-              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '1.4rem' }}>
-                <FiCheckCircle />
-              </div>
-              <div className="text-truncate">
-                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>REGISTROS CORRECTOS</div>
-                <h3 className="fw-bold mb-0 text-success font-mono">{stats.ok.toLocaleString('es-PE')}</h3>
-                <small className="text-success font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.ok)} del total</small>
-              </div>
-            </div>
-          </div>
-          <div className="col-xl-3 col-sm-6">
-            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('OBSERVADO')}>
-              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(217, 119, 6, 0.1)', color: '#D97706', fontSize: '1.4rem' }}>
-                <FiAlertTriangle />
-              </div>
-              <div className="text-truncate">
-                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>OBSERVACIONES</div>
-                <h3 className="fw-bold mb-0 text-warning font-mono">{stats.observed.toLocaleString('es-PE')}</h3>
-                <small className="text-warning font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.observed)} de advertencia</small>
+
+          {/* Desglose por Error (1–8) y Observación (1–3) */}
+          <div className="card-premium p-3">
+            <div className="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+              <div>
+                <h5 className="mb-0 fw-bold">Detalle de Errores (1–8) y Observaciones (1–3)</h5>
+                <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                  Un documento puede acumular múltiples errores y observaciones simultáneamente sin sobrescribirse.
+                </small>
               </div>
             </div>
-          </div>
-          <div className="col-xl-3 col-sm-6">
-            <div className="card-premium card-clickable d-flex align-items-center p-3 h-100" onClick={() => onNavigateToReconciliation && onNavigateToReconciliation('ERROR')}>
-              <div className="rounded-3 p-3 me-3 d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: '52px', height: '52px', backgroundColor: 'rgba(220, 38, 38, 0.1)', color: '#DC2626', fontSize: '1.4rem' }}>
-                <FiXCircle />
-              </div>
-              <div className="text-truncate">
-                <div className="text-muted fw-semibold" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>CON DISCREPANCIAS / ERROR</div>
-                <h3 className="fw-bold mb-0 text-danger font-mono">{stats.errors.toLocaleString('es-PE')}</h3>
-                <small className="text-danger font-mono fw-semibold" style={{ fontSize: '0.75rem' }}>{getPercentage(stats.errors)} críticos</small>
-              </div>
+            <div className="table-responsive">
+              <table className="table table-hover table-dense align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Categoría</th>
+                    <th>Descripción</th>
+                    <th className="text-end">Documentos Afectados</th>
+                    <th className="text-center">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {INCIDENCIAS_COMPRAS.map((inc) => {
+                    const count = ind.porCodigo[inc.codigo] || 0;
+                    const esErr = inc.tipo === 'ERROR';
+                    return (
+                      <tr
+                        key={inc.codigo}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => irAConciliacion({ filtros: { codigos: [inc.codigo] } })}
+                      >
+                        <td>
+                          <span className={`badge badge-status badge-status-${esErr ? 'error' : 'observado'}`}>
+                            {inc.codigo}
+                          </span>
+                        </td>
+                        <td className="text-muted fw-semibold" style={{ fontSize: '0.75rem' }}>
+                          {esErr ? 'ERROR' : 'OBSERVACIÓN'}
+                        </td>
+                        <td className="fw-semibold">{inc.descripcion}</td>
+                        <td className="text-end font-mono fw-bold">{count.toLocaleString('es-PE')}</td>
+                        <td className="text-center">
+                          <span className="text-primary fw-semibold" style={{ fontSize: '0.76rem' }}>
+                            Ver detalle →
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

@@ -547,7 +547,7 @@ export default function App() {
         <Suspense
           fallback={
             activeTab === 'dashboard' ? (
-              <SkeletonDashboard kpiCount={activeModule === 'compras' ? 4 : 10} />
+              <SkeletonDashboard kpiCount={activeModule === 'compras' ? 7 : 10} />
             ) : (
               <div className="card-premium p-4">
                 <SkeletonTable rows={10} columns={8} />
