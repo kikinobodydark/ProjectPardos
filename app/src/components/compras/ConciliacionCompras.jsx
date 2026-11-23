@@ -284,6 +284,7 @@ const FilaDocumentoCompraV2 = memo(function FilaDocumentoCompraV2({
 const ConciliacionCompras = memo(function ConciliacionCompras({
   periodId,
   activePeriod,
+  activePeriodObj = null,
   initialFilter,
   onFilterReset,
   activeCompany,
@@ -297,9 +298,14 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
     error,
     refetch,
     loadProgress,
-  } = useDocumentosCompras(periodId, true);
+    partialDocs = [],
+  } = useDocumentosCompras(periodId, true, { periodObj: activePeriodObj, streamPartial: true });
   const networkProfile = useNetworkProfile();
   const inputUsuariosSapRef = useRef(null);
+
+  const isSyncing = isLoading || !!loadProgress;
+  const usandoPreliminares = todosDocs.length === 0 && partialDocs.length > 0;
+  const docsFuente = todosDocs.length > 0 ? todosDocs : partialDocs;
 
   const [filtros, setFiltros] = useState(FILTROS_INICIALES_COMPRAS);
   const [rucInput, setRucInput] = useState('');
@@ -351,34 +357,52 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
   }, [initialFilter, onFilterReset]);
 
   const docsFiltrados = useMemo(
-    () => filtrarDocumentosCompras(todosDocs, filtros),
-    [todosDocs, filtros]
+    () => filtrarDocumentosCompras(docsFuente, filtros),
+    [docsFuente, filtros]
   );
 
-  // Conteos para los chips de incidencias (sin el filtro de chips activo para permitir multi-selección intuitiva)
+  const resumenServidorPorCodigo = activePeriodObj?.resumen_json?.porCodigo || null;
+  const sinFiltrosSecundarios =
+    filtros.ruc === '' &&
+    filtros.razonSocial === '' &&
+    filtros.docSap === '' &&
+    filtros.usuarioSap === 'ALL' &&
+    filtros.resultado === 'ALL' &&
+    filtros.tipoError === 'ALL' &&
+    filtros.tipoObs === 'ALL' &&
+    filtros.tipoDoc === 'ALL' &&
+    filtros.serie === '' &&
+    filtros.origen === 'ALL' &&
+    filtros.fechaDesde === '' &&
+    filtros.fechaHasta === '';
+
+  // Conteos para los chips de incidencias (instantáneos desde resumen_json mientras sincroniza)
   const conteoPorCodigoBase = useMemo(() => {
-    const base = filtrarDocumentosCompras(todosDocs, { ...filtros, codigos: [] });
+    if (todosDocs.length === 0 && resumenServidorPorCodigo && sinFiltrosSecundarios) {
+      return resumenServidorPorCodigo;
+    }
+    const base = filtrarDocumentosCompras(docsFuente, { ...filtros, codigos: [] });
     return calcularIndicadoresCompras(base).porCodigo;
-  }, [todosDocs, filtros]);
+  }, [todosDocs.length, resumenServidorPorCodigo, sinFiltrosSecundarios, docsFuente, filtros]);
 
   // Tipos de documento presentes en el período + los estándar (01, 07, 09, 14)
   const tiposDocumentoDisponibles = useMemo(() => {
     const set = new Set(['01', '07', '09', '14']);
-    for (const d of todosDocs) {
+    for (const d of docsFuente) {
       if (d.tipo_doc_pago) set.add(d.tipo_doc_pago);
     }
     return [...set].sort();
-  }, [todosDocs]);
+  }, [docsFuente]);
 
   // Usuarios SAP disponibles (cuando se cargó el Excel opcional BKPF)
   const usuariosSapDisponibles = useMemo(() => {
     const set = new Set();
-    for (const d of todosDocs) {
+    for (const d of docsFuente) {
       const u = (d.sap?.usuario_sap || d.usuario_sap || '').trim();
       if (u) set.add(u);
     }
     return [...set].sort((a, b) => a.localeCompare(b));
-  }, [todosDocs]);
+  }, [docsFuente]);
 
   const totalConUsuarioSap = useMemo(
     () => todosDocs.filter((d) => !!(d.sap?.usuario_sap || d.usuario_sap)).length,
@@ -810,7 +834,8 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
           <div className="d-flex align-items-center gap-2 flex-wrap">
             <h4 className="mb-0 fw-bold">
-              Tabla de Conciliación de Compras ({docsFiltrados.length.toLocaleString('es-PE')})
+              Tabla de Conciliación de Compras ({docsFiltrados.length.toLocaleString('es-PE')}
+              {usandoPreliminares ? '…' : ''})
             </h4>
             <select
               className="form-select form-control-premium"
@@ -1197,8 +1222,8 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
           </div>
         </div>
 
-        {/* 7.B Tabla de Conciliación de Compras (20 columnas + virtualización) */}
-        {isLoading ? (
+        {/* 7.B Tabla de Conciliación de Compras (20 columnas + virtualización + streaming progresivo) */}
+        {isLoading && !usandoPreliminares ? (
           <>
             <LoadProgressBanner progress={loadProgress} />
             <SkeletonTable rows={10} columns={10} title="Cargando documentos conciliados de Compras..." />
@@ -1209,19 +1234,26 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
             error={error}
             onRetry={refetch}
           />
-        ) : totalRegistros === 0 ? (
-          <div
-            className="text-center py-5 rounded-3"
-            style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
-          >
-            <FiAlertCircle className="text-muted fs-1 mb-2" />
-            <p className="text-muted mb-0 fw-semibold">
-              {todosDocs.length === 0
-                ? 'No hay documentos de Compras cargados en este período. Utilice "Carga TXT" para subir SAP y SUNAT.'
-                : 'No se encontraron documentos para los filtros seleccionados.'}
-            </p>
-          </div>
         ) : (
+          <>
+            {usandoPreliminares && <LoadProgressBanner progress={loadProgress} streaming />}
+            {totalRegistros === 0 ? (
+              isSyncing ? (
+                <SkeletonTable rows={8} columns={10} title="Buscando documentos coincidentes mientras finaliza la descarga..." />
+              ) : (
+                <div
+                  className="text-center py-5 rounded-3"
+                  style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
+                >
+                  <FiAlertCircle className="text-muted fs-1 mb-2" />
+                  <p className="text-muted mb-0 fw-semibold">
+                    {todosDocs.length === 0
+                      ? 'No hay documentos de Compras cargados en este período. Utilice "Carga TXT" para subir SAP y SUNAT.'
+                      : 'No se encontraron documentos para los filtros seleccionados.'}
+                  </p>
+                </div>
+              )
+            ) : (
           <>
             <div
               ref={containerRef}
@@ -1318,6 +1350,8 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
                   </ul>
                 </nav>
               </div>
+            )}
+          </>
             )}
           </>
         )}

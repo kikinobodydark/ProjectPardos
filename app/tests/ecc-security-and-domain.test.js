@@ -14,9 +14,16 @@ import { validarDocumentoCompras } from '../src/utils/compras/reglas.js';
 import { clearPersistedQueryCache } from '../src/utils/queryPersister.js';
 import { getNetworkProfile, simulateNetworkProfile } from '../src/utils/networkProfile.js';
 import { executeParallelBatches } from '../src/utils/jobQueue.js';
-import { fetchAllSupabaseKeyset } from '../src/utils/supabasePagination.js';
+import { fetchAllSupabaseKeyset, computeCarSplitsFromKeys } from '../src/utils/supabasePagination.js';
 import { parsearSapVentasStreaming } from '../src/utils/ventas/lectores.js';
-import { aFilaBDRpc } from '../src/utils/ventas/persistencia.js';
+import { aFilaBDRpc, desdeFilaBD, filaVentasDesdeTupla } from '../src/utils/ventas/persistencia.js';
+import { desdeFilaBDCompras, filaComprasDesdeTupla } from '../src/utils/compras/persistencia.js';
+import {
+  runOrJoinPeriodSync,
+  cancelOtherPeriodSyncs,
+  cancelAllPeriodSyncs,
+  getSyncProgress,
+} from '../src/utils/documentSyncManager.js';
 
 describe('ECC Security — Excel Formula Injection & Input Sanitization', () => {
   it('prefija con comilla simple fórmulas peligrosas en celdas Excel', () => {
@@ -281,5 +288,168 @@ describe('Carga masiva progresiva y resiliencia ante timeouts', () => {
       /Fallo simulado/
     );
     assert.deepEqual(ejecutados, [1, 2]);
+  });
+
+  it('fetchAllSupabaseKeyset usa RPC compacta particionada por car_sunat con streaming onBatch y tuplas', async () => {
+    const dataset = Array.from({ length: 10000 }, (_, i) => {
+      const car = `2051088522903B601${String(i + 1).padStart(10, '0')}`;
+      return [
+        `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+        car,
+        'B601',
+        String(i + 1),
+        '2026-11-22',
+        '03',
+        '1',
+        '45401715',
+        'CLIENTE DEMO',
+        100,
+        18,
+        0,
+        0,
+        0,
+        118,
+        '1',
+        '45401715',
+        'CLIENTE DEMO',
+        100,
+        18,
+        0,
+        0,
+        0,
+        118,
+        'NORMAL',
+        0,
+        'OK',
+        [{ tipo: 'META', version: 2, en_sap: true, en_sunat: true }],
+      ];
+    });
+
+    const splits = computeCarSplitsFromKeys(dataset.map((t) => t[1]), 4);
+    assert.equal(splits.length, 3, 'Debe calcular 3 cortes para 4 buckets');
+
+    const batchesEmitted = [];
+    let compactCalls = 0;
+    const result = await fetchAllSupabaseKeyset({
+      knownTotal: dataset.length,
+      cachedCarSplits: splits,
+      compactRpcLimit: 1500,
+      compactConcurrency: 4,
+      onBatch: (rows) => batchesEmitted.push(rows.length),
+      fetchCompactBatch: async ({ minCar, maxCar, afterCar, limit }) => {
+        compactCalls += 1;
+        const lower = afterCar ?? minCar;
+        const rows = dataset
+          .filter((r) => {
+            const c = r[1];
+            if (lower && c <= lower) return false;
+            if (maxCar && c > maxCar) return false;
+            return true;
+          })
+          .slice(0, limit);
+        return { data: rows, error: null };
+      },
+    });
+
+    assert.equal(result.length, dataset.length, 'RPC compacta debe devolver exactamente 10,000 filas sin duplicados ni huecos');
+    assert.ok(compactCalls <= 12, '4 buckets paralelos con límite 1500 deben completar en <= 12 llamadas');
+    assert.equal(batchesEmitted.reduce((a, b) => a + b, 0), dataset.length, 'onBatch debe emitir el 100% de las filas en streaming');
+
+    const filaObj = filaVentasDesdeTupla(result[0]);
+    assert.equal(filaObj.serie, 'B601');
+    assert.equal(filaObj.total_sap, 118);
+    const docVentas = desdeFilaBD(result[0]);
+    assert.equal(docVentas.estado, 'OK');
+    assert.equal(docVentas.sap.total, 11800);
+
+    const tuplaCompra = [
+      '00000000-0000-4000-8000-000000000001',
+      '20100047218-01-F001-0001',
+      '20100047218',
+      'F001',
+      '0001',
+      '2026-11-21',
+      '01',
+      '6',
+      '20100047218',
+      'PROVEEDOR SAC',
+      100,
+      18,
+      0,
+      0,
+      0,
+      118,
+      '6',
+      '20100047218',
+      'PROVEEDOR SAC',
+      100,
+      18,
+      0,
+      0,
+      0,
+      118,
+      'OK',
+      [{ tipo: 'META', version: 2, en_sap: true, en_sunat: true, resultado: 'OK' }],
+    ];
+    assert.equal(filaComprasDesdeTupla(tuplaCompra).ruc_proveedor, '20100047218');
+    const docCompra = desdeFilaBDCompras(tuplaCompra);
+    assert.equal(docCompra.ruc_proveedor, '20100047218');
+    assert.equal(docCompra.resultado, 'OK');
+  });
+
+  it('documentSyncManager deduplica descargas single-flight y solo cancela períodos distintos', async () => {
+    cancelAllPeriodSyncs();
+    let executions = 0;
+    let releaseFirst;
+    const firstGate = new Promise((r) => { releaseFirst = r; });
+
+    const p1 = runOrJoinPeriodSync({
+      modulo: 'ventas',
+      periodId: 'period-A',
+      batchWorkerAction: 'HYDRATE_VENTAS_BATCH',
+      executor: async ({ signal, emitProgress }) => {
+        executions += 1;
+        emitProgress({ loaded: 50, total: 100, phase: 'downloading' });
+        await firstGate;
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        return [{ id: 'doc-1' }];
+      },
+    });
+
+    const p1Joined = runOrJoinPeriodSync({
+      modulo: 'ventas',
+      periodId: 'period-A',
+      batchWorkerAction: 'HYDRATE_VENTAS_BATCH',
+      executor: async () => {
+        executions += 1;
+        return [];
+      },
+    });
+
+    assert.equal(executions, 1, 'Segunda suscripción al mismo período debe unirse sin duplicar descarga');
+    assert.deepEqual(getSyncProgress('ventas', 'period-A'), { loaded: 50, total: 100, phase: 'downloading' });
+
+    // Mantener period-A activo no debe cancelarlo
+    cancelOtherPeriodSyncs('ventas', 'period-A');
+    releaseFirst();
+    const [r1, r2] = await Promise.all([p1, p1Joined]);
+    assert.deepEqual(r1, [{ id: 'doc-1' }]);
+    assert.deepEqual(r2, [{ id: 'doc-1' }]);
+    assert.equal(getSyncProgress('ventas', 'period-A'), null, 'Al terminar debe limpiar el progreso');
+
+    // Cambiar de período sí cancela el período anterior
+    const pOld = runOrJoinPeriodSync({
+      modulo: 'ventas',
+      periodId: 'period-OLD',
+      batchWorkerAction: 'HYDRATE_VENTAS_BATCH',
+      executor: async ({ signal }) => {
+        await new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
+      },
+    });
+    cancelOtherPeriodSyncs('ventas', 'period-NEW');
+    await assert.rejects(() => pOld, (err) => err?.name === 'AbortError');
+    cancelAllPeriodSyncs();
   });
 });

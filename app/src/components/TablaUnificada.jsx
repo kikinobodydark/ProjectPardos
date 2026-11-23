@@ -7,6 +7,7 @@ const ConciliacionCompras = lazy(() => import('./compras/ConciliacionCompras'));
 const TablaUnificada = memo(function TablaUnificada({
   periodId,
   activePeriod,
+  activePeriodObj = null,
   initialFilter,
   onFilterReset,
   activeModule,
@@ -28,6 +29,7 @@ const TablaUnificada = memo(function TablaUnificada({
         <ConciliacionVentas
           periodId={periodId}
           activePeriod={activePeriod}
+          activePeriodObj={activePeriodObj}
           initialFilter={initialFilter}
           onFilterReset={onFilterReset}
           activeCompany={activeCompany}
@@ -51,6 +53,7 @@ const TablaUnificada = memo(function TablaUnificada({
       <ConciliacionCompras
         periodId={periodId}
         activePeriod={activePeriod}
+        activePeriodObj={activePeriodObj}
         initialFilter={initialFilter}
         onFilterReset={onFilterReset}
         activeCompany={activeCompany}

@@ -104,11 +104,12 @@ export const SkeletonDashboard = memo(function SkeletonDashboard({ kpiCount = 10
   );
 });
 
-export const LoadProgressBanner = memo(function LoadProgressBanner({ progress }) {
+export const LoadProgressBanner = memo(function LoadProgressBanner({ progress, streaming = false }) {
   if (!progress) return null;
   const loaded = Number(progress.loaded || 0);
   const total = Number(progress.total || 0);
   const isProcessing = progress.phase === 'processing';
+  const rawPct = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : 0;
   const pct = isProcessing
     ? 98
     : total > 0
@@ -116,10 +117,48 @@ export const LoadProgressBanner = memo(function LoadProgressBanner({ progress })
       : 12;
 
   const label = isProcessing
-    ? `Procesando y validando ${loaded.toLocaleString('es-PE')} comprobantes...`
+    ? `Finalizando validación y secuencias de ${loaded.toLocaleString('es-PE')} comprobantes...`
     : total > 0
-      ? `Descargando comprobantes: ${loaded.toLocaleString('es-PE')} / ${total.toLocaleString('es-PE')} (${Math.round((loaded / total) * 100)}%)`
+      ? streaming
+        ? `Sincronizando en segundo plano: ${loaded.toLocaleString('es-PE')} / ${total.toLocaleString('es-PE')} (${rawPct}%) — mostrando resultados preliminares`
+        : `Descargando comprobantes: ${loaded.toLocaleString('es-PE')} / ${total.toLocaleString('es-PE')} (${rawPct}%)`
       : 'Consultando período en Supabase...';
+
+  if (streaming) {
+    return (
+      <div
+        className="rounded-3 px-3 py-2 mb-3"
+        role="status"
+        aria-live="polite"
+        style={{
+          backgroundColor: 'rgba(37, 99, 235, 0.06)',
+          border: '1px solid rgba(37, 99, 235, 0.2)',
+        }}
+      >
+        <div className="d-flex justify-content-between align-items-center mb-1.5 gap-2">
+          <span className="fw-semibold" style={{ fontSize: '0.78rem', color: '#1E40AF' }}>
+            {label}
+          </span>
+          <span className="font-mono text-primary fw-bold flex-shrink-0" style={{ fontSize: '0.76rem' }}>
+            {total > 0 || isProcessing ? `${isProcessing ? 99 : rawPct}%` : '...'}
+          </span>
+        </div>
+        <div
+          className="w-100 rounded-pill overflow-hidden"
+          style={{ height: '4px', backgroundColor: 'rgba(37, 99, 235, 0.16)' }}
+        >
+          <div
+            style={{
+              width: `${pct}%`,
+              height: '100%',
+              background: 'linear-gradient(90deg, #2563EB 0%, #3B82F6 100%)',
+              transition: 'width 0.25s ease',
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card-premium p-3 mb-3" role="status" aria-live="polite">
@@ -128,7 +167,7 @@ export const LoadProgressBanner = memo(function LoadProgressBanner({ progress })
           {label}
         </span>
         <span className="font-mono text-primary fw-bold" style={{ fontSize: '0.8rem' }}>
-          {total > 0 || isProcessing ? `${isProcessing ? 99 : Math.round((loaded / Math.max(1, total)) * 100)}%` : '...'}
+          {total > 0 || isProcessing ? `${isProcessing ? 99 : rawPct}%` : '...'}
         </span>
       </div>
       <div

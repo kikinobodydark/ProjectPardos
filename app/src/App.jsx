@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './utils/supabaseClient';
 import {
@@ -11,6 +11,13 @@ import {
 import { useNetworkProfile } from './utils/networkProfile';
 import { clearPersistedQueryCache } from './utils/queryPersister';
 import { COLS_USUARIO_PERFIL, COLS_EMPRESA, COLS_PERIODO } from './utils/dbColumns';
+import {
+  cancelOtherPeriodSyncs,
+  cancelAllPeriodSyncs,
+  usePeriodSyncProgress,
+} from './utils/documentSyncManager';
+import { prefetchDocumentosVentas } from './components/ventas/useDocumentosVentas';
+import { prefetchDocumentosCompras } from './components/compras/useDocumentosCompras';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
 import { SkeletonAppShell, SkeletonDashboard, SkeletonTable } from './components/SkeletonLoader';
@@ -149,6 +156,7 @@ export default function App() {
         localStorage.removeItem('activeTab');
         localStorage.removeItem('activeCompany');
         localStorage.removeItem('userId');
+        cancelAllPeriodSyncs();
         queryClient.clear();
         clearPersistedQueryCache();
         setActiveModule(null);
@@ -226,6 +234,7 @@ export default function App() {
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('ct_csrf_token');
     setSelectedLocalId('ALL');
+    cancelAllPeriodSyncs();
     queryClient.clear();
     await clearPersistedQueryCache();
     await supabase.auth.signOut();
@@ -428,6 +437,7 @@ export default function App() {
         sessionStorage.removeItem('activePeriodLabel');
         sessionStorage.removeItem('activeLocalId');
         sessionStorage.removeItem('userId');
+        cancelAllPeriodSyncs();
         queryClient.clear();
         clearPersistedQueryCache();
       }
@@ -435,6 +445,53 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, [queryClient]);
+
+  const activePeriodObj = useMemo(
+    () => periods.find((p) => p.id === periodId) || null,
+    [periods, periodId]
+  );
+  const activePeriodObjRef = useRef(activePeriodObj);
+  activePeriodObjRef.current = activePeriodObj;
+
+  // Precarga persistente en segundo plano al seleccionar período/Dashboard:
+  // - El Dashboard pinta al instante con `resumen_json` (< 50 ms).
+  // - 120 ms después inicia la descarga compacta en segundo plano sin bloquear la UI.
+  // - NO se aborta al cambiar entre Dashboard, Conciliación, Historial o Carga TXT;
+  //   solo se cancela al cambiar de período, empresa, módulo o cerrar sesión.
+  useEffect(() => {
+    if (!session?.user?.id || !userProfile || !periodId || (activeModule !== 'ventas' && activeModule !== 'compras')) {
+      cancelAllPeriodSyncs();
+      return undefined;
+    }
+
+    cancelOtherPeriodSyncs(activeModule, periodId);
+
+    // En redes lentas (2G / Save-Data), no saturar el enlace en Dashboard; cargar al abrir Conciliación
+    if (networkProfile.isSlowNetwork && activeTab !== 'reconciliation') {
+      return undefined;
+    }
+
+    const delayMs = activeTab === 'reconciliation' ? 0 : 120;
+    const timer = setTimeout(() => {
+      const pObj = activePeriodObjRef.current;
+      if (activeModule === 'compras') {
+        prefetchDocumentosCompras(queryClient, periodId, pObj);
+        import('./components/TablaUnificada').catch(() => {});
+        import('./components/compras/ConciliacionCompras').catch(() => {});
+      } else {
+        prefetchDocumentosVentas(queryClient, periodId, pObj);
+        import('./components/TablaUnificada').catch(() => {});
+        import('./components/ventas/ConciliacionVentas').catch(() => {});
+      }
+    }, delayMs);
+
+    return () => clearTimeout(timer);
+  }, [session?.user?.id, userProfile, activeModule, periodId, activeTab, networkProfile.isSlowNetwork, queryClient]);
+
+  const syncProgress = usePeriodSyncProgress(
+    activeModule === 'ventas' || activeModule === 'compras' ? activeModule : null,
+    periodId
+  );
 
   // Pre-poblar caché del perfil al iniciar sesión para evitar consulta duplicada
   const handleLoginSuccess = useCallback(
@@ -539,6 +596,7 @@ export default function App() {
         setSidebarOpen={setSidebarOpen}
         activeModule={activeModule}
         onReturnToHub={returnToHub}
+        syncProgress={syncProgress}
       />
 
       <main className="main-content">
@@ -571,7 +629,7 @@ export default function App() {
               activeCompany={activeCompany}
               periodId={periodId}
               activePeriod={activePeriod}
-              activePeriodObj={periods.find((p) => p.id === periodId) || null}
+              activePeriodObj={activePeriodObj}
               onNavigateToReconciliation={navigateToReconciliation}
               activeModule={activeModule}
               selectedLocalId={selectedLocalId}
@@ -593,6 +651,7 @@ export default function App() {
             <TablaUnificada
               periodId={periodId}
               activePeriod={activePeriod}
+              activePeriodObj={activePeriodObj}
               initialFilter={reconciliationFilter}
               onFilterReset={resetReconciliationFilter}
               activeModule={activeModule}

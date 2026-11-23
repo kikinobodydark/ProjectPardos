@@ -137,8 +137,44 @@ function incidenciaDesdeTexto(txt) {
   return { codigo: 'INFO', tipo: TIPO.INFO, descripcion: 'NOTA', detalle: String(txt), regla: 'Carga anterior', datos: {} };
 }
 
-/** Fila de detalle_ventas -> documento conciliado (mismo modelo que produce el motor). */
-export function desdeFilaBD(fila) {
+/** Convierte una tupla compacta de `obtener_lote_ventas_compact` en fila objeto estándar. */
+export function filaVentasDesdeTupla(t) {
+  if (!Array.isArray(t)) return t;
+  return {
+    id: t[0],
+    car_sunat: t[1],
+    serie: t[2],
+    correlativo: t[3],
+    fecha_emision: t[4],
+    tipo_doc_pago: t[5],
+    tipo_identidad_sap: t[6],
+    nro_identidad_sap: t[7],
+    nombre_sap: t[8],
+    base_sap: t[9],
+    igv_sap: t[10],
+    exonerado_sap: t[11],
+    inafecto_sap: t[12],
+    otros_sap: t[13],
+    total_sap: t[14],
+    tipo_identidad_sunat: t[15],
+    nro_identidad_sunat: t[16],
+    nombre_sunat: t[17],
+    base_sunat: t[18],
+    igv_sunat: t[19],
+    exonerado_sunat: t[20],
+    inafecto_sunat: t[21],
+    otros_sunat: t[22],
+    total_sunat: t[23],
+    tipo_pago_sire: t[24],
+    op_gratuitas: t[25],
+    estado_validacion: t[26],
+    errores_json: t[27],
+  };
+}
+
+/** Fila de detalle_ventas (objeto o tupla compacta) -> documento conciliado (mismo modelo que produce el motor). */
+export function desdeFilaBD(rawFila) {
+  const fila = Array.isArray(rawFila) ? filaVentasDesdeTupla(rawFila) : rawFila;
   const lista = Array.isArray(fila.errores_json) ? fila.errores_json : [];
   const meta = lista.find((x) => x && typeof x === 'object' && x.tipo === TIPO.META) || null;
   const incidencias = lista

@@ -159,8 +159,43 @@ function incidenciaLegacyDesdeTexto(txt) {
   };
 }
 
-/** Fila de public.detalle_compras -> documento conciliado del modelo de Compras. */
-export function desdeFilaBDCompras(fila) {
+/** Convierte una tupla compacta de `obtener_lote_compras_compact` en fila objeto estándar. */
+export function filaComprasDesdeTupla(t) {
+  if (!Array.isArray(t)) return t;
+  return {
+    id: t[0],
+    car_sunat: t[1],
+    ruc_proveedor: t[2],
+    serie: t[3],
+    correlativo: t[4],
+    fecha_emision: t[5],
+    tipo_doc_pago: t[6],
+    tipo_identidad_sap: t[7],
+    nro_identidad_sap: t[8],
+    nombre_sap: t[9],
+    base_sap: t[10],
+    igv_sap: t[11],
+    exonerado_sap: t[12],
+    inafecto_sap: t[13],
+    otros_sap: t[14],
+    total_sap: t[15],
+    tipo_identidad_sunat: t[16],
+    nro_identidad_sunat: t[17],
+    nombre_sunat: t[18],
+    base_sunat: t[19],
+    igv_sunat: t[20],
+    exonerado_sunat: t[21],
+    inafecto_sunat: t[22],
+    otros_sunat: t[23],
+    total_sunat: t[24],
+    estado_validacion: t[25],
+    errores_json: t[26],
+  };
+}
+
+/** Fila de public.detalle_compras (objeto o tupla compacta) -> documento conciliado del modelo de Compras. */
+export function desdeFilaBDCompras(rawFila) {
+  const fila = Array.isArray(rawFila) ? filaComprasDesdeTupla(rawFila) : rawFila;
   const lista = Array.isArray(fila.errores_json) ? fila.errores_json : [];
   const meta = lista.find((x) => x && typeof x === 'object' && x.tipo === TIPO.META) || null;
   const incidencias = lista

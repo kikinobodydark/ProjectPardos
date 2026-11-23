@@ -321,40 +321,54 @@ export async function executeCpuTaskFallback(action, payload) {
         ? docsChunk.map((d) => aFilaBDComprasRpc(d))
         : docsChunk.map((d) => aFilaBDCompras(d, metaBD));
     }
+    case 'HYDRATE_VENTAS_BATCH': {
+      const filas = Array.isArray(payload?.filas) ? payload.filas : [];
+      if (filas.length === 0) return [];
+      return filas.map(desdeFilaBD);
+    }
     case 'HYDRATE_VENTAS_DOCS': {
       const filas = Array.isArray(payload?.filas) ? payload.filas : [];
       if (filas.length === 0) return [];
       filas.sort((a, b) => {
-        const fa = a.fecha_emision || '';
-        const fb = b.fecha_emision || '';
+        const isArrA = Array.isArray(a);
+        const isArrB = Array.isArray(b);
+        const fa = (isArrA ? a[4] : a.fecha_emision) || '';
+        const fb = (isArrB ? b[4] : b.fecha_emision) || '';
         if (fa !== fb) return fa < fb ? -1 : 1;
-        const sa = a.serie || '';
-        const sb = b.serie || '';
+        const sa = (isArrA ? a[2] : a.serie) || '';
+        const sb = (isArrB ? b[2] : b.serie) || '';
         if (sa !== sb) return sa < sb ? -1 : 1;
-        const ca = a.correlativo || '';
-        const cb = b.correlativo || '';
+        const ca = (isArrA ? a[3] : a.correlativo) || '';
+        const cb = (isArrB ? b[3] : b.correlativo) || '';
         if (ca !== cb) return ca < cb ? -1 : 1;
-        const ia = a.id || '';
-        const ib = b.id || '';
+        const ia = (isArrA ? a[0] : a.id) || '';
+        const ib = (isArrB ? b[0] : b.id) || '';
         return ia < ib ? -1 : ia > ib ? 1 : 0;
       });
       return enriquecerSecuenciasEnDocs(filas.map(desdeFilaBD));
+    }
+    case 'HYDRATE_COMPRAS_BATCH': {
+      const filas = Array.isArray(payload?.filas) ? payload.filas : [];
+      if (filas.length === 0) return [];
+      return filas.map(desdeFilaBDCompras);
     }
     case 'HYDRATE_COMPRAS_DOCS': {
       const filas = Array.isArray(payload?.filas) ? payload.filas : [];
       if (filas.length === 0) return [];
       filas.sort((a, b) => {
-        const fa = a.fecha_emision || '';
-        const fb = b.fecha_emision || '';
+        const isArrA = Array.isArray(a);
+        const isArrB = Array.isArray(b);
+        const fa = (isArrA ? a[5] : a.fecha_emision) || '';
+        const fb = (isArrB ? b[5] : b.fecha_emision) || '';
         if (fa !== fb) return fa < fb ? -1 : 1;
-        const sa = a.serie || '';
-        const sb = b.serie || '';
+        const sa = (isArrA ? a[3] : a.serie) || '';
+        const sb = (isArrB ? b[3] : b.serie) || '';
         if (sa !== sb) return sa < sb ? -1 : 1;
-        const ca = a.correlativo || '';
-        const cb = b.correlativo || '';
+        const ca = (isArrA ? a[4] : a.correlativo) || '';
+        const cb = (isArrB ? b[4] : b.correlativo) || '';
         if (ca !== cb) return ca < cb ? -1 : 1;
-        const ia = a.id || '';
-        const ib = b.id || '';
+        const ia = (isArrA ? a[0] : a.id) || '';
+        const ib = (isArrB ? b[0] : b.id) || '';
         return ia < ib ? -1 : ia > ib ? 1 : 0;
       });
       return filas.map(desdeFilaBDCompras);
