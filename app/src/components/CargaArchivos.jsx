@@ -1,4 +1,4 @@
-import React, { useState, memo } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../utils/supabaseClient';
 import {
@@ -57,7 +57,54 @@ const CargaArchivos = memo(function CargaArchivos({
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [progressPct, setProgressPct] = useState(0);
+  const [displayPct, setDisplayPct] = useState(0);
+  const targetPctRef = useRef(0);
+  const displayPctRef = useRef(0);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Interpolación fluida a 60fps para evitar saltos bruscos entre lotes y mantener la onda en avance continuo
+  useEffect(() => {
+    targetPctRef.current = progressPct;
+  }, [progressPct]);
+
+  useEffect(() => {
+    if (!loading) {
+      displayPctRef.current = 0;
+      setDisplayPct(0);
+      return undefined;
+    }
+
+    let rafId = 0;
+    let lastTs = performance.now();
+
+    const step = (now) => {
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastTs) / 1000));
+      lastTs = now;
+
+      const target = targetPctRef.current;
+      let current = displayPctRef.current;
+
+      // Avance suave mientras los Workers preparan los datos (sin sobrepasar el siguiente hito real)
+      const trickleCap = target < 25 ? 22 : target < 40 ? 38 : target;
+      const effectiveTarget = Math.max(target, Math.min(trickleCap, current + dt * 4.5));
+
+      const diff = effectiveTarget - current;
+      if (Math.abs(diff) > 0.05) {
+        current += diff * Math.min(1, dt * 7.5);
+      } else {
+        current = effectiveTarget;
+      }
+
+      current = Math.max(0, Math.min(100, current));
+      displayPctRef.current = current;
+      setDisplayPct(current);
+
+      rafId = window.requestAnimationFrame(step);
+    };
+
+    rafId = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [loading]);
   const [successMsg, setSuccessMsg] = useState('');
   const [showPeriodSuggestions, setShowPeriodSuggestions] = useState(false);
   const [showDiaSuggestions, setShowDiaSuggestions] = useState(false);
@@ -1030,64 +1077,83 @@ const CargaArchivos = memo(function CargaArchivos({
           </div>
         )}
 
-        {loading && (
-          <div className={`upload-wave-box mb-3 animate-fade-in ${esVentas ? '' : 'upload-wave-box--compras'}`}>
-            <div className="upload-wave-header">
-              <span className="upload-wave-status">
-                <span className="upload-wave-dot" aria-hidden="true" />
-                <span className="text-truncate">{statusText}</span>
-              </span>
-              <span className="upload-wave-pct font-mono">{progressPct}%</span>
-            </div>
-
-            <div
-              className="upload-wave-track"
-              role="progressbar"
-              aria-valuenow={progressPct}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={statusText || 'Progreso de carga'}
-            >
-              <div className="upload-wave-rail" aria-hidden="true" />
-
-              <div className="upload-wave-fill" style={{ width: `${progressPct}%` }}>
-                <svg className="upload-wave-svg upload-wave-svg--echo" aria-hidden="true">
-                  <defs>
-                    <pattern id="upload-wave-echo-pat" width="48" height="22" patternUnits="userSpaceOnUse">
-                      <path
-                        d="M 0 11 Q 12 3, 24 11 T 48 11"
-                        fill="none"
-                        stroke={esVentas ? '#0EA5E9' : '#3B82F6'}
-                        strokeWidth="3.5"
-                        strokeLinecap="round"
-                      />
-                    </pattern>
-                  </defs>
-                  <rect width="100%" height="22" fill="url(#upload-wave-echo-pat)" />
-                </svg>
-
-                <svg className="upload-wave-svg upload-wave-svg--primary" aria-hidden="true">
-                  <defs>
-                    <pattern id="upload-wave-main-pat" width="48" height="22" patternUnits="userSpaceOnUse">
-                      <path
-                        d="M 0 11 Q 12 3, 24 11 T 48 11"
-                        fill="none"
-                        stroke={esVentas ? '#2563EB' : '#7C3AED'}
-                        strokeWidth="4.5"
-                        strokeLinecap="round"
-                      />
-                    </pattern>
-                  </defs>
-                  <rect width="100%" height="22" fill="url(#upload-wave-main-pat)" />
-                </svg>
+        {loading && (() => {
+          const visualPct = Math.max(0, Math.min(100, displayPct));
+          const roundedPct = Math.round(visualPct);
+          const strokeMain = esVentas ? '#2563EB' : '#7C3AED';
+          const strokeSoft = esVentas ? '#38BDF8' : '#60A5FA';
+          return (
+            <div className={`upload-wave-box mb-3 animate-fade-in ${esVentas ? '' : 'upload-wave-box--compras'}`}>
+              <div className="upload-wave-header">
+                <span className="upload-wave-status">
+                  <span className="upload-wave-dot" aria-hidden="true" />
+                  <span className="text-truncate">{statusText}</span>
+                </span>
+                <span className="upload-wave-pct font-mono">{roundedPct}%</span>
               </div>
 
-              {progressPct > 0 && progressPct < 100 && (
-                <div className="upload-wave-tip" style={{ left: `${progressPct}%` }} aria-hidden="true" />
-              )}
+              <div
+                className="upload-wave-track"
+                role="progressbar"
+                aria-valuenow={roundedPct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={statusText || 'Progreso de carga'}
+              >
+                <div className="upload-wave-rail" aria-hidden="true" />
+
+                <div
+                  className="upload-wave-fill"
+                  style={{ clipPath: `inset(0 ${(100 - visualPct).toFixed(2)}% 0 0)` }}
+                >
+                  {/* Onda secundaria armónica en paralaje (misma dirección, menor velocidad) */}
+                  <svg className="upload-wave-svg upload-wave-svg--echo" aria-hidden="true">
+                    <defs>
+                      <pattern id="upload-wave-echo-pat" width="96" height="26" patternUnits="userSpaceOnUse">
+                        <path
+                          d="M 0 13 C 16 19, 32 19, 48 13 C 64 7, 80 7, 96 13"
+                          fill="none"
+                          stroke={strokeSoft}
+                          strokeWidth="3.5"
+                          strokeLinecap="round"
+                        />
+                      </pattern>
+                    </defs>
+                    <rect width="100%" height="26" fill="url(#upload-wave-echo-pat)" />
+                  </svg>
+
+                  {/* Onda principal sinusoidal C2 continua + halo suave */}
+                  <svg className="upload-wave-svg upload-wave-svg--primary" aria-hidden="true">
+                    <defs>
+                      <pattern id="upload-wave-main-pat" width="96" height="26" patternUnits="userSpaceOnUse">
+                        <path
+                          d="M 0 13 C 16 4, 32 4, 48 13 C 64 22, 80 22, 96 13"
+                          fill="none"
+                          stroke={strokeSoft}
+                          strokeOpacity="0.22"
+                          strokeWidth="9.5"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="M 0 13 C 16 4, 32 4, 48 13 C 64 22, 80 22, 96 13"
+                          fill="none"
+                          stroke={strokeMain}
+                          strokeWidth="4.4"
+                          strokeLinecap="round"
+                        />
+                      </pattern>
+                    </defs>
+                    <rect width="100%" height="26" fill="url(#upload-wave-main-pat)" />
+                  </svg>
+                </div>
+
+                {visualPct > 0.5 && visualPct < 99.5 && (
+                  <div className="upload-wave-tip" style={{ left: `${visualPct.toFixed(2)}%` }} aria-hidden="true" />
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
           <span className="text-muted" style={{ fontSize: '0.85rem' }}>

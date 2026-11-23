@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     empresa_id UUID REFERENCES public.empresas(id) ON DELETE CASCADE,
     estudio_id UUID NOT NULL REFERENCES public.estudios(id) ON DELETE CASCADE,
     nombre TEXT NOT NULL,
+    email TEXT,
     rol TEXT NOT NULL CHECK (rol IN ('admin', 'operador', 'consulta')),
     activo BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT now()
