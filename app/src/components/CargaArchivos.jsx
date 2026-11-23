@@ -346,7 +346,7 @@ const CargaArchivos = memo(function CargaArchivos({
         setStatusText(`Preparando ${docs.length.toLocaleString('es-PE')} documentos de Compras en paralelo...`);
         const serializedChunks = await serializeComprasDocsInWorkerPool(
           docs,
-          { periodoId, empresaId: activeCompany.id },
+          { periodoId: periodId, empresaId: activeCompany.id },
           chunkSize
         );
         setProgressPct(40);
