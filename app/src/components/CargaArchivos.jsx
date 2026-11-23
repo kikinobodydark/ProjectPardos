@@ -12,10 +12,12 @@ import {
   runCpuTaskInWorker,
   executeParallelBatches,
 } from '../utils/jobQueue';
-import { aFilaBDRpc } from '../utils/ventas/persistencia';
+import { aFilaBDRpc, construirCar } from '../utils/ventas/persistencia';
 import { calcularIndicadores } from '../utils/ventas/reportes';
 import { aFilaBDComprasRpc } from '../utils/compras/persistencia';
+import { construirCarBDCompras } from '../utils/compras/documento';
 import { calcularIndicadoresCompras } from '../utils/compras/reportes';
+import { computeCarSplitsFromKeys } from '../utils/supabasePagination';
 import { idbSetQuery } from '../utils/queryPersister';
 import { useNetworkProfile } from '../utils/networkProfile';
 import {
@@ -522,10 +524,16 @@ const CargaArchivos = memo(function CargaArchivos({
         queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
         idbSetQuery(JSON.stringify(['ventasDocumentos', periodId]), ['ventasDocumentos', periodId], docs);
         try {
-          supabase.rpc('guardar_resumen_periodo', {
+          const resumen = calcularIndicadores(docs);
+          const carSplits = computeCarSplitsFromKeys(
+            docs.map((d) => construirCar(activeCompany.ruc, d)),
+            4
+          );
+          if (carSplits.length > 0) resumen._carSplits = carSplits;
+          await supabase.rpc('guardar_resumen_periodo', {
             p_periodo_id: periodId,
-            p_resumen: calcularIndicadores(docs),
-          }).then(() => {}).catch(() => {});
+            p_resumen: resumen,
+          });
         } catch {
           // Ignorar error opcional de caché de resumen
         }
@@ -618,10 +626,16 @@ const CargaArchivos = memo(function CargaArchivos({
         queryClient.invalidateQueries({ queryKey: ['cargaHistory'] });
         idbSetQuery(JSON.stringify(['comprasDocumentos', periodId]), ['comprasDocumentos', periodId], docs);
         try {
-          supabase.rpc('guardar_resumen_periodo', {
+          const resumen = calcularIndicadoresCompras(docs);
+          const carSplits = computeCarSplitsFromKeys(
+            docs.map((d) => construirCarBDCompras(d.ruc_proveedor, d.tipo_doc_pago, d.serie, d.correlativo)),
+            4
+          );
+          if (carSplits.length > 0) resumen._carSplits = carSplits;
+          await supabase.rpc('guardar_resumen_periodo', {
             p_periodo_id: periodId,
-            p_resumen: calcularIndicadoresCompras(docs),
-          }).then(() => {}).catch(() => {});
+            p_resumen: resumen,
+          });
         } catch {
           // Ignorar error opcional de caché de resumen
         }

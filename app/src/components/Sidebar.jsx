@@ -23,6 +23,7 @@ const Sidebar = memo(function Sidebar({
   setSidebarOpen,
   activeModule,
   onReturnToHub,
+  syncProgress = null,
 }) {
   const [btnHover, setBtnHover] = useState(false);
 
@@ -177,6 +178,14 @@ const Sidebar = memo(function Sidebar({
               .filter((item) => !item.roles || item.roles.includes(userProfile?.rol))
               .map((item) => {
                 const isActive = activeTab === item.id;
+                const showSyncBadge = item.id === 'reconciliation' && !isActive && !!syncProgress;
+                const syncPct = showSyncBadge
+                  ? syncProgress.phase === 'processing'
+                    ? 99
+                    : syncProgress.total > 0
+                      ? Math.min(98, Math.round((syncProgress.loaded / syncProgress.total) * 100))
+                      : null
+                  : null;
                 return (
                   <button
                     key={item.id}
@@ -185,7 +194,12 @@ const Sidebar = memo(function Sidebar({
                       setActiveTab(item.id);
                       if (setSidebarOpen) setSidebarOpen(false);
                     }}
-                    className={`nav-link text-start d-flex align-items-center mb-1 px-3 py-2 border-0 rounded-3 ${
+                    title={
+                      showSyncBadge
+                        ? `Sincronizando comprobantes en segundo plano${syncPct !== null ? ` (${syncPct}%)` : ''}...`
+                        : undefined
+                    }
+                    className={`nav-link text-start d-flex align-items-center mb-1 px-3 py-2 border-0 rounded-3 position-relative overflow-hidden ${
                       isActive ? 'bg-primary text-white shadow-sm' : 'text-muted bg-transparent'
                     }`}
                     style={{
@@ -196,7 +210,35 @@ const Sidebar = memo(function Sidebar({
                     }}
                   >
                     <span className="me-3 fs-5 d-flex align-items-center">{item.icon}</span>
-                    {item.label}
+                    <span className="flex-grow-1 text-truncate">{item.label}</span>
+                    {showSyncBadge && (
+                      <span
+                        className="badge font-mono ms-2 flex-shrink-0"
+                        style={{
+                          fontSize: '0.64rem',
+                          backgroundColor: 'rgba(37, 99, 235, 0.12)',
+                          color: '#1D4ED8',
+                          border: '1px solid rgba(37, 99, 235, 0.22)',
+                          padding: '2px 5px',
+                        }}
+                      >
+                        {syncPct !== null ? `${syncPct}%` : '...'}
+                      </span>
+                    )}
+                    {showSyncBadge && syncPct !== null && (
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          position: 'absolute',
+                          left: 0,
+                          bottom: 0,
+                          height: '2px',
+                          width: `${syncPct}%`,
+                          backgroundColor: '#2563EB',
+                          transition: 'width 0.25s ease',
+                        }}
+                      />
+                    )}
                   </button>
                 );
               })}

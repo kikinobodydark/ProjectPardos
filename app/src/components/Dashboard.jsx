@@ -74,9 +74,17 @@ const DashboardVentas = memo(function DashboardVentas({
     error,
     refetch,
     loadProgress,
-  } = useDocumentosVentas(periodId, necesitaDocsCompletos);
+  } = useDocumentosVentas(periodId, necesitaDocsCompletos, { periodObj: activePeriodObj });
   const { localesActivos, indiceLocales, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
   const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
+
+  const syncPct = loadProgress
+    ? loadProgress.phase === 'processing'
+      ? 99
+      : loadProgress.total > 0
+        ? Math.min(98, Math.round((loadProgress.loaded / loadProgress.total) * 100))
+        : null
+    : null;
 
   const setLocalId = (val) => {
     if (onChangeLocalId) onChangeLocalId(val);
@@ -113,9 +121,10 @@ const DashboardVentas = memo(function DashboardVentas({
   }, [todosDocs, localId, localesActivos.length, indiceLocales]);
 
   const ind = useMemo(() => {
+    if (resumenServidor && localId === 'ALL') return resumenServidor;
     if (resumenServidor && todosDocs.length === 0) return resumenServidor;
     return calcularIndicadores(docs);
-  }, [resumenServidor, todosDocs.length, docs]);
+  }, [resumenServidor, localId, todosDocs.length, docs]);
 
   const isLoading = !resumenServidor && docsLoading;
 
@@ -170,14 +179,36 @@ const DashboardVentas = memo(function DashboardVentas({
             }}
           >
             <FiDownload />
-            <span>{solicitoExportar ? 'Preparando Excel...' : 'Exportar Libro Completo'}</span>
+            <span>
+              {solicitoExportar
+                ? `Preparando Excel${syncPct !== null ? ` (${syncPct}%)` : ''}...`
+                : 'Exportar Libro Completo'}
+            </span>
           </button>
           <button
             type="button"
             className="dashboard-action-btn dashboard-action-btn--primary"
             onClick={() => irAConciliacion('ALL')}
+            title={
+              loadProgress && todosDocs.length === 0
+                ? `Precargando detalle en segundo plano${syncPct !== null ? ` (${syncPct}%)` : ''} — puedes entrar ahora`
+                : undefined
+            }
           >
             <span>Ir a Tabla de Conciliación</span>
+            {loadProgress && todosDocs.length === 0 && (
+              <span
+                className="badge font-mono"
+                style={{
+                  fontSize: '0.68rem',
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                  color: '#FFFFFF',
+                  padding: '2px 6px',
+                }}
+              >
+                {syncPct !== null ? `${syncPct}%` : '...'}
+              </span>
+            )}
             <FiArrowRight />
           </button>
         </div>
@@ -408,8 +439,16 @@ const DashboardCompras = memo(function DashboardCompras({
     error,
     refetch,
     loadProgress,
-  } = useDocumentosCompras(periodId, !resumenServidor || solicitoExportar);
+  } = useDocumentosCompras(periodId, !resumenServidor || solicitoExportar, { periodObj: activePeriodObj });
   const [modoComparativa, setModoComparativa] = useState('coincidentes'); // 'coincidentes' | 'lote'
+
+  const syncPct = loadProgress
+    ? loadProgress.phase === 'processing'
+      ? 99
+      : loadProgress.total > 0
+        ? Math.min(98, Math.round((loadProgress.loaded / loadProgress.total) * 100))
+        : null
+    : null;
 
   useEffect(() => {
     if (solicitoExportar && !docsLoading && docs.length > 0) {
@@ -419,7 +458,7 @@ const DashboardCompras = memo(function DashboardCompras({
   }, [solicitoExportar, docsLoading, docs, activePeriod]);
 
   const ind = useMemo(() => {
-    if (resumenServidor && docs.length === 0) return resumenServidor;
+    if (resumenServidor) return resumenServidor;
     return calcularIndicadoresCompras(docs);
   }, [resumenServidor, docs]);
 
@@ -457,14 +496,36 @@ const DashboardCompras = memo(function DashboardCompras({
             }}
           >
             <FiDownload />
-            <span>{solicitoExportar ? 'Preparando Excel...' : 'Exportar Excel Completo'}</span>
+            <span>
+              {solicitoExportar
+                ? `Preparando Excel${syncPct !== null ? ` (${syncPct}%)` : ''}...`
+                : 'Exportar Excel Completo'}
+            </span>
           </button>
           <button
             type="button"
             className="dashboard-action-btn dashboard-action-btn--primary dashboard-action-btn--compras"
             onClick={() => irAConciliacion('ALL')}
+            title={
+              loadProgress && docs.length === 0
+                ? `Precargando detalle en segundo plano${syncPct !== null ? ` (${syncPct}%)` : ''} — puedes entrar ahora`
+                : undefined
+            }
           >
             <span>Ir a Tabla de Conciliación</span>
+            {loadProgress && docs.length === 0 && (
+              <span
+                className="badge font-mono"
+                style={{
+                  fontSize: '0.68rem',
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                  color: '#FFFFFF',
+                  padding: '2px 6px',
+                }}
+              >
+                {syncPct !== null ? `${syncPct}%` : '...'}
+              </span>
+            )}
             <FiArrowRight />
           </button>
         </div>

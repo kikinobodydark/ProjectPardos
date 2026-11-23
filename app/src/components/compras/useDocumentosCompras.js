@@ -1,15 +1,14 @@
 // ============================================================================
-// Hook de acceso a los documentos conciliados del módulo de Compras (RCE).
-// - Descarga Keyset O(log N) sin OFFSET O(N²): usa RPC JSONB en buckets UUID
-//   paralelos (hasta 5,000 filas/petición) con fallback automático sobre índice
-//   único `car_sunat` si la migración aún no se aplicó.
-// - Propaga `AbortSignal` de React Query para cancelar descargas al cambiar de
-//   período, empresa o pestaña.
-// - Hidrata y ordena documentos fuera del hilo principal (Web Worker) y reporta
-//   progreso en tiempo real (`loadProgress`).
+// Hook y Precargador de documentos conciliados del módulo de Compras (RCE).
+// - Descarga ultra-rápida en tuplas JSON por buckets `car_sunat` paralelos
+//   (fallback automático a UUID JSON / keyset).
+// - Descarga persistente en segundo plano (`documentSyncManager`): NO se aborta
+//   al navegar entre Dashboard y Conciliación; solo al cambiar período/empresa/sesión.
+// - Streaming progresivo (`partialDocs`): muestra resultados reales en Conciliación
+//   conforme llegan los lotes sin bloquear al usuario.
 // ============================================================================
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../utils/supabaseClient';
 import { getNetworkProfile } from '../../utils/networkProfile';
 import {
@@ -21,9 +20,17 @@ import { runCpuTaskInWorker } from '../../utils/jobQueue';
 import { calcularIndicadoresCompras } from '../../utils/compras/reportes';
 import {
   fetchAllSupabaseKeyset,
+  computeCarSplitsFromKeys,
   SUPABASE_MAX_SELECT_ROWS,
   SUPABASE_KEYSET_RPC_LIMIT,
 } from '../../utils/supabasePagination';
+import {
+  runOrJoinPeriodSync,
+  getSyncProgress,
+  getPartialDocs,
+  subscribeSyncProgress,
+  subscribePartialDocs,
+} from '../../utils/documentSyncManager';
 
 export const COLUMNAS_DETALLE_COMPRAS = [
   'id',
@@ -55,77 +62,65 @@ export const COLUMNAS_DETALLE_COMPRAS = [
   'errores_json',
 ].join(',');
 
-const progressByPeriod = new Map();
-const progressListeners = new Set();
+export function crearQueryFnCompras(periodId, { periodObj = null, queryClient = null } = {}) {
+  return async () => {
+    if (!periodId) return [];
 
-function emitProgress(periodId, state) {
-  if (!periodId) return;
-  if (state) {
-    progressByPeriod.set(periodId, state);
-  } else {
-    progressByPeriod.delete(periodId);
-  }
-  progressListeners.forEach((fn) => {
-    try {
-      fn(periodId, state);
-    } catch {
-      // ignore listener errors
-    }
-  });
-}
+    return runOrJoinPeriodSync({
+      modulo: 'compras',
+      periodId,
+      batchWorkerAction: 'HYDRATE_COMPRAS_BATCH',
+      executor: async ({ signal, emitProgress, pushRawBatch }) => {
+        const cacheKeyHash = JSON.stringify(['comprasDocumentos', periodId]);
+        const cachedEntry = await idbGetQueryEntry(cacheKeyHash);
+        if (signal.aborted) {
+          throw new DOMException('Operación cancelada.', 'AbortError');
+        }
+        if (Array.isArray(cachedEntry?.data) && cachedEntry.data.length > 0) {
+          emitProgress(null);
+          return cachedEntry.data;
+        }
 
-export function useDocumentosCompras(periodId, enabled = true) {
-  const [loadProgress, setLoadProgress] = useState(() =>
-    periodId ? progressByPeriod.get(periodId) || null : null
-  );
+        const net = getNetworkProfile();
+        const pageSize = Math.min(
+          net.recommendedReadPageSize || SUPABASE_MAX_SELECT_ROWS,
+          SUPABASE_MAX_SELECT_ROWS
+        );
+        const rpcLimit = Math.min(
+          net.recommendedReadRpcLimit || 2500,
+          SUPABASE_KEYSET_RPC_LIMIT
+        );
+        const compactRpcLimit = Math.min(
+          net.recommendedCompactRpcLimit || SUPABASE_KEYSET_RPC_LIMIT,
+          SUPABASE_KEYSET_RPC_LIMIT
+        );
+        const concurrency = net.recommendedReadConcurrency || 2;
+        const compactConcurrency = net.recommendedCompactReadConcurrency || 4;
+        const knownTotal =
+          typeof periodObj?.total_registros === 'number' && Number.isFinite(periodObj.total_registros)
+            ? periodObj.total_registros
+            : null;
+        const cachedCarSplits = Array.isArray(periodObj?.resumen_json?._carSplits)
+          ? periodObj.resumen_json._carSplits
+          : null;
 
-  useEffect(() => {
-    setLoadProgress(periodId ? progressByPeriod.get(periodId) || null : null);
-    const listener = (pid, state) => {
-      if (pid === periodId) {
-        setLoadProgress(state);
-      }
-    };
-    progressListeners.add(listener);
-    return () => {
-      progressListeners.delete(listener);
-    };
-  }, [periodId]);
+        emitProgress({ loaded: 0, total: knownTotal || 0, phase: 'downloading' });
 
-  const query = useQuery({
-    queryKey: ['comprasDocumentos', periodId],
-    queryFn: async ({ signal }) => {
-      if (!periodId) return [];
-
-      const cacheKeyHash = JSON.stringify(['comprasDocumentos', periodId]);
-      const cachedEntry = await idbGetQueryEntry(cacheKeyHash);
-      if (Array.isArray(cachedEntry?.data) && cachedEntry.data.length > 0) {
-        emitProgress(periodId, null);
-        return cachedEntry.data;
-      }
-
-      const net = getNetworkProfile();
-      const pageSize = Math.min(
-        net.recommendedReadPageSize || SUPABASE_MAX_SELECT_ROWS,
-        SUPABASE_MAX_SELECT_ROWS
-      );
-      const rpcLimit = Math.min(
-        net.recommendedReadRpcLimit || 2500,
-        SUPABASE_KEYSET_RPC_LIMIT
-      );
-      const concurrency = net.recommendedReadConcurrency || 2;
-
-      emitProgress(periodId, { loaded: 0, total: 0, phase: 'downloading' });
-
-      try {
         const all = await fetchAllSupabaseKeyset({
+          knownTotal,
+          cachedCarSplits,
           pageSize,
           rpcLimit,
+          compactRpcLimit,
           concurrency,
+          compactConcurrency,
           signal,
           label: 'ComprasDocumentosKeyset',
           onProgress: (loaded, total) => {
-            emitProgress(periodId, { loaded, total, phase: 'downloading' });
+            emitProgress({ loaded, total, phase: 'downloading' });
+          },
+          onBatch: (rows) => {
+            pushRawBatch(rows);
           },
           fetchCount: async () => {
             const { data, error } = await supabase
@@ -139,6 +134,24 @@ export function useDocumentosCompras(periodId, enabled = true) {
             }
             return { count: null, error: null };
           },
+          fetchCarSplits: (buckets) =>
+            supabase
+              .rpc('obtener_particiones_periodo', {
+                p_periodo_id: periodId,
+                p_modulo: 'compras',
+                p_buckets: buckets,
+              })
+              .abortSignal(signal),
+          fetchCompactBatch: ({ minCar, maxCar, afterCar, limit }) =>
+            supabase
+              .rpc('obtener_lote_compras_compact', {
+                p_periodo_id: periodId,
+                p_min_car: minCar,
+                p_max_car: maxCar,
+                p_after_car: afterCar,
+                p_limit: limit,
+              })
+              .abortSignal(signal),
           fetchRpcBatch: ({ minId, maxId, afterId, limit }) =>
             supabase
               .rpc('obtener_lote_compras_json', {
@@ -181,43 +194,115 @@ export function useDocumentosCompras(periodId, enabled = true) {
               .abortSignal(signal),
         });
 
-        if (signal?.aborted) {
+        if (signal.aborted) {
           throw new DOMException('Operación cancelada.', 'AbortError');
         }
         if (all.length === 0) {
-          emitProgress(periodId, null);
+          emitProgress(null);
           return [];
         }
 
-        emitProgress(periodId, { loaded: all.length, total: all.length, phase: 'processing' });
+        const carKeys = all.map((r) => (Array.isArray(r) ? r[1] : r?.car_sunat));
+        const carSplits = computeCarSplitsFromKeys(carKeys, 4);
+
+        emitProgress({ loaded: all.length, total: all.length, phase: 'processing' });
         const docs = await runCpuTaskInWorker('HYDRATE_COMPRAS_DOCS', { filas: all });
+        if (signal.aborted) {
+          throw new DOMException('Operación cancelada.', 'AbortError');
+        }
+
         setTimeout(() => {
           idbSetQuery(cacheKeyHash, ['comprasDocumentos', periodId], docs, IDB_DOCS_CACHE_VERSION);
           try {
             const resumen = calcularIndicadoresCompras(docs);
-            supabase.rpc('guardar_resumen_periodo', {
-              p_periodo_id: periodId,
-              p_resumen: resumen,
-            }).then(() => {}).catch(() => {});
+            if (carSplits.length > 0) {
+              resumen._carSplits = carSplits;
+            }
+            const needsResumenSave =
+              !periodObj?.resumen_json ||
+              (carSplits.length > 0 && !Array.isArray(periodObj?.resumen_json?._carSplits));
+            if (needsResumenSave) {
+              supabase.rpc('guardar_resumen_periodo', {
+                p_periodo_id: periodId,
+                p_resumen: resumen,
+              }).then(({ error }) => {
+                if (!error && queryClient) {
+                  queryClient.setQueriesData({ queryKey: ['periods'] }, (old) =>
+                    Array.isArray(old)
+                      ? old.map((p) => (p.id === periodId ? { ...p, resumen_json: resumen } : p))
+                      : old
+                  );
+                }
+              }).catch(() => {});
+            }
           } catch {
             // Ignorar errores opcionales de caché de resumen
           }
         }, 50);
-        emitProgress(periodId, null);
+
+        emitProgress(null);
         return docs;
-      } catch (err) {
-        emitProgress(periodId, null);
-        throw err;
-      }
-    },
+      },
+    });
+  };
+}
+
+export function prefetchDocumentosCompras(queryClient, periodId, periodObj = null) {
+  if (!queryClient || !periodId) return Promise.resolve();
+  const existing = queryClient.getQueryData(['comprasDocumentos', periodId]);
+  if (Array.isArray(existing) && existing.length > 0) {
+    return Promise.resolve(existing);
+  }
+  return queryClient.prefetchQuery({
+    queryKey: ['comprasDocumentos', periodId],
+    queryFn: crearQueryFnCompras(periodId, { periodObj, queryClient }),
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+  });
+}
+
+export function useDocumentosCompras(periodId, enabled = true, { periodObj = null, streamPartial = false } = {}) {
+  const queryClient = useQueryClient();
+  const [loadProgress, setLoadProgress] = useState(() =>
+    periodId ? getSyncProgress('compras', periodId) : null
+  );
+  const [partialDocs, setPartialDocs] = useState(() =>
+    streamPartial && periodId ? getPartialDocs('compras', periodId) : []
+  );
+
+  useEffect(() => {
+    if (!periodId) {
+      setLoadProgress(null);
+      return undefined;
+    }
+    setLoadProgress(getSyncProgress('compras', periodId));
+    return subscribeSyncProgress('compras', periodId, setLoadProgress);
+  }, [periodId]);
+
+  useEffect(() => {
+    if (!streamPartial || !periodId) {
+      setPartialDocs([]);
+      return undefined;
+    }
+    setPartialDocs(getPartialDocs('compras', periodId));
+    return subscribePartialDocs('compras', periodId, setPartialDocs);
+  }, [periodId, streamPartial]);
+
+  const query = useQuery({
+    queryKey: ['comprasDocumentos', periodId],
+    queryFn: crearQueryFnCompras(periodId, { periodObj, queryClient }),
     enabled: !!periodId && enabled,
     staleTime: 30 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 0,
   });
 
+  const hasFinalData = Array.isArray(query.data) && query.data.length > 0;
+
   return {
     ...query,
     loadProgress,
+    partialDocs: hasFinalData ? [] : partialDocs,
+    isStreaming: !hasFinalData && (query.isLoading || !!loadProgress) && partialDocs.length > 0,
   };
 }

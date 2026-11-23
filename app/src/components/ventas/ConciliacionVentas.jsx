@@ -166,7 +166,7 @@ const FilaDocumentoVenta = memo(function FilaDocumentoVenta({
 });
 
 const ConciliacionVentas = memo(function ConciliacionVentas({
-  periodId, activePeriod, initialFilter, onFilterReset, activeCompany,
+  periodId, activePeriod, activePeriodObj = null, initialFilter, onFilterReset, activeCompany,
   selectedLocalId = 'ALL', onChangeLocalId,
 }) {
   const {
@@ -176,9 +176,14 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
     error,
     refetch,
     loadProgress,
-  } = useDocumentosVentas(periodId, true);
+    partialDocs = [],
+  } = useDocumentosVentas(periodId, true, { periodObj: activePeriodObj, streamPartial: true });
   const { localesActivos, indiceLocales, isFetched: localesFetched, isLoading: localesLoading } = useLocalesEmpresa(activeCompany?.id, true);
   const networkProfile = useNetworkProfile();
+
+  const isSyncing = isLoading || !!loadProgress;
+  const usandoPreliminares = todosDocs.length === 0 && partialDocs.length > 0;
+  const docsFuente = todosDocs.length > 0 ? todosDocs : partialDocs;
 
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
   const [busquedaInput, setBusquedaInput] = useState('');
@@ -250,14 +255,31 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
   );
 
   const docsFiltrados = useMemo(
-    () => filtrarDocumentos(todosDocs, filtrosEfectivos, indiceLocales),
-    [todosDocs, filtrosEfectivos, indiceLocales]
+    () => filtrarDocumentos(docsFuente, filtrosEfectivos, indiceLocales),
+    [docsFuente, filtrosEfectivos, indiceLocales]
   );
 
+  const resumenServidorPorCodigo = activePeriodObj?.resumen_json?.porCodigo || null;
+  const sinFiltrosSecundarios =
+    localActivoId === 'ALL' &&
+    filtros.busqueda === '' &&
+    filtros.estado === 'ALL' &&
+    filtros.tipoCP === 'ALL' &&
+    filtros.existencia === 'ALL' &&
+    filtros.categoria === 'ALL' &&
+    filtros.serie === '' &&
+    filtros.corrDesde === '' &&
+    filtros.corrHasta === '' &&
+    filtros.fechaDesde === '' &&
+    filtros.fechaHasta === '';
+
   const conteoPorCodigoBase = useMemo(() => {
-    const sinCodigos = filtrarDocumentos(todosDocs, { ...filtrosEfectivos, codigos: [] }, indiceLocales);
+    if (todosDocs.length === 0 && resumenServidorPorCodigo && sinFiltrosSecundarios) {
+      return resumenServidorPorCodigo;
+    }
+    const sinCodigos = filtrarDocumentos(docsFuente, { ...filtrosEfectivos, codigos: [] }, indiceLocales);
     return calcularIndicadores(sinCodigos).porCodigo;
-  }, [todosDocs, filtrosEfectivos, indiceLocales]);
+  }, [todosDocs.length, resumenServidorPorCodigo, sinFiltrosSecundarios, docsFuente, filtrosEfectivos, indiceLocales]);
 
   // Correlativos faltantes (OBS 3) cuando el usuario filtra por OBS 3 en la tabla principal
   const mostrandoObs3 = vistaActiva === 'tabla' && filtros.codigos.includes('OBS 3');
@@ -543,7 +565,10 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
                 onClick={() => setVistaActiva('tabla')}
               >
                 <FiList />
-                <span>Tabla Principal de Documentos ({docsFiltrados.length.toLocaleString('es-PE')})</span>
+                <span>
+                  Tabla Principal de Documentos ({docsFiltrados.length.toLocaleString('es-PE')}
+                  {usandoPreliminares ? '…' : ''})
+                </span>
               </button>
               <button
                 type="button"
@@ -589,10 +614,17 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
             <button
               type="button"
               disabled={todosDocs.length === 0}
+              title={
+                todosDocs.length === 0 && isSyncing
+                  ? 'La exportación se habilitará al completar la sincronización del período'
+                  : undefined
+              }
               className="btn btn-outline-primary btn-sm d-flex align-items-center px-3 py-1.5 rounded-3 fw-semibold"
               onClick={() => setMostrarMenuExportar((v) => !v)}
             >
-              <FiDownload className="me-1.5" /> Exportar Resultados <FiChevronDown className="ms-1" />
+              <FiDownload className="me-1.5" />
+              {todosDocs.length === 0 && isSyncing ? 'Sincronizando...' : 'Exportar Resultados'}
+              <FiChevronDown className="ms-1" />
             </button>
             {mostrarMenuExportar && (
               <ul
@@ -771,8 +803,8 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
           </div>
         </div>
 
-        {/* Contenido principal: Skeleton de carga, Tabla de 20 columnas o los 12 Reportes Específicos */}
-        {isLoading ? (
+        {/* Contenido principal: Skeleton inicial, Streaming progresivo, Tabla de 20 columnas o los 12 Reportes Específicos */}
+        {isLoading && !usandoPreliminares ? (
           <>
             <LoadProgressBanner progress={loadProgress} />
             <SkeletonTable rows={10} columns={10} title="Cargando comprobantes conciliados..." />
@@ -783,71 +815,88 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
             error={error}
             onRetry={refetch}
           />
-        ) : vistaActiva === 'reportes' ? (
-          <ReportesEspecificosVentas
-            docs={docsFiltrados}
-            todosDocs={todosDocs}
-            activePeriod={activePeriod}
-            reporteInicial={reporteInicial}
-            onSelectDoc={setDocSeleccionado}
-            onFiltrarCodigo={seleccionarSoloCodigo}
-          />
-        ) : soloObs3 ? (
-          saltosObs3Filtrados.length > 0 ? (
-            <PanelSaltosSecuenciaVentas
-              saltos={saltosObs3Filtrados}
-              onSelectDoc={setDocSeleccionado}
-              onExportarSecuencia={() =>
-                exportarExcelVentas({
-                  tipo: 'secuencia',
-                  docs: docsFiltrados,
-                  todosDocs,
-                  periodo: activePeriod,
-                })
-              }
-            />
-          ) : (
-            <div
-              className="text-center py-5 rounded-3"
-              style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
-            >
-              <FiAlertCircle className="text-muted fs-1 mb-2" />
-              <p className="text-muted mb-0 fw-semibold">
-                No se encontraron saltos de correlativos para los filtros seleccionados.
-              </p>
-            </div>
-          )
         ) : (
           <>
-            {/* Panel dedicado de Correlativos Faltantes cuando se combina OBS 3 con otros códigos */}
-            {mostrandoObs3 && saltosObs3Filtrados.length > 0 && (
-              <PanelSaltosSecuenciaVentas
-                saltos={saltosObs3Filtrados}
+            {usandoPreliminares && <LoadProgressBanner progress={loadProgress} streaming />}
+            {vistaActiva === 'reportes' ? (
+              <ReportesEspecificosVentas
+                docs={docsFiltrados}
+                todosDocs={docsFuente}
+                activePeriod={activePeriod}
+                reporteInicial={reporteInicial}
                 onSelectDoc={setDocSeleccionado}
-                onExportarSecuencia={() =>
-                  exportarExcelVentas({
-                    tipo: 'secuencia',
-                    docs: docsFiltrados,
-                    todosDocs,
-                    periodo: activePeriod,
-                  })
-                }
+                onFiltrarCodigo={seleccionarSoloCodigo}
               />
-            )}
-
-            {totalRegistros === 0 ? (
-              <div
-                className="text-center py-5 rounded-3"
-                style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
-              >
-                <FiAlertCircle className="text-muted fs-1 mb-2" />
-                <p className="text-muted mb-0 fw-semibold">
-                  {todosDocs.length === 0
-                    ? 'No hay documentos cargados en este período. Utilice el panel superior para cargar los archivos SAP y SUNAT.'
-                    : 'No se encontraron comprobantes para los filtros seleccionados.'}
-                </p>
-              </div>
+            ) : soloObs3 ? (
+              usandoPreliminares ? (
+                <div
+                  className="text-center py-5 rounded-3"
+                  style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
+                >
+                  <FiAlertCircle className="text-primary fs-1 mb-2" />
+                  <p className="text-muted mb-0 fw-semibold">
+                    Calculando saltos de secuencia (OBS 3) al finalizar la sincronización completa del período...
+                  </p>
+                </div>
+              ) : saltosObs3Filtrados.length > 0 ? (
+                <PanelSaltosSecuenciaVentas
+                  saltos={saltosObs3Filtrados}
+                  onSelectDoc={setDocSeleccionado}
+                  onExportarSecuencia={() =>
+                    exportarExcelVentas({
+                      tipo: 'secuencia',
+                      docs: docsFiltrados,
+                      todosDocs,
+                      periodo: activePeriod,
+                    })
+                  }
+                />
+              ) : (
+                <div
+                  className="text-center py-5 rounded-3"
+                  style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
+                >
+                  <FiAlertCircle className="text-muted fs-1 mb-2" />
+                  <p className="text-muted mb-0 fw-semibold">
+                    No se encontraron saltos de correlativos para los filtros seleccionados.
+                  </p>
+                </div>
+              )
             ) : (
+              <>
+                {/* Panel dedicado de Correlativos Faltantes cuando se combina OBS 3 con otros códigos */}
+                {mostrandoObs3 && saltosObs3Filtrados.length > 0 && (
+                  <PanelSaltosSecuenciaVentas
+                    saltos={saltosObs3Filtrados}
+                    onSelectDoc={setDocSeleccionado}
+                    onExportarSecuencia={() =>
+                      exportarExcelVentas({
+                        tipo: 'secuencia',
+                        docs: docsFiltrados,
+                        todosDocs,
+                        periodo: activePeriod,
+                      })
+                    }
+                  />
+                )}
+
+                {totalRegistros === 0 ? (
+                  isSyncing ? (
+                    <SkeletonTable rows={8} columns={10} title="Buscando registros coincidentes mientras finaliza la descarga..." />
+                  ) : (
+                    <div
+                      className="text-center py-5 rounded-3"
+                      style={{ backgroundColor: 'rgba(241, 245, 249, 0.6)', border: '1px dashed var(--border-color)' }}
+                    >
+                      <FiAlertCircle className="text-muted fs-1 mb-2" />
+                      <p className="text-muted mb-0 fw-semibold">
+                        {todosDocs.length === 0
+                          ? 'No hay documentos cargados en este período. Utilice el panel superior para cargar los archivos SAP y SUNAT.'
+                          : 'No se encontraron comprobantes para los filtros seleccionados.'}
+                      </p>
+                    </div>
+                  )
+                ) : (
               <>
                 {/* SECCIÓN 10: Tabla Principal con las 20 columnas requeridas + Virtualización */}
             <div
@@ -942,6 +991,8 @@ const ConciliacionVentas = memo(function ConciliacionVentas({
               )}
               </>
             )}
+          </>
+        )}
           </>
         )}
       </div>
