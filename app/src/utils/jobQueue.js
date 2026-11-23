@@ -6,13 +6,21 @@
 //   varios workers en paralelo.
 // ============================================================================
 import { traceAsync } from './telemetry.js';
-import { decodificarTexto, parsearSapVentas, parsearSunatVentas, parsearCortesias } from './ventas/lectores.js';
+import {
+  parsearSapVentasStreaming,
+  parsearSunatVentasStreaming,
+  parsearCortesias,
+} from './ventas/lectores.js';
 import { conciliarVentas } from './ventas/motor.js';
-import { aFilaBD, desdeFilaBD } from './ventas/persistencia.js';
+import { aFilaBD, aFilaBDRpc, desdeFilaBD } from './ventas/persistencia.js';
 import { enriquecerSecuenciasEnDocs } from './ventas/reglas.js';
-import { parsearSapCompras, parsearSunatCompras, parsearUsuariosSapCompras } from './compras/lectores.js';
+import {
+  parsearSapComprasStreaming,
+  parsearSunatComprasStreaming,
+  parsearUsuariosSapCompras,
+} from './compras/lectores.js';
 import { conciliarCompras } from './compras/motor.js';
-import { aFilaBDCompras, desdeFilaBDCompras } from './compras/persistencia.js';
+import { aFilaBDCompras, aFilaBDComprasRpc, desdeFilaBDCompras } from './compras/persistencia.js';
 
 export class JobQueue {
   constructor({ concurrency = 4 } = {}) {
@@ -265,19 +273,13 @@ export async function serializeComprasDocsInWorkerPool(docs, metaBD, batchSize =
   );
 }
 
-export function executeCpuTaskFallback(action, payload) {
+export async function executeCpuTaskFallback(action, payload) {
   switch (action) {
     case 'PARSE_SAP_VENTAS': {
-      const { texto, codificacion } = decodificarTexto(payload.buffer);
-      const res = parsearSapVentas(texto);
-      res.codificacion = codificacion;
-      return res;
+      return parsearSapVentasStreaming(payload.file ?? payload.buffer);
     }
     case 'PARSE_SUNAT_VENTAS': {
-      const { texto, codificacion } = decodificarTexto(payload.buffer);
-      const res = parsearSunatVentas(texto);
-      res.codificacion = codificacion;
-      return res;
+      return parsearSunatVentasStreaming(payload.file ?? payload.buffer);
     }
     case 'PARSE_CORTESIAS': {
       return parsearCortesias(payload.filas);
@@ -291,20 +293,16 @@ export function executeCpuTaskFallback(action, payload) {
       return resultado;
     }
     case 'SERIALIZE_FILAS_VENTAS': {
-      const { docsChunk, metaBD } = payload;
-      return docsChunk.map((d) => aFilaBD(d, metaBD));
+      const { docsChunk, metaBD, compact = false } = payload;
+      return compact
+        ? docsChunk.map((d) => aFilaBDRpc(d, metaBD))
+        : docsChunk.map((d) => aFilaBD(d, metaBD));
     }
     case 'PARSE_SAP_COMPRAS': {
-      const { texto, codificacion } = decodificarTexto(payload.buffer);
-      const res = parsearSapCompras(texto);
-      res.codificacion = codificacion;
-      return res;
+      return parsearSapComprasStreaming(payload.file ?? payload.buffer);
     }
     case 'PARSE_SUNAT_COMPRAS': {
-      const { texto, codificacion } = decodificarTexto(payload.buffer);
-      const res = parsearSunatCompras(texto);
-      res.codificacion = codificacion;
-      return res;
+      return parsearSunatComprasStreaming(payload.file ?? payload.buffer);
     }
     case 'PARSE_USUARIOS_SAP_COMPRAS': {
       return parsearUsuariosSapCompras(payload.filas);
@@ -318,8 +316,10 @@ export function executeCpuTaskFallback(action, payload) {
       return resultado;
     }
     case 'SERIALIZE_FILAS_COMPRAS': {
-      const { docsChunk, metaBD } = payload;
-      return docsChunk.map((d) => aFilaBDCompras(d, metaBD));
+      const { docsChunk, metaBD, compact = false } = payload;
+      return compact
+        ? docsChunk.map((d) => aFilaBDComprasRpc(d))
+        : docsChunk.map((d) => aFilaBDCompras(d, metaBD));
     }
     case 'HYDRATE_VENTAS_DOCS': {
       const filas = Array.isArray(payload?.filas) ? payload.filas : [];

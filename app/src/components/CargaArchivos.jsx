@@ -10,10 +10,10 @@ import {
 } from '../utils/security';
 import {
   runCpuTaskInWorker,
-  serializeDocsInWorkerPool,
-  serializeComprasDocsInWorkerPool,
   executeParallelBatches,
 } from '../utils/jobQueue';
+import { aFilaBDRpc } from '../utils/ventas/persistencia';
+import { aFilaBDComprasRpc } from '../utils/compras/persistencia';
 import { idbSetQuery } from '../utils/queryPersister';
 import { useNetworkProfile } from '../utils/networkProfile';
 import {
@@ -152,20 +152,20 @@ const CargaArchivos = memo(function CargaArchivos({
     try {
       if (type === 'sap') {
         setSapFile(file);
-        const buffer = await readFileAsArrayBuffer(file);
-        const sigCheck = validateFileMagicBytes(buffer, 'txt');
+        const headerBuffer = await file.slice(0, 512).arrayBuffer();
+        const sigCheck = validateFileMagicBytes(headerBuffer, 'txt');
         if (!sigCheck.valid) throw new Error(sigCheck.error);
         const action = esVentas ? 'PARSE_SAP_VENTAS' : 'PARSE_SAP_COMPRAS';
-        const res = await runCpuTaskInWorker(action, { buffer }, [buffer]);
+        const res = await runCpuTaskInWorker(action, { file });
         setLecturaSap(res);
         if (res.periodoDetectado && !periodo) setPeriodo(res.periodoDetectado);
       } else if (type === 'sunat') {
         setSunatFile(file);
-        const buffer = await readFileAsArrayBuffer(file);
-        const sigCheck = validateFileMagicBytes(buffer, 'txt');
+        const headerBuffer = await file.slice(0, 512).arrayBuffer();
+        const sigCheck = validateFileMagicBytes(headerBuffer, 'txt');
         if (!sigCheck.valid) throw new Error(sigCheck.error);
         const action = esVentas ? 'PARSE_SUNAT_VENTAS' : 'PARSE_SUNAT_COMPRAS';
-        const res = await runCpuTaskInWorker(action, { buffer }, [buffer]);
+        const res = await runCpuTaskInWorker(action, { file });
         const nextRes =
           activeCompany?.ruc && res.rucDetectado && res.rucDetectado !== activeCompany.ruc
             ? {
@@ -293,8 +293,8 @@ const CargaArchivos = memo(function CargaArchivos({
 
     setLoading(true);
     setProgressPct(5);
-    const chunkSize = Math.min(500, networkProfile.recommendedBatchSize || 500);
-    const concurrency = Math.min(2, networkProfile.recommendedConcurrency || 2);
+    const chunkSize = networkProfile.recommendedBulkUploadBatchSize || 2000;
+    const concurrency = networkProfile.recommendedBulkUploadConcurrency || 4;
     const diaPadded = String(diaNum).padStart(2, '0');
     // Versión temporal negativa en staging para NO borrar la carga previa válida hasta confirmar todos los lotes
     const stagingVersion = -Math.max(1, (Date.now() % 1_000_000_000) + Math.floor(Math.random() * 1000));
@@ -328,7 +328,8 @@ const CargaArchivos = memo(function CargaArchivos({
     };
 
     const insertarLoteConReintento = async ({
-      rpcName,
+      fastRpcName,
+      fallbackRpcName,
       tableName,
       periodId,
       filas,
@@ -337,15 +338,32 @@ const CargaArchivos = memo(function CargaArchivos({
     }) => {
       if (!filas || filas.length === 0) return;
 
-      const { error: rpcErr } = await supabase.rpc(rpcName, {
-        p_periodo_id: periodId,
-        p_empresa_id: activeCompany.id,
-        p_filas: filas,
-      });
+      let finalErr = null;
+      if (fastRpcName) {
+        const { error: fastErr } = await supabase.rpc(fastRpcName, {
+          p_periodo_id: periodId,
+          p_empresa_id: activeCompany.id,
+          p_filas: filas,
+        });
+        finalErr = fastErr;
+      }
 
-      let finalErr = rpcErr;
-      if (rpcErr && esRpcFaltante(rpcErr)) {
-        const { error: insertErr } = await supabase.from(tableName).insert(filas);
+      if (finalErr && esRpcFaltante(finalErr) && fallbackRpcName) {
+        const { error: legacyRpcErr } = await supabase.rpc(fallbackRpcName, {
+          p_periodo_id: periodId,
+          p_empresa_id: activeCompany.id,
+          p_filas: filas,
+        });
+        finalErr = legacyRpcErr;
+      }
+
+      if (finalErr && esRpcFaltante(finalErr)) {
+        const filasConMeta = filas.map((f) => ({
+          ...f,
+          periodo_id: periodId,
+          empresa_id: activeCompany.id,
+        }));
+        const { error: insertErr } = await supabase.from(tableName).insert(filasConMeta);
         finalErr = insertErr;
       }
 
@@ -355,11 +373,12 @@ const CargaArchivos = memo(function CargaArchivos({
       }
 
       // Ante timeout o error transitorio: dividir el lote en sub-lotes más pequeños y reintentar secuencialmente
-      if (esErrorReintentable(finalErr) && filas.length > 100) {
+      if (esErrorReintentable(finalErr) && filas.length > 250) {
         const mid = Math.ceil(filas.length / 2);
         await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
         await insertarLoteConReintento({
-          rpcName,
+          fastRpcName,
+          fallbackRpcName,
           tableName,
           periodId,
           filas: filas.slice(0, mid),
@@ -367,7 +386,8 @@ const CargaArchivos = memo(function CargaArchivos({
           attempt: attempt + 1,
         });
         await insertarLoteConReintento({
-          rpcName,
+          fastRpcName,
+          fallbackRpcName,
           tableName,
           periodId,
           filas: filas.slice(mid),
@@ -380,7 +400,8 @@ const CargaArchivos = memo(function CargaArchivos({
       if (esErrorReintentable(finalErr) && attempt < 2) {
         await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
         return insertarLoteConReintento({
-          rpcName,
+          fastRpcName,
+          fallbackRpcName,
           tableName,
           periodId,
           filas,
@@ -450,36 +471,30 @@ const CargaArchivos = memo(function CargaArchivos({
         if (periodRes.error) throw periodRes.error;
         const periodId = periodRes.data.id;
         const { docs } = conciliacionRes;
-        setProgressPct(25);
+        setProgressPct(28);
 
-        // 2. Dividir la serialización de las filas (`aFilaBD`) entre el Pool de Web Workers en paralelo
-        setStatusText(`Preparando ${docs.length.toLocaleString('es-PE')} comprobantes en paralelo (Pool de Workers)...`);
-        const serializedChunks = await serializeDocsInWorkerPool(
-          docs,
-          { periodoId: periodId, empresaId: activeCompany.id, ruc: activeCompany.ruc },
-          chunkSize
-        );
-        setProgressPct(40);
-
-        // 3. Insertar lotes progresivamente con reintento adaptativo ante timeout
+        // 2. Pipeline directo: serializar cada lote compacto justo antes de enviarlo (0 espera previa y menor RAM)
         let insertedCount = 0;
         const registrarAvance = (cantidad) => {
           insertedCount += cantidad;
-          const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
+          const pct = Math.min(95, 28 + Math.round((insertedCount / Math.max(1, docs.length)) * 67));
           setProgressPct(pct);
           setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
         };
-        setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase...`);
+        setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase (${concurrency} streams en paralelo)...`);
         try {
+          const metaRpc = { ruc: activeCompany.ruc };
           await executeParallelBatches(
-            serializedChunks,
-            1,
-            async ([chunk]) => {
+            docs,
+            chunkSize,
+            async (docsSlice) => {
+              const filas = docsSlice.map((d) => aFilaBDRpc(d, metaRpc));
               await insertarLoteConReintento({
-                rpcName: 'insertar_lote_ventas',
+                fastRpcName: 'insertar_lote_ventas_json',
+                fallbackRpcName: 'insertar_lote_ventas',
                 tableName: 'detalle_ventas',
                 periodId,
-                filas: chunk,
+                filas,
                 onInserted: registrarAvance,
               });
             },
@@ -545,36 +560,29 @@ const CargaArchivos = memo(function CargaArchivos({
         if (periodRes.error) throw periodRes.error;
         const periodId = periodRes.data.id;
         const { docs } = conciliacionRes;
-        setProgressPct(25);
+        setProgressPct(28);
 
-        // 2. Serializar filas en el Pool de Web Workers
-        setStatusText(`Preparando ${docs.length.toLocaleString('es-PE')} documentos de Compras en paralelo...`);
-        const serializedChunks = await serializeComprasDocsInWorkerPool(
-          docs,
-          { periodoId: periodId, empresaId: activeCompany.id },
-          chunkSize
-        );
-        setProgressPct(40);
-
-        // 3. Insertar lotes progresivamente con reintento adaptativo ante timeout
+        // 2. Pipeline directo: serializar cada lote compacto justo antes de enviarlo (0 espera previa y menor RAM)
         let insertedCount = 0;
         const registrarAvance = (cantidad) => {
           insertedCount += cantidad;
-          const pct = Math.min(95, 40 + Math.round((insertedCount / Math.max(1, docs.length)) * 55));
+          const pct = Math.min(95, 28 + Math.round((insertedCount / Math.max(1, docs.length)) * 67));
           setProgressPct(pct);
           setStatusText(`Guardando en Supabase (${insertedCount.toLocaleString('es-PE')} / ${docs.length.toLocaleString('es-PE')})...`);
         };
-        setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase...`);
+        setStatusText(`Guardando ${docs.length.toLocaleString('es-PE')} registros en Supabase (${concurrency} streams en paralelo)...`);
         try {
           await executeParallelBatches(
-            serializedChunks,
-            1,
-            async ([chunk]) => {
+            docs,
+            chunkSize,
+            async (docsSlice) => {
+              const filas = docsSlice.map((d) => aFilaBDComprasRpc(d));
               await insertarLoteConReintento({
-                rpcName: 'insertar_lote_compras',
+                fastRpcName: 'insertar_lote_compras_json',
+                fallbackRpcName: 'insertar_lote_compras',
                 tableName: 'detalle_compras',
                 periodId,
-                filas: chunk,
+                filas,
                 onInserted: registrarAvance,
               });
             },

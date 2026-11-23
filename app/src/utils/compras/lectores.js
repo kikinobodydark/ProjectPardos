@@ -11,7 +11,7 @@
 //    generar duplicidades en el resultado de conciliación.
 // ============================================================================
 import { parseMontoCentimos } from '../ventas/montos.js';
-import { decodificarTexto } from '../ventas/lectores.js';
+import { decodificarTexto, iterarLineasStreaming } from '../ventas/lectores.js';
 import {
   normalizarTipoDocCompras,
   normalizarTipoIdentidad,
@@ -84,11 +84,12 @@ function fecha(res, linea, campo, valor) {
  */
 function procesarDuplicados(res) {
   const vistos = new Map();
+  const dupPorClave = new Map();
   const unicos = [];
   for (const r of res.registros) {
     const previo = vistos.get(r.clave);
     if (previo) {
-      let dup = res.duplicados.find((d) => d.clave === r.clave);
+      let dup = dupPorClave.get(r.clave);
       if (!dup) {
         dup = {
           clave: r.clave,
@@ -97,6 +98,7 @@ function procesarDuplicados(res) {
           ruc: r.nro_identidad,
           lineas: [previo.linea],
         };
+        dupPorClave.set(r.clave, dup);
         res.duplicados.push(dup);
         previo.duplicado_en_origen = true;
         previo.lineas_duplicadas = dup.lineas;
@@ -265,6 +267,116 @@ export function parsearSapCompras(texto) {
   }
 
   return cerrarResultado(res);
+}
+
+export async function parsearSapComprasStreaming(source) {
+  const res = nuevoResultado('SAP');
+  const periodos = new Map();
+  let primeraProcesada = false;
+
+  const { codificacion } = await iterarLineasStreaming(source, (raw, nLinea, isLast) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      if (!isLast) res.lineasVacias += 1;
+      return true;
+    }
+    if (!primeraProcesada) {
+      primeraProcesada = true;
+      if (/car sunat|serie del cdp|valor adq\.\s*ng/i.test(trimmed)) {
+        res.estado = 'error';
+        res.mensaje = 'El archivo tiene cabecera de reporte SUNAT. Cárguelo en la casilla "Archivo SUNAT".';
+        return false;
+      }
+      if (nLinea === 1 && /periodo|fecha.*emisi|tipo.*doc/i.test(raw)) {
+        res.totalLineas += 1;
+        res.advertencias.push('Se omitió una fila de cabecera detectada en la línea 1 del archivo SAP.');
+        return true;
+      }
+    }
+
+    res.totalLineas += 1;
+    const c = raw.split('|');
+    if (c.length < SAP_COMPRAS_MIN_COLUMNAS) {
+      if (c.every((v) => !v.trim())) {
+        res.lineasVacias += 1;
+        return true;
+      }
+      res.registrosLeidos += 1;
+      if (res.registrosIncompletos.length < MAX_DETALLE) {
+        res.registrosIncompletos.push({ linea: nLinea, columnas: c.length });
+      }
+      return true;
+    }
+
+    res.registrosLeidos += 1;
+    const tipoRaw = (c[5] ?? '').trim();
+    const tipo = normalizarTipoDocCompras(tipoRaw);
+    const serie = normalizarSerieCompras((c[6] ?? '').trim());
+    const correlativo = normalizarCorrelativoCompras((c[8] ?? '').trim());
+    const tipoIdentidad = normalizarTipoIdentidad((c[10] ?? '').trim());
+    const nroIdentidad = normalizarRucProveedor((c[11] ?? '').trim());
+
+    if (!tipo) registrarErrorTipo(res, nLinea, 'Tipo de documento', tipoRaw);
+    if (!serie && !correlativo) {
+      registrarErrorTipo(res, nLinea, 'Serie/Correlativo', `${serie}-${correlativo}`);
+      return true;
+    }
+
+    const per = (c[0] ?? '').trim();
+    if (per && /^\d{6}/.test(per)) {
+      const p6 = per.slice(0, 6);
+      periodos.set(p6, (periodos.get(p6) || 0) + 1);
+    }
+
+    const clave = construirClaveCompras(nroIdentidad, tipo, serie, correlativo);
+    const claveLegible = construirClaveLegible(nroIdentidad, tipo, serie, correlativo);
+
+    res.registros.push({
+      linea: nLinea,
+      clave,
+      clave_legible: claveLegible,
+      periodo: per,
+      doc_interno: (c[1] ?? '').trim(),
+      fecha_emision: fecha(res, nLinea, 'Fecha de emisión', (c[3] ?? '').trim()),
+      tipo_doc_pago: tipo,
+      tipo_doc_original: tipoRaw,
+      serie,
+      correlativo,
+      tipo_identidad: tipoIdentidad,
+      nro_identidad: nroIdentidad,
+      nombre: limpiarTextoDescriptivo((c[12] ?? '').trim()),
+      base: monto(res, nLinea, 'Base', (c[13] ?? '').trim()),
+      igv: monto(res, nLinea, 'IGV', (c[14] ?? '').trim()),
+      exonerado: monto(res, nLinea, 'BI Gravado DNG', (c[17] ?? '').trim()),
+      valor_adquisicion: monto(res, nLinea, 'Valor de Adquisición', (c[19] ?? '').trim()),
+      otros: monto(res, nLinea, 'Otros Tributos / Cargos', (c[22] ?? '').trim()),
+      total: monto(res, nLinea, 'Monto Total', (c[23] ?? '').trim()),
+      duplicado_en_origen: false,
+      lineas_duplicadas: null,
+    });
+    return true;
+  });
+
+  if (res.estado === 'error') {
+    res.codificacion = codificacion;
+    return res;
+  }
+  if (res.registrosLeidos > 0 && res.registrosIncompletos.length / res.registrosLeidos > 0.5) {
+    res.estado = 'error';
+    res.mensaje = `Estructura no reconocida: más del 50% de las líneas tiene menos de ${SAP_COMPRAS_MIN_COLUMNAS} columnas.`;
+    res.codificacion = codificacion;
+    return res;
+  }
+
+  const per = [...periodos.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (per) res.periodoDetectado = per[0];
+  if (periodos.size > 1) {
+    res.advertencias.push(`El archivo SAP contiene ${periodos.size} períodos distintos.`);
+  }
+
+  const finalRes = cerrarResultado(res);
+  finalRes.codificacion = codificacion;
+  return finalRes;
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +554,151 @@ export function parsearSunatCompras(texto) {
   }
 
   return cerrarResultado(res);
+}
+
+export async function parsearSunatComprasStreaming(source) {
+  const res = nuevoResultado('SUNAT');
+  const periodos = new Map();
+  const rucsEmpresa = new Map();
+  let cabeceraLeida = false;
+  let nCab = 0;
+  let maxIdxRequerido = 0;
+  let mapa = {};
+
+  const { codificacion } = await iterarLineasStreaming(source, (raw, nLinea, isLast) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      if (cabeceraLeida && !isLast) res.lineasVacias += 1;
+      return true;
+    }
+
+    if (!cabeceraLeida) {
+      cabeceraLeida = true;
+      const cab = raw.split('|').map(normalizarCabecera);
+      mapa = {};
+      for (const [campo, def] of Object.entries(SUNAT_COMPRAS_CABECERAS)) {
+        const i = cab.findIndex((h) => def.nombres.includes(h));
+        if (i >= 0) mapa[campo] = i;
+        else if (def.requerida) res.columnasFaltantes.push(def.nombres[0]);
+      }
+
+      if (mapa.serie === undefined && mapa.correlativo === undefined) {
+        res.estado = 'error';
+        res.columnasFaltantes = [];
+        res.mensaje = /^\d{8}\|/.test(raw)
+          ? 'El archivo parece un TXT de SAP (sin cabecera). Cárguelo en la casilla "Archivo SAP".'
+          : 'Estructura no reconocida: no se encontró la cabecera del reporte SUNAT Compras (Serie del CDP, Nro CP, BI Gravado DG...).';
+        return false;
+      }
+
+      if (res.columnasFaltantes.length) {
+        res.estado = 'error';
+        res.mensaje = `Faltan columnas obligatorias en el archivo SUNAT: ${res.columnasFaltantes.join(', ')}.`;
+        return false;
+      }
+
+      nCab = cab.length;
+      maxIdxRequerido = Math.max(
+        ...Object.entries(mapa)
+          .filter(([k]) => SUNAT_COMPRAS_CABECERAS[k]?.requerida)
+          .map(([, idx]) => idx)
+      );
+      return true;
+    }
+
+    res.totalLineas += 1;
+    const c = raw.split('|');
+    if (c.length <= maxIdxRequerido) {
+      if (c.every((v) => !v.trim())) {
+        res.lineasVacias += 1;
+        return true;
+      }
+      res.registrosLeidos += 1;
+      if (res.registrosIncompletos.length < MAX_DETALLE) {
+        res.registrosIncompletos.push({ linea: nLinea, columnas: c.length, esperadas: nCab });
+      }
+      return true;
+    }
+
+    res.registrosLeidos += 1;
+    const g = (k) => (mapa[k] === undefined ? '' : (c[mapa[k]] ?? '').trim());
+    const tipoRaw = g('tipo_doc_pago');
+    const tipo = normalizarTipoDocCompras(tipoRaw);
+    const serie = normalizarSerieCompras(g('serie'));
+    const correlativo = normalizarCorrelativoCompras(g('correlativo'));
+    const tipoIdentidad = normalizarTipoIdentidad(g('tipo_identidad'));
+    const nroIdentidad = normalizarRucProveedor(g('nro_identidad'));
+
+    if (!tipo) registrarErrorTipo(res, nLinea, 'Tipo de documento', tipoRaw);
+    if (!serie && !correlativo) {
+      registrarErrorTipo(res, nLinea, 'Serie/Correlativo', `${serie}-${correlativo}`);
+      return true;
+    }
+
+    const per = g('periodo');
+    if (per && /^\d{6}/.test(per)) {
+      const p6 = per.slice(0, 6);
+      periodos.set(p6, (periodos.get(p6) || 0) + 1);
+    }
+    const rucEmp = g('ruc_empresa');
+    if (rucEmp) rucsEmpresa.set(rucEmp, (rucsEmpresa.get(rucEmp) || 0) + 1);
+
+    const clave = construirClaveCompras(nroIdentidad, tipo, serie, correlativo);
+    const claveLegible = construirClaveLegible(nroIdentidad, tipo, serie, correlativo);
+
+    res.registros.push({
+      linea: nLinea,
+      clave,
+      clave_legible: claveLegible,
+      ruc_empresa: rucEmp,
+      periodo: per,
+      car_sunat: g('car_sunat'),
+      fecha_emision: fecha(res, nLinea, 'Fecha de emisión', g('fecha_emision')),
+      tipo_doc_pago: tipo,
+      tipo_doc_original: tipoRaw,
+      serie,
+      correlativo,
+      tipo_identidad: tipoIdentidad,
+      nro_identidad: nroIdentidad,
+      nombre: limpiarTextoDescriptivo(g('nombre')),
+      base: monto(res, nLinea, 'BI Gravado DG', g('base')),
+      igv: monto(res, nLinea, 'IGV / IPM DG', g('igv')),
+      exonerado: monto(res, nLinea, 'BI Gravado DGNG', g('exonerado')),
+      valor_adquisicion: monto(res, nLinea, 'Valor Adq. NG', g('valor_adquisicion')),
+      otros: monto(res, nLinea, 'Otros Trib/ Cargos', g('otros')),
+      total: monto(res, nLinea, 'Total CP', g('total')),
+      estado: g('estado') || '1',
+      duplicado_en_origen: false,
+      lineas_duplicadas: null,
+    });
+    return true;
+  });
+
+  if (res.estado === 'error') {
+    res.codificacion = codificacion;
+    return res;
+  }
+  if (!cabeceraLeida) {
+    res.estado = 'error';
+    res.mensaje = 'El archivo está vacío.';
+    res.codificacion = codificacion;
+    return res;
+  }
+
+  const per = [...periodos.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (per) res.periodoDetectado = per[0];
+  const rucEmp = [...rucsEmpresa.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (rucEmp) res.rucDetectado = rucEmp[0];
+  if (periodos.size > 1) {
+    res.advertencias.push(`El archivo SUNAT contiene ${periodos.size} períodos distintos.`);
+  }
+  if (rucsEmpresa.size > 1) {
+    res.advertencias.push(`El archivo SUNAT contiene ${rucsEmpresa.size} RUC de empresa distintos.`);
+  }
+
+  const finalRes = cerrarResultado(res);
+  finalRes.codificacion = codificacion;
+  return finalRes;
 }
 
 // ---------------------------------------------------------------------------

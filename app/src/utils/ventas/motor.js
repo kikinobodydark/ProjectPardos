@@ -105,11 +105,14 @@ export function conciliarVentas({ sap, sunat, cortesias = null }) {
 
   const cortesiasNoEncontradas = cortesias ? cortesias.filter((c) => !mapa.has(c.clave)) : [];
 
-  docs.sort((a, b) =>
-    (a.fecha_emision || '').localeCompare(b.fecha_emision || '') ||
-    a.serie.localeCompare(b.serie) ||
-    a.correlativo.length - b.correlativo.length ||
-    a.correlativo.localeCompare(b.correlativo));
+  docs.sort((a, b) => {
+    const fa = a.fecha_emision || '';
+    const fb = b.fecha_emision || '';
+    if (fa !== fb) return fa < fb ? -1 : 1;
+    if (a.serie !== b.serie) return a.serie < b.serie ? -1 : 1;
+    if (a.correlativo.length !== b.correlativo.length) return a.correlativo.length - b.correlativo.length;
+    return a.correlativo < b.correlativo ? -1 : a.correlativo > b.correlativo ? 1 : 0;
+  });
 
   return { docs, series, cortesiasNoEncontradas };
 }

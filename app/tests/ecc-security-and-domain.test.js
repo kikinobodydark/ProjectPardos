@@ -15,6 +15,8 @@ import { clearPersistedQueryCache } from '../src/utils/queryPersister.js';
 import { getNetworkProfile, simulateNetworkProfile } from '../src/utils/networkProfile.js';
 import { executeParallelBatches } from '../src/utils/jobQueue.js';
 import { fetchAllSupabaseKeyset } from '../src/utils/supabasePagination.js';
+import { parsearSapVentasStreaming } from '../src/utils/ventas/lectores.js';
+import { aFilaBDRpc } from '../src/utils/ventas/persistencia.js';
 
 describe('ECC Security — Excel Formula Injection & Input Sanitization', () => {
   it('prefija con comilla simple fórmulas peligrosas en celdas Excel', () => {
@@ -44,13 +46,13 @@ describe('ECC Security — Excel Formula Injection & Input Sanitization', () => 
 describe('ECC Security — File Validation & Magic Bytes', () => {
   it('valida extensión y tamaño en validateUploadedFile', () => {
     assert.equal(validateUploadedFile({ name: 'reporte.txt', size: 100, type: 'text/plain' }, 'txt').valid, true);
-    assert.equal(validateUploadedFile({ name: 'reporte_grande.txt', size: 200 * 1024 * 1024, type: 'text/plain' }, 'txt').valid, true);
-    assert.equal(validateUploadedFile({ name: 'reporte_excedido.txt', size: 200 * 1024 * 1024 + 1, type: 'text/plain' }, 'txt').valid, false);
+    assert.equal(validateUploadedFile({ name: 'reporte_grande.txt', size: 400 * 1024 * 1024, type: 'text/plain' }, 'txt').valid, true);
+    assert.equal(validateUploadedFile({ name: 'reporte_excedido.txt', size: 400 * 1024 * 1024 + 1, type: 'text/plain' }, 'txt').valid, false);
     assert.equal(validateUploadedFile({ name: 'malware.exe', size: 100, type: '' }, 'txt').valid, false);
     assert.equal(validateUploadedFile({ name: 'vacio.txt', size: 0, type: 'text/plain' }, 'txt').valid, false);
     assert.equal(validateUploadedFile({ name: 'cortesias.xlsx', size: 1024, type: '' }, 'excel').valid, true);
-    assert.equal(validateUploadedFile({ name: 'cortesias_grande.xlsx', size: 200 * 1024 * 1024, type: '' }, 'excel').valid, true);
-    assert.equal(validateUploadedFile({ name: 'cortesias_excedido.xlsx', size: 200 * 1024 * 1024 + 1, type: '' }, 'excel').valid, false);
+    assert.equal(validateUploadedFile({ name: 'cortesias_grande.xlsx', size: 400 * 1024 * 1024, type: '' }, 'excel').valid, true);
+    assert.equal(validateUploadedFile({ name: 'cortesias_excedido.xlsx', size: 400 * 1024 * 1024 + 1, type: '' }, 'excel').valid, false);
   });
 
   it('rechaza binarios disfrazados de .txt y valida firmas ZIP/OLE2 en Excel', () => {
@@ -140,6 +142,8 @@ describe('Carga masiva progresiva y resiliencia ante timeouts', () => {
     const normal = getNetworkProfile();
     assert.equal(normal.recommendedBatchSize, 500);
     assert.equal(normal.recommendedConcurrency, 2);
+    assert.equal(normal.recommendedBulkUploadBatchSize, 2000);
+    assert.equal(normal.recommendedBulkUploadConcurrency, 4);
     assert.equal(normal.recommendedReadPageSize, 1000);
     assert.equal(normal.recommendedReadRpcLimit, 5000);
     assert.equal(normal.recommendedReadConcurrency, 4);
@@ -148,10 +152,47 @@ describe('Carga masiva progresiva y resiliencia ante timeouts', () => {
     const slow = getNetworkProfile();
     assert.equal(slow.recommendedBatchSize, 250);
     assert.equal(slow.recommendedConcurrency, 1);
+    assert.equal(slow.recommendedBulkUploadBatchSize, 500);
+    assert.equal(slow.recommendedBulkUploadConcurrency, 1);
     assert.equal(slow.recommendedReadPageSize, 500);
     assert.equal(slow.recommendedReadRpcLimit, 2000);
     assert.equal(slow.recommendedReadConcurrency, 2);
     simulateNetworkProfile(null);
+  });
+
+  it('parsearSapVentasStreaming y aFilaBDRpc procesan en streaming con payload compacto', async () => {
+    const line = [
+      '20261100', 'CUO1', 'M001', '22/11/2026', '', '03', 'B601', '0000123', '', '1',
+      '45401715', 'JUAN PEREZ', '', '100.00', '', '18.00', '', '0.00', '0.00', '',
+      '', '', '0.00', '0.00', '118.00', '', '', '', '', '', '', '', '', '', '1',
+    ].join('|');
+    const buf = new TextEncoder().encode(`${line}\r\n${line.replace('0000123', '0000124')}\r\n`).buffer;
+    const res = await parsearSapVentasStreaming(buf);
+    assert.equal(res.estado, 'ok');
+    assert.equal(res.registrosValidos, 2);
+    assert.equal(res.periodoDetectado, '202611');
+
+    const compact = aFilaBDRpc(
+      {
+        tipo_doc_pago: '03',
+        serie: 'B601',
+        correlativo: '123',
+        fecha_emision: '2026-11-22',
+        estado: 'OK',
+        en_sap: true,
+        en_sunat: true,
+        anulado: false,
+        cortesia: null,
+        incidencias: [],
+        sap: { tipo_identidad: '1', nro_identidad: '45401715', nombre: 'JUAN PEREZ', correlativo: '0000123', fecha_emision: '2026-11-22', base: 10000, igv: 1800, exonerado: 0, inafecto: 0, otros: 0, total: 11800, linea: 1, estado: '1' },
+        sunat: { tipo_identidad: '1', nro_identidad: '45401715', nombre: 'JUAN PEREZ', correlativo: '123', fecha_emision: '2026-11-22', base: 10000, igv: 1800, exonerado: 0, inafecto: 0, otros: 0, total: 11800, op_gratuitas: 0, linea: 2, estado: '1' },
+      },
+      { ruc: '20553596441' }
+    );
+    assert.equal('periodo_id' in compact, false, 'aFilaBDRpc debe omitir periodo_id redundante');
+    assert.equal('empresa_id' in compact, false, 'aFilaBDRpc debe omitir empresa_id redundante');
+    assert.equal('exonerado_sap' in compact, false, 'aFilaBDRpc debe omitir montos en 0');
+    assert.equal(compact.total_sap, 118);
   });
 
   it('fetchAllSupabaseKeyset descarga por buckets UUID vía RPC y hace fallback keyset por car_sunat si la RPC no existe', async () => {
