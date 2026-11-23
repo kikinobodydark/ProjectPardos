@@ -345,6 +345,10 @@
   .hub-cards-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .hub-cards-grid--two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* --- Premium Module Card --- */

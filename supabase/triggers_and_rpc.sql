@@ -11,6 +11,31 @@ RETURNS TEXT AS $$
     SELECT rol FROM public.usuarios WHERE id = (SELECT auth.uid()) AND activo = true;
 $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public;
 
+CREATE SCHEMA IF NOT EXISTS private;
+GRANT USAGE ON SCHEMA private TO authenticated;
+
+CREATE OR REPLACE FUNCTION private.get_user_empresa_ids()
+RETURNS UUID[] AS $$
+    SELECT COALESCE(ARRAY(
+        SELECT e.id
+        FROM public.usuarios u
+        JOIN public.empresas e ON e.estudio_id = u.estudio_id
+        WHERE u.id = (SELECT auth.uid())
+          AND u.activo = true
+          AND u.rol = 'admin'
+        UNION
+        SELECT ue.empresa_id
+        FROM public.usuarios u
+        JOIN public.usuario_empresas ue ON ue.usuario_id = u.id
+        JOIN public.empresas e ON e.id = ue.empresa_id AND e.estudio_id = u.estudio_id
+        WHERE u.id = (SELECT auth.uid())
+          AND u.activo = true
+    ), ARRAY[]::UUID[]);
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public;
+
+REVOKE ALL ON FUNCTION private.get_user_empresa_ids() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.get_user_empresa_ids() TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.user_has_empresa_access(p_empresa_id UUID)
 RETURNS BOOLEAN AS $$
     SELECT EXISTS (
@@ -488,7 +513,7 @@ BEGIN
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
     RETURN v_inserted;
 END;
-$$ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public;
+$$ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public SET statement_timeout = '30s';
 
 CREATE OR REPLACE FUNCTION public.insertar_lote_compras(
     p_periodo_id UUID,
@@ -535,7 +560,7 @@ BEGIN
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
     RETURN v_inserted;
 END;
-$$ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public;
+$$ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public SET statement_timeout = '30s';
 
 CREATE OR REPLACE FUNCTION public.finalizar_periodo_carga(
     p_periodo_id UUID,
@@ -571,7 +596,7 @@ BEGIN
 
     RETURN p_periodo_id;
 END;
-$$ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public;
+$$ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public SET statement_timeout = '30s';
 
 CREATE OR REPLACE FUNCTION public.guardar_local_con_series(
     p_local_id UUID,
@@ -685,7 +710,7 @@ CREATE POLICY select_empresas ON public.empresas
         estudio_id = (SELECT public.get_user_estudio())
         AND (
             (SELECT public.get_user_rol()) = 'admin'
-            OR (SELECT public.user_has_empresa_access(id))
+            OR id = ANY((SELECT private.get_user_empresa_ids())::uuid[])
         )
     );
 CREATE POLICY insert_empresas_admin ON public.empresas 
@@ -756,17 +781,17 @@ DROP POLICY IF EXISTS update_periodos_ops ON public.periodos_carga;
 DROP POLICY IF EXISTS delete_periodos_ops ON public.periodos_carga;
 CREATE POLICY select_periodos ON public.periodos_carga 
     FOR SELECT TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]));
 CREATE POLICY insert_periodos_ops ON public.periodos_carga 
     FOR INSERT TO authenticated
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 CREATE POLICY update_periodos_ops ON public.periodos_carga 
     FOR UPDATE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'))
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'))
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 CREATE POLICY delete_periodos_ops ON public.periodos_carga 
     FOR DELETE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 
 -- F. Tabla DETALLE DE VENTAS
 DROP POLICY IF EXISTS select_detalle_ventas ON public.detalle_ventas;
@@ -776,17 +801,17 @@ DROP POLICY IF EXISTS update_detalle_ventas_ops ON public.detalle_ventas;
 DROP POLICY IF EXISTS delete_detalle_ventas_ops ON public.detalle_ventas;
 CREATE POLICY select_detalle_ventas ON public.detalle_ventas 
     FOR SELECT TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]));
 CREATE POLICY insert_detalle_ventas_ops ON public.detalle_ventas 
     FOR INSERT TO authenticated
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 CREATE POLICY update_detalle_ventas_ops ON public.detalle_ventas 
     FOR UPDATE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'))
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'))
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 CREATE POLICY delete_detalle_ventas_ops ON public.detalle_ventas 
     FOR DELETE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 
 -- G. Tabla DETALLE DE COMPRAS
 DROP POLICY IF EXISTS select_detalle_compras ON public.detalle_compras;
@@ -796,17 +821,17 @@ DROP POLICY IF EXISTS update_detalle_compras_ops ON public.detalle_compras;
 DROP POLICY IF EXISTS delete_detalle_compras_ops ON public.detalle_compras;
 CREATE POLICY select_detalle_compras ON public.detalle_compras 
     FOR SELECT TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]));
 CREATE POLICY insert_detalle_compras_ops ON public.detalle_compras 
     FOR INSERT TO authenticated
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 CREATE POLICY update_detalle_compras_ops ON public.detalle_compras 
     FOR UPDATE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'))
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'))
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 CREATE POLICY delete_detalle_compras_ops ON public.detalle_compras 
     FOR DELETE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) IN ('admin', 'operador'));
 
 -- H. Tabla AUDITORÍA
 DROP POLICY IF EXISTS select_auditoria ON public.auditoria;
@@ -822,17 +847,17 @@ DROP POLICY IF EXISTS update_locales_empresa_admin ON public.locales_empresa;
 DROP POLICY IF EXISTS delete_locales_empresa_admin ON public.locales_empresa;
 CREATE POLICY select_locales_empresa ON public.locales_empresa
     FOR SELECT TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]));
 CREATE POLICY insert_locales_empresa_admin ON public.locales_empresa
     FOR INSERT TO authenticated
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin');
 CREATE POLICY update_locales_empresa_admin ON public.locales_empresa
     FOR UPDATE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin')
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin')
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin');
 CREATE POLICY delete_locales_empresa_admin ON public.locales_empresa
     FOR DELETE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin');
 
 DROP POLICY IF EXISTS select_local_series ON public.local_series;
 DROP POLICY IF EXISTS all_local_series_admin ON public.local_series;
@@ -841,14 +866,14 @@ DROP POLICY IF EXISTS update_local_series_admin ON public.local_series;
 DROP POLICY IF EXISTS delete_local_series_admin ON public.local_series;
 CREATE POLICY select_local_series ON public.local_series
     FOR SELECT TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)));
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]));
 CREATE POLICY insert_local_series_admin ON public.local_series
     FOR INSERT TO authenticated
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin');
 CREATE POLICY update_local_series_admin ON public.local_series
     FOR UPDATE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin')
-    WITH CHECK ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin')
+    WITH CHECK (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin');
 CREATE POLICY delete_local_series_admin ON public.local_series
     FOR DELETE TO authenticated
-    USING ((SELECT public.user_has_empresa_access(empresa_id)) AND (SELECT public.get_user_rol()) = 'admin');
+    USING (empresa_id = ANY((SELECT private.get_user_empresa_ids())::uuid[]) AND (SELECT public.get_user_rol()) = 'admin');

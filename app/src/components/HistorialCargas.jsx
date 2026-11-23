@@ -55,7 +55,7 @@ const HistorialCargas = memo(function HistorialCargas({
       if (error) throw error;
       return data || [];
     },
-    enabled: !!activeCompany?.id && !!activeModule,
+    enabled: isAdmin && !!activeCompany?.id && !!activeModule,
   });
 
   // Si el historial en BD está vacío, sincronizar automáticamente el selector de Período Activo del Navbar
@@ -163,6 +163,10 @@ const HistorialCargas = memo(function HistorialCargas({
       minute: '2-digit',
     });
   };
+
+  if (!isAdmin) {
+    return null;
+  }
 
   return (
     <div className="card-premium animate-fade-in w-100 p-4">

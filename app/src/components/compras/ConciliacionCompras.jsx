@@ -601,7 +601,7 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
           );
           await executeParallelBatches(
             filasActualizadas,
-            500,
+            Math.min(300, networkProfile.recommendedBatchSize || 300),
             async (chunk) => {
               const { error } = await supabase
                 .from('detalle_compras')
@@ -609,7 +609,7 @@ const ConciliacionCompras = memo(function ConciliacionCompras({
               if (error) throw error;
             },
             {
-              concurrency: networkProfile.recommendedConcurrency || 4,
+              concurrency: Math.min(2, networkProfile.recommendedConcurrency || 2),
               label: 'UpsertUsuariosSapCompras',
             }
           );

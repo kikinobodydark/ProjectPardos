@@ -59,9 +59,10 @@ export const globalJobQueue = new JobQueue({ concurrency: 4 });
 
 /**
  * Ejecuta una lista de lotes (chunks) en paralelo controlado a través de la cola
- * de trabajo, reportando progreso tras cada lote completado.
+ * de trabajo, reportando progreso tras cada lote completado y abortando lotes
+ * pendientes si alguno falla para evitar escrituras huérfanas tras un error.
  */
-export async function executeParallelBatches(items, batchSize, workerFn, { concurrency = 4, onProgress, label = 'BatchJob' } = {}) {
+export async function executeParallelBatches(items, batchSize, workerFn, { concurrency = 2, onProgress, label = 'BatchJob' } = {}) {
   if (!items || items.length === 0) return [];
   const chunks = [];
   for (let i = 0; i < items.length; i += batchSize) {
@@ -70,19 +71,34 @@ export async function executeParallelBatches(items, batchSize, workerFn, { concu
 
   const queue = new JobQueue({ concurrency });
   let processedItems = 0;
+  let aborted = false;
+  let firstError = null;
 
   const promises = chunks.map((chunk) =>
     queue.enqueue(`${label}#${chunk.index + 1}`, async () => {
-      const res = await workerFn(chunk.slice, chunk.index);
-      processedItems += chunk.slice.length;
-      if (onProgress) {
-        onProgress(processedItems, items.length);
+      if (aborted) return null;
+      try {
+        const res = await workerFn(chunk.slice, chunk.index);
+        processedItems += chunk.slice.length;
+        if (onProgress) {
+          onProgress(processedItems, items.length);
+        }
+        return res;
+      } catch (err) {
+        if (!aborted) {
+          aborted = true;
+          firstError = err;
+        }
+        throw err;
       }
-      return res;
     })
   );
 
-  return Promise.all(promises);
+  try {
+    return await Promise.all(promises);
+  } catch (err) {
+    throw firstError || err;
+  }
 }
 
 // ============================================================================
@@ -206,7 +222,7 @@ export async function runCpuTaskInWorker(action, payload, transferList = []) {
  * Divide la serialización de miles de documentos (`aFilaBD`) en varios Workers
  * en paralelo para preparar los lotes listos para insertar en Supabase.
  */
-export async function serializeDocsInWorkerPool(docs, metaBD, batchSize = 1500) {
+export async function serializeDocsInWorkerPool(docs, metaBD, batchSize = 500) {
   if (!docs || docs.length === 0) return [];
   const chunks = [];
   for (let i = 0; i < docs.length; i += batchSize) {
@@ -224,7 +240,7 @@ export async function serializeDocsInWorkerPool(docs, metaBD, batchSize = 1500) 
  * Divide la serialización de documentos conciliados de Compras (`aFilaBDCompras`)
  * entre el Pool de Web Workers en paralelo.
  */
-export async function serializeComprasDocsInWorkerPool(docs, metaBD, batchSize = 1500) {
+export async function serializeComprasDocsInWorkerPool(docs, metaBD, batchSize = 500) {
   if (!docs || docs.length === 0) return [];
   const chunks = [];
   for (let i = 0; i < docs.length; i += batchSize) {

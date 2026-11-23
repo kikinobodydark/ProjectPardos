@@ -12,6 +12,8 @@ import { createInstrumentedFetch, clearTelemetry } from '../src/utils/telemetry.
 import { TIPOS_DOC_PERMITIDOS } from '../src/utils/compras/catalogos.js';
 import { validarDocumentoCompras } from '../src/utils/compras/reglas.js';
 import { clearPersistedQueryCache } from '../src/utils/queryPersister.js';
+import { getNetworkProfile, simulateNetworkProfile } from '../src/utils/networkProfile.js';
+import { executeParallelBatches } from '../src/utils/jobQueue.js';
 
 describe('ECC Security — Excel Formula Injection & Input Sanitization', () => {
   it('prefija con comilla simple fórmulas peligrosas en celdas Excel', () => {
@@ -124,5 +126,42 @@ describe('ECC Domain — Compras Nota de Débito SUNAT (08) y SAP (09)', () => {
     const res = validarDocumentoCompras(docND08);
     assert.equal(res.resultado, 'OK');
     assert.equal(res.codigosError.length, 0);
+  });
+});
+
+describe('Carga masiva progresiva y resiliencia ante timeouts', () => {
+  it('configura lotes progresivos (500) y concurrencia controlada (2) en conexiones normales', () => {
+    simulateNetworkProfile(null);
+    const normal = getNetworkProfile();
+    assert.equal(normal.recommendedBatchSize, 500);
+    assert.equal(normal.recommendedConcurrency, 2);
+
+    simulateNetworkProfile({ isSlowNetwork: true, effectiveType: '2g' });
+    const slow = getNetworkProfile();
+    assert.equal(slow.recommendedBatchSize, 250);
+    assert.equal(slow.recommendedConcurrency, 1);
+    simulateNetworkProfile(null);
+  });
+
+  it('executeParallelBatches detiene lotes en cola tras el primer error fatal', async () => {
+    const ejecutados = [];
+    const items = [1, 2, 3, 4, 5, 6];
+    await assert.rejects(
+      () =>
+        executeParallelBatches(
+          items,
+          1,
+          async ([item]) => {
+            ejecutados.push(item);
+            if (item === 2) {
+              throw new Error('Fallo simulado');
+            }
+            await new Promise((r) => setTimeout(r, 15));
+          },
+          { concurrency: 1, label: 'TestAbort' }
+        ),
+      /Fallo simulado/
+    );
+    assert.deepEqual(ejecutados, [1, 2]);
   });
 });

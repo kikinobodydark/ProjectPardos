@@ -1,8 +1,10 @@
 // ============================================================================
 // Detección y Adaptación para Móviles y Redes Lentas (2G / Save-Data)
-// - En conexiones normales o 3G/4G de escritorio mantiene lotes grandes (1500)
-//   y alta concurrencia (4 workers/streams) para máxima velocidad de carga.
-// - Solo reduce el tamaño de lote en redes genuinamente restringidas (2G / Save-Data).
+// - En conexiones normales mantiene lotes medianos (500) y concurrencia
+//   controlada (2) para avance fluido de la barra de progreso y evitar
+//   statement_timeout en Supabase Postgres con tablas de miles de registros.
+// - En redes genuinamente restringidas (2G / Save-Data) reduce a lotes de 250
+//   con 1 stream secuencial.
 // ============================================================================
 import { useState, useEffect } from 'react';
 import { setSlowRequestThreshold } from './telemetry.js';
@@ -26,8 +28,8 @@ export function getNetworkProfile() {
       rtt: simulatedOverride.rtt ?? 50,
       downlink: simulatedOverride.downlink ?? 10,
       recommendedPageSize: simulatedOverride.isSlowNetwork || simulatedOverride.isMobile ? 15 : 20,
-      recommendedBatchSize: simulatedOverride.isSlowNetwork ? 400 : 1500,
-      recommendedConcurrency: simulatedOverride.isSlowNetwork ? 2 : 4,
+      recommendedBatchSize: simulatedOverride.isSlowNetwork ? 250 : 500,
+      recommendedConcurrency: simulatedOverride.isSlowNetwork ? 1 : 2,
     };
   }
 
@@ -59,8 +61,8 @@ export function getNetworkProfile() {
     rtt,
     downlink,
     recommendedPageSize: isSlowNetwork || isMobile ? 15 : 20,
-    recommendedBatchSize: isSlowNetwork ? 500 : 1500,
-    recommendedConcurrency: isSlowNetwork ? 2 : 4,
+    recommendedBatchSize: isSlowNetwork ? 250 : 500,
+    recommendedConcurrency: isSlowNetwork ? 1 : 2,
   };
 }
 

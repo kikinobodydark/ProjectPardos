@@ -30,7 +30,7 @@ const Sidebar = memo(function Sidebar({
     { id: 'dashboard', label: 'Dashboard', icon: <FiLayout /> },
     { id: 'upload', label: 'Carga TXT', icon: <FiUploadCloud />, roles: ['admin', 'operador'] },
     { id: 'reconciliation', label: 'Conciliación', icon: <FiList /> },
-    { id: 'history', label: 'Historial', icon: <FiClock /> },
+    { id: 'history', label: 'Historial', icon: <FiClock />, roles: ['admin'] },
   ];
 
   const adminItems = [
